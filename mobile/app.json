@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "GETIT Nigeria",
+    "slug": "getit-nigeria",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#008751"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ng.getit.mobile"
+    },
+    "android": {
+      "package": "ng.getit.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#008751"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
