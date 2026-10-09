@@ -19,6 +19,13 @@ export default function CartModal({ isOpen, onClose, onOpenCheckout }) {
 
   const financials = calculateOrderTotals(productSubtotal, null, config);
 
+  const handleClearAll = () => {
+    if (cart.length === 0) return;
+    if (window.confirm('Are you sure you want to remove all items from your basket?')) {
+      clearCart();
+    }
+  };
+
   return (
     <div className="modal-overlay">
       <div
@@ -61,7 +68,7 @@ export default function CartModal({ isOpen, onClose, onOpenCheckout }) {
             </div>
             <div>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0F172A' }}>
-                Your Grocery Cart
+                Your Basket / Cart
               </h3>
               {currentVendor && (
                 <p style={{ fontSize: '0.72rem', color: '#64748B' }}>
@@ -71,21 +78,46 @@ export default function CartModal({ isOpen, onClose, onOpenCheckout }) {
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            style={{
-              background: '#E2E8F0',
-              borderRadius: '50%',
-              width: '28px',
-              height: '28px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#475569',
-            }}
-          >
-            <X size={16} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {cart.length > 0 && (
+              <button
+                onClick={handleClearAll}
+                title="Remove all items from basket"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  background: '#FEE2E2',
+                  color: '#DC2626',
+                  border: '1px solid #FECACA',
+                  padding: '4px 10px',
+                  borderRadius: '8px',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                <Trash2 size={12} />
+                <span>Clear All</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              style={{
+                background: '#E2E8F0',
+                borderRadius: '50%',
+                width: '28px',
+                height: '28px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#475569',
+                cursor: 'pointer',
+              }}
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* Cart Items List */}
@@ -93,7 +125,7 @@ export default function CartModal({ isOpen, onClose, onOpenCheckout }) {
           {cart.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem 1rem' }}>
               <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🛒</div>
-              <h4 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0F172A' }}>Your Cart is Empty</h4>
+              <h4 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0F172A' }}>Your Basket is Empty</h4>
               <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '4px' }}>
                 Search for groceries or explore nearby shops to add items.
               </p>
@@ -125,7 +157,7 @@ export default function CartModal({ isOpen, onClose, onOpenCheckout }) {
                     </div>
                   </div>
 
-                  {/* Quantity Stepper */}
+                  {/* Quantity Stepper & Remove */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <div
                       style={{
@@ -139,10 +171,12 @@ export default function CartModal({ isOpen, onClose, onOpenCheckout }) {
                     >
                       <button
                         onClick={() => updateCartQuantity(item.productId, item.quantity - 1)}
+                        title="Decrease quantity"
                         style={{
                           padding: '4px 8px',
                           background: 'transparent',
                           color: '#475569',
+                          cursor: 'pointer',
                         }}
                       >
                         <Minus size={13} />
@@ -152,10 +186,12 @@ export default function CartModal({ isOpen, onClose, onOpenCheckout }) {
                       </span>
                       <button
                         onClick={() => updateCartQuantity(item.productId, item.quantity + 1)}
+                        title="Increase quantity"
                         style={{
                           padding: '4px 8px',
                           background: 'transparent',
                           color: '#475569',
+                          cursor: 'pointer',
                         }}
                       >
                         <Plus size={13} />
@@ -164,31 +200,45 @@ export default function CartModal({ isOpen, onClose, onOpenCheckout }) {
 
                     <button
                       onClick={() => removeFromCart(item.productId)}
+                      title="Remove this item from basket"
                       style={{
                         background: '#FEE2E2',
                         color: '#EF4444',
                         padding: '6px',
                         borderRadius: '6px',
+                        border: '1px solid #FECACA',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
                       }}
                     >
-                      <Trash2 size={13} />
+                      <Trash2 size={14} />
                     </button>
                   </div>
                 </div>
               ))}
 
               <button
-                onClick={clearCart}
+                onClick={handleClearAll}
                 style={{
                   alignSelf: 'flex-start',
-                  background: 'transparent',
-                  color: '#94A3B8',
+                  background: '#FEE2E2',
+                  color: '#DC2626',
+                  border: '1px solid #FECACA',
+                  borderRadius: '8px',
+                  padding: '6px 12px',
                   fontSize: '0.75rem',
-                  fontWeight: 600,
+                  fontWeight: 700,
                   marginTop: '0.2rem',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
                 }}
               >
-                Clear all items
+                <Trash2 size={13} />
+                <span>Remove all items from basket</span>
               </button>
             </div>
           )}
