@@ -4163,7 +4163,7 @@ export default function App() {
               <View style={styles.addSearchWrap}>
                 <TextInput
                   style={styles.addSearchInput}
-                  placeholder="🔍 Search tomatoes, onions, drinks, biscuits, indomie..."
+                  placeholder="🔍 Search Coartem, Cerave, SMA Gold, Panadol, Indomie, drinks..."
                   placeholderTextColor="#94A3B8"
                   value={suggestedSearch}
                   onChangeText={setSuggestedSearch}
@@ -4186,11 +4186,13 @@ export default function App() {
                   contentContainerStyle={styles.addCategoryScroll}
                 >
                   {[
-                    { id: 'All', label: 'All Items' },
-                    { id: 'Drinks', label: '🥤 Drinks & Beverages' },
-                    { id: 'Produce', label: '🍅 Fresh Produce' },
+                    { id: 'All', label: 'All H-Medix Items' },
+                    { id: 'Pharmacy', label: '💊 Pharmacy & Healthcare' },
+                    { id: 'Skincare', label: '🧴 Skincare & Cosmetics' },
+                    { id: 'Baby Care', label: '👶 Baby Care & Nutrition' },
+                    { id: 'Pantry', label: '🍚 Supermarket & Pantry' },
                     { id: 'Biscuits', label: '🍪 Biscuits & Snacks' },
-                    { id: 'Pantry', label: '🍚 Pantry Staples' },
+                    { id: 'Drinks', label: '🥤 Drinks & Beverages' },
                     { id: 'Household', label: '🧼 Household & Cleaning' },
                   ].map((cat) => {
                     const active = suggestedCategoryFilter === cat.id;
