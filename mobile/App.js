@@ -4163,7 +4163,7 @@ export default function App() {
               <View style={styles.addSearchWrap}>
                 <TextInput
                   style={styles.addSearchInput}
-                  placeholder="🔍 Search Coartem, Cerave, SMA Gold, Panadol, Indomie, drinks..."
+                  placeholder="🔍 Search groceries, drinks, biscuits, skincare, panadol, indomie..."
                   placeholderTextColor="#94A3B8"
                   value={suggestedSearch}
                   onChangeText={setSuggestedSearch}
@@ -4186,13 +4186,13 @@ export default function App() {
                   contentContainerStyle={styles.addCategoryScroll}
                 >
                   {[
-                    { id: 'All', label: 'All H-Medix Items' },
+                    { id: 'All', label: '🛒 All Products (General Store)' },
                     { id: 'Pharmacy', label: '💊 Pharmacy & Healthcare' },
-                    { id: 'Skincare', label: '🧴 Skincare & Cosmetics' },
-                    { id: 'Baby Care', label: '👶 Baby Care & Nutrition' },
-                    { id: 'Pantry', label: '🍚 Supermarket & Pantry' },
-                    { id: 'Biscuits', label: '🍪 Biscuits & Snacks' },
+                    { id: 'Pantry', label: '🍚 Groceries & Pantry' },
                     { id: 'Drinks', label: '🥤 Drinks & Beverages' },
+                    { id: 'Biscuits', label: '🍪 Biscuits & Snacks' },
+                    { id: 'Skincare', label: '🧴 Skincare & Personal Care' },
+                    { id: 'Baby Care', label: '👶 Baby Care & Nutrition' },
                     { id: 'Household', label: '🧼 Household & Cleaning' },
                   ].map((cat) => {
                     const active = suggestedCategoryFilter === cat.id;
@@ -4226,16 +4226,25 @@ export default function App() {
                 keyboardShouldPersistTaps="handled"
               >
                 <Text style={styles.addListHeaderNote}>
-                  Tap the '+' sign to add any item to your shop. You can adjust the selling price directly before or after adding.
+                  {suggestedCategoryFilter === 'All'
+                    ? 'Showing all everyday supermarket items (Pantry, Drinks, Snacks, Skincare, Baby & Household). For medicines and health supplies, select the Pharmacy & Healthcare category.'
+                    : `Showing items in ${suggestedCategoryFilter}. Tap the '+' sign to add any item to your shop with 1 click.`}
                 </Text>
 
                 {NIGERIAN_GROCERIES_CATALOG.filter((item) => {
-                  const matchesCat =
-                    suggestedCategoryFilter === 'All' || item.category === suggestedCategoryFilter;
+                  let matchesCat = true;
+                  if (suggestedCategoryFilter === 'All') {
+                    // All general supermarket products EXCEPT Pharmacy & Healthcare!
+                    matchesCat = item.category !== 'Pharmacy';
+                  } else {
+                    matchesCat = item.category === suggestedCategoryFilter;
+                  }
+
                   const matchesQuery =
                     !suggestedSearch ||
                     item.name.toLowerCase().includes(suggestedSearch.toLowerCase()) ||
-                    item.category.toLowerCase().includes(suggestedSearch.toLowerCase());
+                    item.category.toLowerCase().includes(suggestedSearch.toLowerCase()) ||
+                    (item.brand && item.brand.toLowerCase().includes(suggestedSearch.toLowerCase()));
                   return matchesCat && matchesQuery;
                 }).map((item) => {
                   const isAdded = addedItemsTracker[item.id];
