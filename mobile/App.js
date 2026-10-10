@@ -19,6 +19,7 @@ import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
 import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
+import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
 
 const { width } = Dimensions.get('window');
 
@@ -891,6 +892,16 @@ export default function App() {
   const [merchantOrderFilter, setMerchantOrderFilter] = useState('all'); // 'all' | 'new' | 'preparing' | 'ready' | 'completed'
   const [storeOpenStatus, setStoreOpenStatus] = useState(true);
   const [addProductModalVisible, setAddProductModalVisible] = useState(false);
+  const [addModalTab, setAddModalTab] = useState('suggested'); // 'suggested' | 'custom'
+  const [suggestedSearch, setSuggestedSearch] = useState('');
+  const [suggestedCategoryFilter, setSuggestedCategoryFilter] = useState('All');
+  const [adjustedPrices, setAdjustedPrices] = useState({});
+  const [addedItemsTracker, setAddedItemsTracker] = useState({});
+  const [customProductName, setCustomProductName] = useState('');
+  const [customProductPrice, setCustomProductPrice] = useState('');
+  const [customProductCategory, setCustomProductCategory] = useState('Pantry');
+  const [customProductIcon, setCustomProductIcon] = useState('🛍️');
+  const [customProductImage, setCustomProductImage] = useState(null);
   const [newProductName, setNewProductName] = useState('');
   const [newProductPrice, setNewProductPrice] = useState('');
   const [newProductCategory, setNewProductCategory] = useState('Pantry');
@@ -1549,19 +1560,34 @@ export default function App() {
     );
   };
 
-  const addNewProduct = () => {
-    if (!newProductName.trim() || !newProductPrice.trim()) {
-      Alert.alert('Required Fields', 'Please enter a product name and price.');
-      return;
+  const handlePickCustomProductImage = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/*'],
+        copyToCacheDirectory: true,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        setCustomProductImage(res.assets[0].uri);
+      }
+    } catch (err) {
+      console.warn('Error picking image', err);
+      Alert.alert('Upload Error', 'Could not access the selected photo.');
     }
+  };
+
+  const handleAddSuggestedProduct = (item) => {
+    const rawPrice = adjustedPrices[item.id] !== undefined ? adjustedPrices[item.id] : item.suggestedPrice;
+    const finalPrice = Number(rawPrice) > 0 ? Number(rawPrice) : item.suggestedPrice;
+
     const newProd = {
-      id: `p-${Date.now()}`,
-      name: newProductName.trim(),
-      price: Number(newProductPrice) || 2500,
-      icon: newProductIcon || '🛍️',
-      category: newProductCategory,
+      id: `p-sug-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      name: item.name,
+      price: finalPrice,
+      icon: item.icon,
+      category: item.category,
       outOfStock: false,
     };
+
     setStoresList((prev) =>
       prev.map((store) => {
         if (store.id === merchantStoreId) {
@@ -1573,10 +1599,51 @@ export default function App() {
         return store;
       })
     );
+
+    setAddedItemsTracker((prev) => ({ ...prev, [item.id]: true }));
+    Alert.alert(
+      '✓ Added to Store!',
+      `${item.name} (₦${finalPrice.toLocaleString()}) added to ${currentMerchantStore?.name} inventory!`
+    );
+  };
+
+  const handleAddCustomProduct = () => {
+    if (!customProductName.trim() || !customProductPrice.trim()) {
+      Alert.alert('Missing Details', 'Please provide a product name and selling price.');
+      return;
+    }
+
+    const newProd = {
+      id: `p-custom-${Date.now()}`,
+      name: customProductName.trim(),
+      price: Number(customProductPrice) || 2500,
+      icon: customProductIcon || '🛍️',
+      imageUri: customProductImage,
+      category: customProductCategory,
+      outOfStock: false,
+    };
+
+    setStoresList((prev) =>
+      prev.map((store) => {
+        if (store.id === merchantStoreId) {
+          return {
+            ...store,
+            products: [newProd, ...store.products],
+          };
+        }
+        return store;
+      })
+    );
+
     setAddProductModalVisible(false);
-    setNewProductName('');
-    setNewProductPrice('');
-    Alert.alert('Product Live', `${newProd.name} added to ${currentMerchantStore?.name} catalog!`);
+    setCustomProductName('');
+    setCustomProductPrice('');
+    setCustomProductImage(null);
+    Alert.alert('Product Live', `✓ ${newProd.name} added to ${currentMerchantStore?.name} catalog!`);
+  };
+
+  const addNewProduct = () => {
+    handleAddCustomProduct();
   };
 
   // Bulk Inventory Import Handlers (SRT, CSV, TSV, POS Files)
@@ -3756,7 +3823,15 @@ export default function App() {
                 <View style={{ marginTop: 12 }}>
                   {currentMerchantStore?.products.map((p) => (
                     <View key={p.id} style={styles.inventoryItemCard}>
-                      <Text style={{ fontSize: 26, marginRight: 12 }}>{p.icon || '🛍️'}</Text>
+                      {p.imageUri ? (
+                        <Image
+                          source={{ uri: p.imageUri }}
+                          style={styles.inventoryItemImageThumbnail}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <Text style={{ fontSize: 26, marginRight: 12 }}>{p.icon || '🛍️'}</Text>
+                      )}
                       <View style={{ flex: 1 }}>
                         <Text style={styles.inventoryItemName}>{p.name}</Text>
                         <Text style={styles.inventoryItemCategory}>{p.category} • {formatNaira(p.price)}</Text>
@@ -4015,88 +4090,337 @@ export default function App() {
         </View>
       )}
 
-      {/* --- ADD PRODUCT MODAL FOR MERCHANT --- */}
+      {/* --- ENHANCED ADD PRODUCT & INVENTORY ONBOARDING MODAL --- */}
       <Modal
         visible={addProductModalVisible}
         animationType="slide"
-        transparent={true}
+        transparent={false}
         onRequestClose={() => setAddProductModalVisible(false)}
       >
-        <View style={styles.locationModalOverlay}>
-          <View style={styles.addProductModalBox}>
-            <View style={styles.locationModalHeader}>
-              <Text style={styles.locationModalTitle}>Add Product to Store</Text>
-              <TouchableOpacity onPress={() => setAddProductModalVisible(false)}>
-                <Text style={{ fontSize: 18, color: COLORS.textMuted }}>✕</Text>
-              </TouchableOpacity>
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+          {/* Modal Header */}
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setAddProductModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={styles.modalHeaderTitle}>Add Items to Inventory</Text>
+              <Text style={{ fontSize: 10, color: COLORS.roseGoldLight, fontWeight: '700' }}>
+                {currentMerchantStore?.name}
+              </Text>
             </View>
+            <View style={{ width: 60 }} />
+          </View>
 
-            <Text style={styles.addInputLabel}>Product Name</Text>
-            <TextInput
-              style={styles.addTextInput}
-              placeholder="e.g. Imported Gouda Cheese (250g)"
-              placeholderTextColor="#94A3B8"
-              value={newProductName}
-              onChangeText={setNewProductName}
-            />
-
-            <Text style={styles.addInputLabel}>Price (₦)</Text>
-            <TextInput
-              style={styles.addTextInput}
-              placeholder="e.g. 7500"
-              placeholderTextColor="#94A3B8"
-              keyboardType="numeric"
-              value={newProductPrice}
-              onChangeText={setNewProductPrice}
-            />
-
-            <Text style={styles.addInputLabel}>Category</Text>
-            <View style={styles.categoryPickerRow}>
-              {['Produce', 'Pantry', 'Deli', 'Beverage', 'Pastry'].map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[
-                    styles.catChoicePill,
-                    newProductCategory === cat && styles.catChoicePillActive,
-                  ]}
-                  onPress={() => setNewProductCategory(cat)}
-                >
-                  <Text
-                    style={[
-                      styles.catChoiceText,
-                      newProductCategory === cat && styles.catChoiceTextActive,
-                    ]}
-                  >
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.addInputLabel}>Product Emoji Icon</Text>
-            <View style={styles.categoryPickerRow}>
-              {['🧀', '🫒', '🥩', '🥖', '🍾', '🍯', '🥑', '🍅'].map((ico) => (
-                <TouchableOpacity
-                  key={ico}
-                  style={[
-                    styles.iconChoiceCircle,
-                    newProductIcon === ico && styles.iconChoiceCircleActive,
-                  ]}
-                  onPress={() => setNewProductIcon(ico)}
-                >
-                  <Text style={{ fontSize: 20 }}>{ico}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+          {/* Modal Tabs Header: Suggested vs Custom */}
+          <View style={styles.addModalTabContainer}>
+            <TouchableOpacity
+              style={[
+                styles.addModalTabBtn,
+                addModalTab === 'suggested' && styles.addModalTabBtnActive,
+              ]}
+              onPress={() => setAddModalTab('suggested')}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.addModalTabText,
+                  addModalTab === 'suggested' && styles.addModalTabTextActive,
+                ]}
+              >
+                ⚡ Suggested Catalog ({NIGERIAN_GROCERIES_CATALOG.length})
+              </Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.primaryActionBtn, { marginTop: 16 }]}
-              onPress={addNewProduct}
+              style={[
+                styles.addModalTabBtn,
+                addModalTab === 'custom' && styles.addModalTabBtnActive,
+              ]}
+              onPress={() => setAddModalTab('custom')}
+              activeOpacity={0.8}
             >
-              <Text style={styles.primaryActionBtnText}>Publish to Store</Text>
+              <Text
+                style={[
+                  styles.addModalTabText,
+                  addModalTab === 'custom' && styles.addModalTabTextActive,
+                ]}
+              >
+                📷 Custom Product
+              </Text>
             </TouchableOpacity>
           </View>
-        </View>
+
+          {/* TAB 1: SUGGESTED NIGERIAN GROCERIES (1-TAP QUICK ADD) */}
+          {addModalTab === 'suggested' && (
+            <View style={{ flex: 1, backgroundColor: COLORS.beigeBg }}>
+              {/* Search Bar */}
+              <View style={styles.addSearchWrap}>
+                <TextInput
+                  style={styles.addSearchInput}
+                  placeholder="🔍 Search tomatoes, onions, drinks, biscuits, indomie..."
+                  placeholderTextColor="#94A3B8"
+                  value={suggestedSearch}
+                  onChangeText={setSuggestedSearch}
+                />
+                {suggestedSearch.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.addSearchClearBtn}
+                    onPress={() => setSuggestedSearch('')}
+                  >
+                    <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '800' }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Category Filter Pills */}
+              <View style={{ height: 44 }}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.addCategoryScroll}
+                >
+                  {[
+                    { id: 'All', label: 'All Items' },
+                    { id: 'Drinks', label: '🥤 Drinks & Beverages' },
+                    { id: 'Produce', label: '🍅 Fresh Produce' },
+                    { id: 'Biscuits', label: '🍪 Biscuits & Snacks' },
+                    { id: 'Pantry', label: '🍚 Pantry Staples' },
+                    { id: 'Household', label: '🧼 Household & Cleaning' },
+                  ].map((cat) => {
+                    const active = suggestedCategoryFilter === cat.id;
+                    return (
+                      <TouchableOpacity
+                        key={cat.id}
+                        style={[
+                          styles.addCatPill,
+                          active && styles.addCatPillActive,
+                        ]}
+                        onPress={() => setSuggestedCategoryFilter(cat.id)}
+                      >
+                        <Text
+                          style={[
+                            styles.addCatPillText,
+                            active && styles.addCatPillTextActive,
+                          ]}
+                        >
+                          {cat.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              {/* Suggested Groceries List */}
+              <ScrollView
+                style={{ flex: 1 }}
+                contentContainerStyle={{ padding: 14, paddingBottom: 60 }}
+                keyboardShouldPersistTaps="handled"
+              >
+                <Text style={styles.addListHeaderNote}>
+                  Tap the '+' sign to add any item to your shop. You can adjust the selling price directly before or after adding.
+                </Text>
+
+                {NIGERIAN_GROCERIES_CATALOG.filter((item) => {
+                  const matchesCat =
+                    suggestedCategoryFilter === 'All' || item.category === suggestedCategoryFilter;
+                  const matchesQuery =
+                    !suggestedSearch ||
+                    item.name.toLowerCase().includes(suggestedSearch.toLowerCase()) ||
+                    item.category.toLowerCase().includes(suggestedSearch.toLowerCase());
+                  return matchesCat && matchesQuery;
+                }).map((item) => {
+                  const isAdded = addedItemsTracker[item.id];
+                  const currentPriceValue =
+                    adjustedPrices[item.id] !== undefined
+                      ? String(adjustedPrices[item.id])
+                      : String(item.suggestedPrice);
+
+                  return (
+                    <View key={item.id} style={styles.suggestedCard}>
+                      <View style={styles.suggestedCardTopRow}>
+                        <View style={styles.suggestedIconWrap}>
+                          <Text style={{ fontSize: 26 }}>{item.icon}</Text>
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 10 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Text style={styles.suggestedCategoryTag}>{item.category.toUpperCase()}</Text>
+                            <Text style={styles.suggestedRangeTag}>Range: {item.priceRange}</Text>
+                          </View>
+                          <Text style={styles.suggestedTitle}>{item.name}</Text>
+                          <Text style={styles.suggestedDesc} numberOfLines={1}>
+                            {item.description}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Price Editor & Add Button Row */}
+                      <View style={styles.suggestedBottomRow}>
+                        <View style={styles.suggestedPriceBox}>
+                          <Text style={styles.suggestedPricePrefix}>₦</Text>
+                          <TextInput
+                            style={styles.suggestedPriceInput}
+                            keyboardType="numeric"
+                            value={currentPriceValue}
+                            onChangeText={(txt) => {
+                              const cleaned = txt.replace(/[^0-9]/g, '');
+                              setAdjustedPrices((prev) => ({
+                                ...prev,
+                                [item.id]: cleaned,
+                              }));
+                            }}
+                            placeholder="Price"
+                            placeholderTextColor="#94A3B8"
+                          />
+                        </View>
+
+                        <TouchableOpacity
+                          style={[
+                            styles.suggestedAddBtn,
+                            isAdded && styles.suggestedAddBtnDone,
+                          ]}
+                          onPress={() => handleAddSuggestedProduct(item)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.suggestedAddBtnText}>
+                            {isAdded ? '✓ Added to Store' : '+ Add to Store'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* TAB 2: CUSTOM PRODUCT WITH IMAGE UPLOAD */}
+          {addModalTab === 'custom' && (
+            <ScrollView
+              style={{ flex: 1, backgroundColor: COLORS.beigeBg }}
+              contentContainerStyle={{ padding: 16, paddingBottom: 80 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={styles.customHeroCard}>
+                <Text style={styles.customHeroTitle}>Add Custom Store Product</Text>
+                <Text style={styles.customHeroSub}>
+                  Upload a photo of your product, choose its category, and set your custom selling price.
+                </Text>
+
+                {/* Product Photo Upload Section */}
+                <Text style={styles.customFieldLabel}>PRODUCT PHOTO</Text>
+                {customProductImage ? (
+                  <View style={styles.customImagePreviewWrap}>
+                    <Image
+                      source={{ uri: customProductImage }}
+                      style={styles.customImagePreview}
+                      resizeMode="cover"
+                    />
+                    <TouchableOpacity
+                      style={styles.customRemoveImageBtn}
+                      onPress={() => setCustomProductImage(null)}
+                    >
+                      <Text style={styles.customRemoveImageText}>✕ Remove Photo</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.customUploadBox}
+                    onPress={handlePickCustomProductImage}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 32, marginBottom: 6 }}>📷</Text>
+                    <Text style={styles.customUploadTitle}>Tap to Upload Product Photo</Text>
+                    <Text style={styles.customUploadSub}>
+                      JPG, PNG, or WEBP from phone gallery or camera
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Fallback Icon Selector */}
+                {!customProductImage && (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={styles.customFieldSubLabel}>Or choose an emoji icon:</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
+                      {['🛍️', '🥩', '🥖', '🍾', '🍯', '🥑', '🍅', '🧀', '🫒', '🐟', '🍉', '☕'].map((ico) => (
+                        <TouchableOpacity
+                          key={ico}
+                          style={[
+                            styles.customIconCircle,
+                            customProductIcon === ico && styles.customIconCircleActive,
+                          ]}
+                          onPress={() => setCustomProductIcon(ico)}
+                        >
+                          <Text style={{ fontSize: 22 }}>{ico}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Product Name */}
+                <Text style={[styles.customFieldLabel, { marginTop: 14 }]}>PRODUCT NAME</Text>
+                <TextInput
+                  style={styles.customTextInput}
+                  placeholder="e.g. Fresh Goat Meat (500g Cut)"
+                  placeholderTextColor="#94A3B8"
+                  value={customProductName}
+                  onChangeText={setCustomProductName}
+                />
+
+                {/* Price */}
+                <Text style={[styles.customFieldLabel, { marginTop: 14 }]}>SELLING PRICE (₦ NAIRA)</Text>
+                <TextInput
+                  style={styles.customTextInput}
+                  placeholder="e.g. 4500"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                  value={customProductPrice}
+                  onChangeText={setCustomProductPrice}
+                />
+
+                {/* Category Selection */}
+                <Text style={[styles.customFieldLabel, { marginTop: 14 }]}>CATEGORY</Text>
+                <View style={styles.customCatChoicesRow}>
+                  {['Produce', 'Pantry', 'Drinks', 'Biscuits', 'Household', 'Deli/Bakery'].map((cat) => (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[
+                        styles.customCatChip,
+                        customProductCategory === cat && styles.customCatChipActive,
+                      ]}
+                      onPress={() => setCustomProductCategory(cat)}
+                    >
+                      <Text
+                        style={[
+                          styles.customCatChipText,
+                          customProductCategory === cat && styles.customCatChipTextActive,
+                        ]}
+                      >
+                        {cat}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Submit Button */}
+                <TouchableOpacity
+                  style={styles.customSubmitBtn}
+                  onPress={handleAddCustomProduct}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.customSubmitBtnText}>Publish Custom Product to Store ➔</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          )}
+        </SafeAreaView>
       </Modal>
 
       {/* --- BULK INVENTORY & CATALOG IMPORT MODAL FOR MERCHANTS --- */}
@@ -7857,6 +8181,339 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#15803D',
     marginTop: 2,
+  },
+
+  // --- Add Product Modal: Suggested vs Custom Tab Switcher ---
+  addModalTabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  addModalTabBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
+  },
+  addModalTabBtnActive: {
+    borderBottomColor: COLORS.emeraldDeep,
+    backgroundColor: '#F8FAFC',
+  },
+  addModalTabText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  addModalTabTextActive: {
+    color: COLORS.emeraldDeep,
+    fontWeight: '800',
+  },
+
+  // Search & Filter in Add Modal
+  addSearchWrap: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 8,
+    position: 'relative',
+  },
+  addSearchInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 13,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    color: COLORS.textDark,
+  },
+  addSearchClearBtn: {
+    position: 'absolute',
+    right: 26,
+    top: 22,
+    padding: 4,
+  },
+  addCategoryScroll: {
+    paddingHorizontal: 14,
+    gap: 8,
+    alignItems: 'center',
+  },
+  addCatPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  addCatPillActive: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderColor: COLORS.emeraldDeep,
+  },
+  addCatPillText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  addCatPillTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  addListHeaderNote: {
+    fontSize: 11,
+    color: '#64748B',
+    marginBottom: 10,
+    lineHeight: 16,
+  },
+
+  // Suggested Item Card
+  suggestedCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  suggestedCardTopRow: {
+    flexDirection: 'row',
+  },
+  suggestedIconWrap: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: COLORS.emeraldSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  suggestedCategoryTag: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+    letterSpacing: 0.5,
+  },
+  suggestedRangeTag: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  suggestedTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    marginTop: 2,
+  },
+  suggestedDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  suggestedBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  suggestedPriceBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.beigeBg,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  suggestedPricePrefix: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+    marginRight: 4,
+  },
+  suggestedPriceInput: {
+    width: 85,
+    paddingVertical: 5,
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  suggestedAddBtn: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  suggestedAddBtnDone: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  suggestedAddBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  // Custom Product Screen Styles
+  customHeroCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  customHeroTitle: {
+    fontSize: 15.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  customHeroSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 3,
+    marginBottom: 14,
+    lineHeight: 16,
+  },
+  customFieldLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    letterSpacing: 0.5,
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  customFieldSubLabel: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  customImagePreviewWrap: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    position: 'relative',
+    height: 160,
+  },
+  customImagePreview: {
+    width: '100%',
+    height: 160,
+  },
+  customRemoveImageBtn: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  customRemoveImageText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  customUploadBox: {
+    borderStyle: 'dashed',
+    borderWidth: 1.5,
+    borderColor: COLORS.champagneGold,
+    borderRadius: 14,
+    padding: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.beigeBg,
+  },
+  customUploadTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  customUploadSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  customIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: COLORS.beigeBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  customIconCircleActive: {
+    borderColor: COLORS.emeraldDeep,
+    borderWidth: 2,
+    backgroundColor: COLORS.emeraldSurface,
+  },
+  customTextInput: {
+    backgroundColor: COLORS.beigeBg,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 13,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    color: COLORS.textDark,
+  },
+  customCatChoicesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  customCatChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: COLORS.beigeBg,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  customCatChipActive: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderColor: COLORS.emeraldDeep,
+  },
+  customCatChipText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  customCatChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  customSubmitBtn: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  customSubmitBtnText: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  inventoryItemImageThumbnail: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    marginRight: 12,
+    backgroundColor: '#E2E8F0',
   },
 });
 
