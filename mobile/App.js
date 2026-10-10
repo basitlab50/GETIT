@@ -20,6 +20,12 @@ import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
 import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
 import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
+import {
+  addStoreInventoryItem,
+  createDatabaseOrder,
+  updateDatabaseOrderStatus,
+  subscribeToOrders,
+} from './services/supabaseService';
 
 const { width } = Dimensions.get('window');
 
@@ -1014,6 +1020,67 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  // Supabase Real-time Cloud Orders Subscription
+  useEffect(() => {
+    const unsubscribe = subscribeToOrders((payload) => {
+      if (payload.eventType === 'INSERT' && payload.new) {
+        const item = payload.new;
+        setOrders((prev) => {
+          if (prev.some((o) => o.id === item.id)) return prev;
+          return [
+            {
+              id: item.id,
+              storeName: item.store_name,
+              itemsCount: item.items_count,
+              items: item.items || [],
+              total: Number(item.total),
+              vendorPayout: Number(item.vendor_payout),
+              deliveryPartner: item.delivery_partner,
+              deliveryFee: Number(item.delivery_fee),
+              boltStatus: item.bolt_status,
+              boltTrackingCode: item.bolt_tracking_code,
+              boltRider: item.bolt_rider,
+              boltCoords: item.bolt_coords,
+              status: item.status,
+              eta: item.eta,
+              deliveryPin: item.delivery_pin,
+              pickupPin: item.pickup_pin,
+              customerName: item.customer_name,
+              customerAddress: item.customer_address,
+              deliveryLocation: {
+                latitude: item.delivery_lat,
+                longitude: item.delivery_lng,
+              },
+              createdAt: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            },
+            ...prev,
+          ];
+        });
+      } else if (payload.eventType === 'UPDATE' && payload.new) {
+        const updated = payload.new;
+        setOrders((prev) =>
+          prev.map((o) => {
+            if (o.id === updated.id) {
+              return {
+                ...o,
+                status: updated.status || o.status,
+                boltStatus: updated.bolt_status || o.boltStatus,
+                boltRider: updated.bolt_rider || o.boltRider,
+                boltCoords: updated.bolt_coords || o.boltCoords,
+                eta: updated.eta || o.eta,
+              };
+            }
+            return o;
+          })
+        );
+      }
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, []);
+
   // Live Online Places Search with Strict Nigeria Geofencing
   const searchPlacesOnline = async (queryText, currentLocalMatches = []) => {
     if (!queryText || queryText.trim().length < 2) return;
@@ -1451,6 +1518,16 @@ export default function App() {
     if (selectedStore) setSelectedStore(null);
     setActiveTab('orders');
     Alert.alert('Order Confirmed!', `Your order ${newOrder.id} has been placed via ${selectedDeliveryTier === 'bolt' ? 'Bolt Express' : 'GETIT Concierge'}.`);
+
+    // Sync to Supabase Cloud Database
+    createDatabaseOrder({
+      ...newOrder,
+      storeId: merchantStoreId || 'store-fresh-mart',
+      customerPhone: '+234 803 000 1234',
+      deliveryLat: pinnedLocation.latitude,
+      deliveryLng: pinnedLocation.longitude,
+      courierNotes: riderDeliveryNote || pinnedLocation.notes,
+    }).catch((e) => console.log('Supabase order upload notice:', e?.message));
   };
 
   // Merchant Helper Computations & Actions
@@ -1480,6 +1557,7 @@ export default function App() {
       prev.map((o) => (o.id === orderId ? { ...o, status: 'Preparing' } : o))
     );
     Alert.alert('Order Accepted', `Order ${orderId} is now marked as Preparing in your shop.`);
+    updateDatabaseOrderStatus(orderId, { status: 'Preparing' }).catch(() => {});
   };
 
   const dispatchBoltCourier = (orderId) => {
@@ -1513,6 +1591,14 @@ export default function App() {
       '🟢 Bolt Courier Dispatched!',
       `Bolt rider ${assignedRider.name} (${assignedRider.vehicle}, ${assignedRider.plate}) is dispatched to your store!\n\nPickup PIN: ${targetOrder?.pickupPin || '7391'}\nTracking Code: ${boltCode}\nETA: 4 mins.`
     );
+
+    updateDatabaseOrderStatus(orderId, {
+      status: 'On the Way',
+      boltStatus: 'IN_TRANSIT',
+      boltRider: assignedRider,
+      boltCoords: { latitude: riderLat, longitude: riderLng },
+      eta: '14 mins (Bolt Motorbike)',
+    }).catch(() => {});
   };
 
   const readyMerchantOrder = (orderId) => {
@@ -1520,6 +1606,7 @@ export default function App() {
       prev.map((o) => (o.id === orderId ? { ...o, status: 'Ready for Pickup' } : o))
     );
     Alert.alert('Order Ready', `Order ${orderId} is packaged. Courier has been notified with the Pickup PIN.`);
+    updateDatabaseOrderStatus(orderId, { status: 'Ready for Pickup' }).catch(() => {});
   };
 
   const completeMerchantOrder = (orderId) => {
@@ -1527,6 +1614,7 @@ export default function App() {
       prev.map((o) => (o.id === orderId ? { ...o, status: 'Completed', eta: 'Delivered' } : o))
     );
     Alert.alert('Handover Complete', `Order ${orderId} handed over to courier and marked completed.`);
+    updateDatabaseOrderStatus(orderId, { status: 'Delivered', eta: 'Delivered' }).catch(() => {});
   };
 
   const rejectMerchantOrder = (orderId) => {
@@ -1605,6 +1693,11 @@ export default function App() {
       '✓ Added to Store!',
       `${item.name} (₦${finalPrice.toLocaleString()}) added to ${currentMerchantStore?.name} inventory!`
     );
+
+    // Sync to Supabase Cloud store_inventory
+    addStoreInventoryItem(merchantStoreId || 'store-fresh-mart', newProd).catch((e) =>
+      console.log('Supabase inventory sync notice:', e?.message)
+    );
   };
 
   const handleAddCustomProduct = () => {
@@ -1640,6 +1733,12 @@ export default function App() {
     setCustomProductPrice('');
     setCustomProductImage(null);
     Alert.alert('Product Live', `✓ ${newProd.name} added to ${currentMerchantStore?.name} catalog!`);
+
+    // Sync custom product to Supabase Cloud store_inventory
+    addStoreInventoryItem(merchantStoreId || 'store-fresh-mart', {
+      ...newProd,
+      imageUrl: customProductImage,
+    }).catch((e) => console.log('Supabase custom item sync notice:', e?.message));
   };
 
   const addNewProduct = () => {
