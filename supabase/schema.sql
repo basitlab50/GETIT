@@ -95,6 +95,50 @@ CREATE TABLE IF NOT EXISTS public.riders (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Real-time publication for live order & rider updates
-ALTER PUBLICATION supabase_realtime ADD TABLE public.orders;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.store_inventory;
+-- =========================================================================
+-- ROW LEVEL SECURITY (RLS) POLICIES
+-- Ensures open access for the GETIT customer & merchant apps using anon key
+-- =========================================================================
+
+ALTER TABLE public.stores ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.master_catalog_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.store_inventory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.riders ENABLE ROW LEVEL SECURITY;
+
+-- Allow anon public full read/write for seamless app operations
+DO $$
+BEGIN
+    DROP POLICY IF EXISTS "Public stores access" ON public.stores;
+    CREATE POLICY "Public stores access" ON public.stores FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public master_catalog_products access" ON public.master_catalog_products;
+    CREATE POLICY "Public master_catalog_products access" ON public.master_catalog_products FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public store_inventory access" ON public.store_inventory;
+    CREATE POLICY "Public store_inventory access" ON public.store_inventory FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public orders access" ON public.orders;
+    CREATE POLICY "Public orders access" ON public.orders FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public riders access" ON public.riders;
+    CREATE POLICY "Public riders access" ON public.riders FOR ALL USING (true) WITH CHECK (true);
+END $$;
+
+-- Enable Real-time publications for live order & inventory updates
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND tablename = 'orders'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.orders;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND tablename = 'store_inventory'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.store_inventory;
+    END IF;
+END $$;

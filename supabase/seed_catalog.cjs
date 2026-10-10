@@ -1,15 +1,13 @@
 /**
  * Seed Script: Master Nigerian Groceries & Pharmacy Catalog (193 SKUs) into Supabase
  *
+ * Uses native fetch for maximum Node.js compatibility across all environments.
  * Usage:
  *   node supabase/seed_catalog.cjs [SUPABASE_URL] [SUPABASE_ANON_OR_SERVICE_KEY]
- *
- * Or set SUPABASE_URL and SUPABASE_KEY in your environment / .env file.
  */
 
 const fs = require('fs');
 const path = require('path');
-const { createClient } = require('@supabase/supabase-js');
 
 // 1. Resolve environment credentials
 let supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || process.argv[2];
@@ -24,8 +22,8 @@ if (fs.existsSync(envPath)) {
     if (match) {
       const key = match[1].trim();
       const val = (match[2] || '').trim().replace(/^['"]|['"]$/g, '');
-      if (key === 'VITE_SUPABASE_URL' || key === 'SUPABASE_URL') supabaseUrl = supabaseUrl || val;
-      if (key === 'VITE_SUPABASE_ANON_KEY' || key === 'SUPABASE_KEY' || key === 'SUPABASE_SERVICE_ROLE_KEY') supabaseKey = supabaseKey || val;
+      if ((key === 'VITE_SUPABASE_URL' || key === 'SUPABASE_URL') && !supabaseUrl) supabaseUrl = val;
+      if ((key === 'VITE_SUPABASE_ANON_KEY' || key === 'SUPABASE_KEY' || key === 'SUPABASE_SERVICE_ROLE_KEY') && !supabaseKey) supabaseKey = val;
     }
   });
 }
@@ -35,19 +33,14 @@ if (!supabaseUrl || !supabaseKey || supabaseUrl.includes('placeholder')) {
   console.log('\nPlease provide your credentials in one of these ways:');
   console.log('1. Pass them as arguments:');
   console.log('   node supabase/seed_catalog.cjs <YOUR_SUPABASE_URL> <YOUR_SUPABASE_KEY>');
-  console.log('2. Or set them in a .env file at the project root:');
-  console.log('   VITE_SUPABASE_URL=https://your-project.supabase.co');
-  console.log('   VITE_SUPABASE_ANON_KEY=your-anon-or-service-key\n');
+  console.log('2. Or set them in a .env file at the project root:\n');
   process.exit(1);
 }
-
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 2. Load catalog items from mobile/data/nigerianGroceriesCatalog.js
 const catalogFile = path.join(__dirname, '..', 'mobile', 'data', 'nigerianGroceriesCatalog.js');
 const rawCode = fs.readFileSync(catalogFile, 'utf8');
 
-// Extract the JSON array
 const match = rawCode.match(/export const NIGERIAN_GROCERIES_CATALOG = (\[[\s\S]*?\]);/);
 if (!match) {
   console.error('Failed to parse NIGERIAN_GROCERIES_CATALOG array from file.');
@@ -58,7 +51,6 @@ let catalogItems;
 try {
   catalogItems = JSON.parse(match[1]);
 } catch (e) {
-  // If JSON.parse fails due to formatting, evaluate safely
   console.error('Failed to JSON parse catalog:', e.message);
   process.exit(1);
 }
@@ -79,18 +71,32 @@ async function seed() {
     image_url: item.imageUrl || null
   }));
 
-  // Batch insert in chunks of 50
+  const endpoint = `${supabaseUrl.replace(/\/$/, '')}/rest/v1/master_catalog_products`;
   const chunkSize = 50;
   let totalInserted = 0;
 
   for (let i = 0; i < records.length; i += chunkSize) {
     const chunk = records.slice(i, i + chunkSize);
-    const { data, error } = await supabase
-      .from('master_catalog_products')
-      .upsert(chunk, { onConflict: 'id' });
+    
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify(chunk)
+    });
 
-    if (error) {
-      console.error(`\x1b[31mError upserting chunk ${i / chunkSize + 1}:\x1b[0m`, error.message);
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`\x1b[31mError upserting chunk ${i / chunkSize + 1} (${response.status}):\x1b[0m`, errText);
+      if (errText.includes('PGRST205') || errText.includes('Could not find the table')) {
+        console.log('\n\x1b[33mNOTE: The database table "public.master_catalog_products" does not exist yet.');
+        console.log('Please copy and run supabase/schema.sql in your Supabase SQL Editor first!\x1b[0m\n');
+        process.exit(1);
+      }
     } else {
       totalInserted += chunk.length;
       console.log(`\x1b[32m✔ Inserted/Updated ${totalInserted}/${records.length} products\x1b[0m`);
