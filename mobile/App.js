@@ -18,6 +18,7 @@ import {
 import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
+import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
 
 const { width } = Dimensions.get('window');
 
@@ -881,6 +882,7 @@ export default function App() {
   const [cart, setCart] = useState([]);
   const [cartModalVisible, setCartModalVisible] = useState(false);
   const [checkoutModalVisible, setCheckoutModalVisible] = useState(false);
+  const [selectedDeliveryTier, setSelectedDeliveryTier] = useState('bolt'); // 'bolt' | 'concierge'
 
   const [storesList, setStoresList] = useState(STORES_AROUND_ME);
   const [appMode, setAppMode] = useState('customer'); // 'customer' | 'merchant'
@@ -914,8 +916,23 @@ export default function App() {
       ],
       total: 33500,
       vendorPayout: 30150,
-      status: 'Preparing',
-      eta: '12 mins',
+      status: 'On the Way',
+      deliveryPartner: 'bolt',
+      boltStatus: 'IN_TRANSIT',
+      boltTrackingCode: 'BOLT-ABJ-89412',
+      boltRider: {
+        name: 'Musa Ibrahim',
+        phone: '+234 803 294 1194',
+        rating: '4.95',
+        trips: 1420,
+        vehicle: 'Bajaj Boxer 150 (Red)',
+        plate: 'ABJ-492-KW',
+      },
+      boltCoords: {
+        latitude: 9.0912,
+        longitude: 7.4912,
+      },
+      eta: '11 mins',
       deliveryPin: '4928',
       pickupPin: '7391',
       customerName: 'Chief Emeka Okafor',
@@ -925,6 +942,7 @@ export default function App() {
         longitude: 7.4933,
         landmark: 'Opposite Transcorp Hilton, Black Gate with Security Post',
         apartment: 'Suite 4B',
+        notes: 'Call on arrival for estate gate clearance',
       },
       createdAt: '12:45 PM',
     },
@@ -953,6 +971,37 @@ export default function App() {
       createdAt: '1:10 PM',
     },
   ]);
+
+  // Live Animated Bolt Motorbike Rider Glide Simulation
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setOrders((prev) =>
+        prev.map((ord) => {
+          if (
+            ord.deliveryPartner === 'bolt' &&
+            ord.boltCoords &&
+            ord.deliveryLocation &&
+            (ord.status === 'On the Way' || ord.boltStatus === 'IN_TRANSIT')
+          ) {
+            // Nudge rider 10% closer to customer dropoff destination
+            const targetLat = ord.deliveryLocation.latitude;
+            const targetLng = ord.deliveryLocation.longitude;
+            const stepLat = (targetLat - ord.boltCoords.latitude) * 0.12;
+            const stepLng = (targetLng - ord.boltCoords.longitude) * 0.12;
+            return {
+              ...ord,
+              boltCoords: {
+                latitude: ord.boltCoords.latitude + stepLat,
+                longitude: ord.boltCoords.longitude + stepLng,
+              },
+            };
+          }
+          return ord;
+        })
+      );
+    }, 4000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Live Online Places Search with Strict Nigeria Geofencing
   const searchPlacesOnline = async (queryText, currentLocalMatches = []) => {
@@ -1344,7 +1393,7 @@ export default function App() {
   };
 
   const cartSubtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
-  const deliveryFee = cart.length > 0 ? 1200 : 0;
+  const deliveryFee = cart.length > 0 ? (selectedDeliveryTier === 'bolt' ? 1200 : 2500) : 0;
   const conciergeFee = Math.round(cartSubtotal * 0.04);
   const cartTotal = cartSubtotal + deliveryFee + conciergeFee;
 
@@ -1363,8 +1412,14 @@ export default function App() {
       })),
       total: cartTotal,
       vendorPayout: Math.round(cartSubtotal * 0.9),
+      deliveryPartner: selectedDeliveryTier,
+      deliveryFee,
+      boltStatus: selectedDeliveryTier === 'bolt' ? 'PENDING_VENDOR' : null,
+      boltTrackingCode: selectedDeliveryTier === 'bolt' ? `BOLT-ABJ-${Math.floor(10000 + Math.random() * 90000)}` : null,
+      boltRider: null,
+      boltCoords: null,
       status: 'New Order',
-      eta: '25 mins',
+      eta: selectedDeliveryTier === 'bolt' ? '18 mins (Bolt Express)' : '25 mins (Concierge)',
       deliveryPin: `${Math.floor(1000 + Math.random() * 9000)}`,
       pickupPin: `${Math.floor(1000 + Math.random() * 9000)}`,
       customerName: 'Alhaji Farouk Bello',
@@ -1384,7 +1439,7 @@ export default function App() {
     setCartModalVisible(false);
     if (selectedStore) setSelectedStore(null);
     setActiveTab('orders');
-    Alert.alert('Order Confirmed!', `Your order ${newOrder.id} has been placed.`);
+    Alert.alert('Order Confirmed!', `Your order ${newOrder.id} has been placed via ${selectedDeliveryTier === 'bolt' ? 'Bolt Express' : 'GETIT Concierge'}.`);
   };
 
   // Merchant Helper Computations & Actions
@@ -1414,6 +1469,39 @@ export default function App() {
       prev.map((o) => (o.id === orderId ? { ...o, status: 'Preparing' } : o))
     );
     Alert.alert('Order Accepted', `Order ${orderId} is now marked as Preparing in your shop.`);
+  };
+
+  const dispatchBoltCourier = (orderId) => {
+    const targetOrder = orders.find((o) => o.id === orderId);
+    const assignedRider = SAMPLE_BOLT_RIDERS[Math.floor(Math.random() * SAMPLE_BOLT_RIDERS.length)];
+    const boltCode = `BOLT-ABJ-${Math.floor(10000 + Math.random() * 90000)}`;
+    const storeLat = 9.0882;
+    const storeLng = 7.4933;
+    const riderLat = storeLat + (Math.random() - 0.5) * 0.005;
+    const riderLng = storeLng + (Math.random() - 0.5) * 0.005;
+
+    setOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === orderId) {
+          return {
+            ...o,
+            deliveryPartner: 'bolt',
+            boltStatus: 'IN_TRANSIT',
+            boltTrackingCode: boltCode,
+            boltRider: assignedRider,
+            boltCoords: { latitude: riderLat, longitude: riderLng },
+            status: 'On the Way',
+            eta: '14 mins (Bolt Motorbike)',
+          };
+        }
+        return o;
+      })
+    );
+
+    Alert.alert(
+      '🟢 Bolt Courier Dispatched!',
+      `Bolt rider ${assignedRider.name} (${assignedRider.vehicle}, ${assignedRider.plate}) is dispatched to your store!\n\nPickup PIN: ${targetOrder?.pickupPin || '7391'}\nTracking Code: ${boltCode}\nETA: 4 mins.`
+    );
   };
 
   const readyMerchantOrder = (orderId) => {
@@ -1924,6 +2012,102 @@ export default function App() {
                   <Text style={styles.pinNumberText}>{ord.deliveryPin}</Text>
                 </View>
               </View>
+
+              {/* --- IN-APP BOLT LIVE COURIER TRACKING (IF BOLT ORDER) --- */}
+              {ord.deliveryPartner === 'bolt' && (
+                <View style={styles.boltTrackingCard}>
+                  <View style={styles.boltTrackingTopRow}>
+                    <View style={styles.boltNetworkTag}>
+                      <Text style={{ fontSize: 16 }}>🟢</Text>
+                      <Text style={styles.boltNetworkTitle}>BOLT DELIVERY NETWORK</Text>
+                    </View>
+                    <View style={styles.boltEtaPill}>
+                      <Text style={styles.boltEtaPillText}>{ord.eta || '12 mins'}</Text>
+                    </View>
+                  </View>
+
+                  {/* Interactive In-App Moving Courier Map */}
+                  <View style={styles.boltTrackingMapWrap}>
+                    <MapView
+                      style={styles.boltTrackingMap}
+                      initialRegion={{
+                        latitude: ord.deliveryLocation?.latitude || 9.0882,
+                        longitude: ord.deliveryLocation?.longitude || 7.4933,
+                        latitudeDelta: 0.015,
+                        longitudeDelta: 0.015,
+                      }}
+                      scrollEnabled={true}
+                      zoomEnabled={true}
+                    >
+                      {/* Customer Dropoff Pin */}
+                      <Marker
+                        coordinate={{
+                          latitude: ord.deliveryLocation?.latitude || 9.0882,
+                          longitude: ord.deliveryLocation?.longitude || 7.4933,
+                        }}
+                        title="Your Delivery Destination"
+                        description={ord.customerAddress}
+                        pinColor="#056B4B"
+                      />
+
+                      {/* Store Origin Pin */}
+                      <Marker
+                        coordinate={{
+                          latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
+                          longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
+                        }}
+                        title={ord.storeName}
+                        description="Store Fulfillment Hub"
+                        pinColor="#B76E79"
+                      />
+
+                      {/* Moving Bolt Motorbike Rider Pin */}
+                      <Marker
+                        coordinate={
+                          ord.boltCoords || {
+                            latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.002,
+                            longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.002,
+                          }
+                        }
+                        title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Bolt Courier)`}
+                        description={`${ord.boltRider?.vehicle || 'Bajaj Boxer 150'} • ${ord.boltRider?.plate || 'ABJ-492-KW'}`}
+                      />
+                    </MapView>
+                  </View>
+
+                  {/* Bolt Courier Profile & Call Bar */}
+                  <View style={styles.boltRiderBox}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                      <View style={styles.boltRiderAvatar}>
+                        <Text style={{ fontSize: 20 }}>🛵</Text>
+                      </View>
+                      <View style={{ marginLeft: 10, flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Text style={styles.boltRiderName}>
+                            {ord.boltRider?.name || 'Musa Ibrahim'}
+                          </Text>
+                          <Text style={styles.boltRiderRating}>
+                            {' '}• {ord.boltRider?.rating || '4.95'}★
+                          </Text>
+                        </View>
+                        <Text style={styles.boltRiderVehicle} numberOfLines={1}>
+                          {ord.boltRider?.vehicle || 'Bajaj Boxer 150'} ({ord.boltRider?.plate || 'ABJ-492-KW'})
+                        </Text>
+                      </View>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.boltCallBtn}
+                      onPress={() =>
+                        Linking.openURL(`tel:${ord.boltRider?.phone || '+2348032941194'}`)
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.boltCallBtnText}>📞 Call Courier</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
 
               {/* Pinned Google Map Destination for Rider */}
               <View style={styles.orderGpsCard}>
@@ -2595,6 +2779,71 @@ export default function App() {
                       );
                     })}
                   </ScrollView>
+                </View>
+
+                {/* Delivery Partner Selection */}
+                <View style={styles.deliveryTierContainer}>
+                  <Text style={styles.deliveryTierHeader}>SELECT DELIVERY PARTNER</Text>
+                  <Text style={styles.deliveryTierSub}>
+                    Direct dispatch to your pinned GPS location
+                  </Text>
+
+                  {/* Option 1: Bolt Express Motorbike */}
+                  <TouchableOpacity
+                    style={[
+                      styles.deliveryTierOption,
+                      selectedDeliveryTier === 'bolt' && styles.deliveryTierOptionActive,
+                    ]}
+                    onPress={() => setSelectedDeliveryTier('bolt')}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.deliveryTierTopRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <View style={styles.boltIconBadge}>
+                          <Text style={{ fontSize: 18 }}>🟢</Text>
+                        </View>
+                        <View style={{ marginLeft: 10 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Text style={styles.deliveryTierTitle}>Bolt Express Motorbike</Text>
+                            <View style={styles.boltFastestBadge}>
+                              <Text style={styles.boltFastestText}>FASTEST</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.deliveryTierTime}>15–25 mins • Powered by Bolt Delivery</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.deliveryTierPrice}>{formatNaira(1200)}</Text>
+                    </View>
+                    <Text style={styles.deliveryTierPerks}>
+                      ⚡ Rapid motorbike courier • Live in-app rider GPS tracking & call
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Option 2: GETIT Concierge Direct */}
+                  <TouchableOpacity
+                    style={[
+                      styles.deliveryTierOption,
+                      selectedDeliveryTier === 'concierge' && styles.deliveryTierOptionActive,
+                    ]}
+                    onPress={() => setSelectedDeliveryTier('concierge')}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.deliveryTierTopRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <View style={styles.conciergeIconBadge}>
+                          <Text style={{ fontSize: 18 }}>🛵</Text>
+                        </View>
+                        <View style={{ marginLeft: 10 }}>
+                          <Text style={styles.deliveryTierTitle}>GETIT Concierge Direct</Text>
+                          <Text style={styles.deliveryTierTime}>25–35 mins • Dedicated Private Courier</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.deliveryTierPrice}>{formatNaira(2500)}</Text>
+                    </View>
+                    <Text style={styles.deliveryTierPerks}>
+                      🛡️ White-glove dedicated courier for temperature-sensitive VIP items
+                    </Text>
+                  </TouchableOpacity>
                 </View>
 
                 {/* Checkout Trigger */}
@@ -3351,21 +3600,68 @@ export default function App() {
                           )}
 
                           {isPrep && (
-                            <TouchableOpacity
-                              style={styles.mReadyBtn}
-                              onPress={() => readyMerchantOrder(ord.id)}
-                            >
-                              <Text style={styles.mReadyBtnText}>📦 Mark Ready for Courier</Text>
-                            </TouchableOpacity>
+                            <View style={{ width: '100%' }}>
+                              <TouchableOpacity
+                                style={styles.mReadyBtn}
+                                onPress={() => readyMerchantOrder(ord.id)}
+                              >
+                                <Text style={styles.mReadyBtnText}>📦 Mark Ready for Courier</Text>
+                              </TouchableOpacity>
+
+                              {ord.deliveryPartner === 'bolt' && !ord.boltRider && (
+                                <TouchableOpacity
+                                  style={styles.mBoltDispatchBtn}
+                                  onPress={() => dispatchBoltCourier(ord.id)}
+                                >
+                                  <Text style={styles.mBoltDispatchBtnText}>
+                                    🟢 Dispatch Bolt Motorbike Courier
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
                           )}
 
                           {isReady && (
-                            <TouchableOpacity
-                              style={styles.mCompleteBtn}
-                              onPress={() => completeMerchantOrder(ord.id)}
-                            >
-                              <Text style={styles.mCompleteBtnText}>🚴 Hand Over to Rider (Verified)</Text>
-                            </TouchableOpacity>
+                            <View style={{ width: '100%' }}>
+                              {ord.deliveryPartner === 'bolt' && !ord.boltRider && (
+                                <TouchableOpacity
+                                  style={styles.mBoltDispatchBtn}
+                                  onPress={() => dispatchBoltCourier(ord.id)}
+                                >
+                                  <Text style={styles.mBoltDispatchBtnText}>
+                                    🟢 Dispatch Bolt Motorbike Courier
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+
+                              {ord.boltRider && (
+                                <View style={styles.mBoltAssignedCard}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <Text style={styles.mBoltAssignedTitle}>
+                                      🟢 Bolt Rider: {ord.boltRider.name}
+                                    </Text>
+                                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#047857' }}>
+                                      {ord.eta || '4 mins away'}
+                                    </Text>
+                                  </View>
+                                  <Text style={styles.mBoltAssignedRider}>
+                                    {ord.boltRider.vehicle} • Plate: {ord.boltRider.plate}
+                                  </Text>
+                                  <Text style={{ fontSize: 10.5, color: '#475569', marginTop: 3 }}>
+                                    Tracking: {ord.boltTrackingCode} • Shop Handover PIN: <Text style={{ fontWeight: '800', color: '#047857' }}>{ord.pickupPin}</Text>
+                                  </Text>
+                                </View>
+                              )}
+
+                              <TouchableOpacity
+                                style={styles.mCompleteBtn}
+                                onPress={() => completeMerchantOrder(ord.id)}
+                              >
+                                <Text style={styles.mCompleteBtnText}>
+                                  {ord.boltRider ? '🚴 Hand Over to Bolt Courier (Complete)' : '🚴 Hand Over to Courier (Verified)'}
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
                           )}
 
                           {isDone && (
@@ -7343,6 +7639,224 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.borderBeige,
     color: COLORS.textDark,
+  },
+
+  // --- Bolt Delivery & Partner Selection Styles ---
+  deliveryTierContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 16,
+    marginVertical: 14,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  deliveryTierHeader: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    letterSpacing: 0.6,
+  },
+  deliveryTierSub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginBottom: 12,
+    marginTop: 2,
+  },
+  deliveryTierOption: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    marginBottom: 10,
+  },
+  deliveryTierOptionActive: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#10B981',
+  },
+  deliveryTierTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  boltIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  conciergeIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deliveryTierTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  boltFastestBadge: {
+    backgroundColor: '#10B981',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginLeft: 6,
+  },
+  boltFastestText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  deliveryTierTime: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  deliveryTierPrice: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: COLORS.emeraldDeep,
+  },
+  deliveryTierPerks: {
+    fontSize: 10.5,
+    color: '#475569',
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+
+  // --- Live Bolt Tracking Card in Orders Tab ---
+  boltTrackingCard: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#86EFAC',
+    marginVertical: 10,
+  },
+  boltTrackingTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  boltNetworkTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  boltNetworkTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#047857',
+    marginLeft: 5,
+  },
+  boltEtaPill: {
+    backgroundColor: '#047857',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  boltEtaPillText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  boltTrackingMapWrap: {
+    height: 160,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    marginBottom: 12,
+  },
+  boltTrackingMap: {
+    width: '100%',
+    height: '100%',
+  },
+  boltRiderBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  boltRiderAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boltRiderName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  boltRiderRating: {
+    fontSize: 10.5,
+    color: '#15803D',
+    fontWeight: '700',
+  },
+  boltRiderVehicle: {
+    fontSize: 10.5,
+    color: '#64748B',
+  },
+  boltCallBtn: {
+    backgroundColor: '#047857',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  boltCallBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  // Merchant Bolt Action Styles
+  mBoltDispatchBtn: {
+    backgroundColor: '#047857',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  mBoltDispatchBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  mBoltAssignedCard: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    marginVertical: 6,
+  },
+  mBoltAssignedTitle: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  mBoltAssignedRider: {
+    fontSize: 11,
+    color: '#15803D',
+    marginTop: 2,
   },
 });
 
