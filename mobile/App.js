@@ -1385,8 +1385,8 @@ export default function App() {
           setStoreTiming(JSON.parse(storedTiming));
         }
 
-        // Ensure default accounts exist in database
-        seedDefaultDatabaseUsers().catch(console.warn);
+        // Ensure default & registered accounts exist in database
+        await seedDefaultDatabaseUsers();
       } catch (err) {
         console.warn('Error loading AsyncStorage user state:', err);
       }
@@ -2405,6 +2405,23 @@ export default function App() {
         'Incorrect Password',
         'The merchant password entered does not match our database records. Please verify and try again.'
       );
+      return;
+    }
+
+    // 3. Routing
+    if (existingSeller.role === 'buyer') {
+      Alert.alert(
+        'Shopper Account Detected',
+        `Welcome ${existingSeller.fullName}! This account is registered as a Shopper. We are directing you to your shopping experience.`
+      );
+      setCurrentUser(existingSeller);
+      setAppMode('customer');
+      setIsLoggedIn(true);
+      setAuthLoginInput(existingSeller.phone || existingSeller.email || input);
+      setAuthLoginPassword(pass);
+      try {
+        await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingSeller));
+      } catch (e) {}
       return;
     }
 

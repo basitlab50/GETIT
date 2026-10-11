@@ -414,12 +414,46 @@ export async function seedDefaultDatabaseUsers() {
       await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
     }
 
-    // Sync memory cache
+    // Immediately sync in-memory cache with local storage before any network call
     localUsers.forEach((u) => {
       if (!MEMORY_REGISTERED_USERS.some((m) => m.id === u.id)) {
         MEMORY_REGISTERED_USERS.push(u);
       }
     });
+
+    // Fetch cloud users from Supabase so any registered account survives app reload
+    try {
+      const { data: cloudUsers } = await supabase
+        .from('riders')
+        .select('*')
+        .like('id', 'usr-%');
+
+      if (Array.isArray(cloudUsers) && cloudUsers.length > 0) {
+        cloudUsers.forEach((cu) => {
+          let meta = {};
+          try { meta = JSON.parse(cu.avatar || '{}'); } catch (e) {}
+          const mapped = {
+            id: meta.realId || cu.id,
+            role: meta.role || 'buyer',
+            fullName: cu.name,
+            email: cu.vehicle,
+            phone: cu.phone,
+            password: cu.plate,
+            address: meta.address || '',
+            businessName: meta.businessName || null,
+            storeId: meta.storeId || null,
+            createdAt: cu.created_at,
+          };
+          if (!localUsers.some((u) => u.id === mapped.id || (mapped.phone && getCorePhoneDigits(u.phone) === getCorePhoneDigits(mapped.phone)))) {
+            localUsers.push(mapped);
+          }
+          if (!MEMORY_REGISTERED_USERS.some((m) => m.id === mapped.id || (mapped.phone && getCorePhoneDigits(m.phone) === getCorePhoneDigits(mapped.phone)))) {
+            MEMORY_REGISTERED_USERS.push(mapped);
+          }
+        });
+        await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
+      }
+    } catch (e) {}
 
     // Also sync localStorage if on web
     if (typeof window !== 'undefined' && window.localStorage) {
@@ -473,7 +507,50 @@ export async function findDatabaseUser(identifier) {
     }
   } catch (e) {}
 
-  // 4. Try querying remote Supabase 'users' table
+  // 4. Query cloud-persisted user records from Supabase (riders table usr-%)
+  try {
+    const { data: cloudUsers, error: cErr } = await supabase
+      .from('riders')
+      .select('*')
+      .like('id', 'usr-%');
+
+    if (!cErr && Array.isArray(cloudUsers) && cloudUsers.length > 0) {
+      for (const cu of cloudUsers) {
+        let meta = {};
+        try { meta = JSON.parse(cu.avatar || '{}'); } catch (e) {}
+        const mapped = {
+          id: meta.realId || cu.id,
+          role: meta.role || 'buyer',
+          fullName: cu.name,
+          email: cu.vehicle,
+          phone: cu.phone,
+          password: cu.plate,
+          address: meta.address || '',
+          businessName: meta.businessName || null,
+          storeId: meta.storeId || null,
+          createdAt: cu.created_at,
+        };
+        // Ensure present in memory & local storage
+        if (!MEMORY_REGISTERED_USERS.some((m) => m.id === mapped.id)) {
+          MEMORY_REGISTERED_USERS.push(mapped);
+        }
+        if (userMatchesIdentifier(mapped, cleanId, digitsOnly)) {
+          // Asynchronously persist to local storage for future offline/instant access
+          AsyncStorage.getItem('getit_registered_users').then((raw) => {
+            let list = raw ? JSON.parse(raw) : [];
+            if (!Array.isArray(list)) list = [];
+            if (!list.some((u) => u.id === mapped.id)) {
+              list.push(mapped);
+              AsyncStorage.setItem('getit_registered_users', JSON.stringify(list)).catch(() => {});
+            }
+          }).catch(() => {});
+          return mapped;
+        }
+      }
+    }
+  } catch (err) {}
+
+  // 5. Fallback query remote Supabase 'users' table if it exists
   try {
     const { data, error } = await supabase.from('users').select('*');
     if (!error && Array.isArray(data) && data.length > 0) {
@@ -505,16 +582,13 @@ export async function findDatabaseUser(identifier) {
           storeId: match.store_id,
           createdAt: match.created_at,
         };
-        // Update memory and local cache
         if (!MEMORY_REGISTERED_USERS.some((m) => m.id === formatted.id)) {
           MEMORY_REGISTERED_USERS.push(formatted);
         }
         return formatted;
       }
     }
-  } catch (err) {
-    // If Supabase table is not yet reachable or table is not created yet
-  }
+  } catch (err) {}
 
   return null;
 }
@@ -596,6 +670,28 @@ export async function registerDatabaseUser(user) {
     );
   } catch (err) {
     console.warn('Supabase users table insert failed, stored locally:', err);
+  }
+
+  // 5. Persist to cloud account record in Supabase so accounts survive Expo reload across devices
+  try {
+    const cloudId = userRecord.id.startsWith('usr-') ? userRecord.id : `usr-${userRecord.id}`;
+    await supabase.from('riders').upsert({
+      id: cloudId,
+      name: userRecord.fullName,
+      phone: userRecord.phone,
+      vehicle: userRecord.email || '',
+      plate: userRecord.password,
+      avatar: JSON.stringify({
+        role: userRecord.role,
+        address: userRecord.address,
+        businessName: userRecord.businessName,
+        storeId: userRecord.storeId,
+        realId: userRecord.id
+      }),
+      is_active: true
+    }, { onConflict: 'id' });
+  } catch (err) {
+    console.warn('Cloud user sync error:', err);
   }
 
   return userRecord;
