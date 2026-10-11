@@ -13,7 +13,7 @@ const PlatformContext = createContext(null);
 
 const STORAGE_KEYS = {
   ORDERS: 'getit_orders_v1',
-  PRODUCTS: 'getit_products_v3', // Bumped to v3 to force cache flush for real product photos
+  PRODUCTS: 'getit_products_v4', // Bumped to v4 to include Zobo, Hollandia, and La Casera photo items
   VENDORS: 'getit_vendors_v1',
   RIDERS: 'getit_riders_v1',
   CONFIG: 'getit_config_v1',

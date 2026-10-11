@@ -1127,7 +1127,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥤",
     "suggestedPrice": 300,
     "priceRange": "₦200–₦400",
-    "description": "Bigi Bigi Tropical 50 cl PET bottle. Carbonated soft drinks."
+    "description": "Bigi Bigi Tropical 50 cl PET bottle. Carbonated soft drinks.",
+    "imageUrl": "/products/bigi-tropical-50-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-lacasera-34",
@@ -1138,7 +1139,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥤",
     "suggestedPrice": 350,
     "priceRange": "₦250–₦500",
-    "description": "La Casera Apple drink 35 cl PET bottle. Carbonated soft drinks."
+    "description": "La Casera Apple drink 35 cl PET bottle. Carbonated soft drinks.",
+    "imageUrl": "/products/la-casera-apple-drink-35-cl-pet-bottle.png"
   },
   {
     "id": "bev-limca-35",
@@ -1256,7 +1258,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "💧",
     "suggestedPrice": 1200,
     "priceRange": "₦800–₦1,800",
-    "description": "Eva Table water 5 L Bottle. Bottled & table water."
+    "description": "Eva Table water 5 L Bottle. Bottled & table water.",
+    "imageUrl": "/products/eva-premium-table-water-5-l-bottle.webp"
   },
   {
     "id": "bev-nestlpurelife-45",
@@ -1327,7 +1330,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "💧",
     "suggestedPrice": 200,
     "priceRange": "₦100–₦300",
-    "description": "Table water (local brands) Table water 50 cl PET bottle. Bottled & table water."
+    "description": "Table water (local brands) Table water 50 cl PET bottle. Bottled & table water.",
+    "imageUrl": "/products/pure-bottled-table-water-50-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-tablewaterlocalbrands-51",
@@ -1338,7 +1342,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "💧",
     "suggestedPrice": 250,
     "priceRange": "₦150–₦350",
-    "description": "Table water (local brands) Table water 75 cl PET bottle. Bottled & table water."
+    "description": "Table water (local brands) Table water 75 cl PET bottle. Bottled & table water.",
+    "imageUrl": "/products/pure-bottled-table-water-75-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-tablewaterlocalbrands-52",
@@ -1349,7 +1354,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "💧",
     "suggestedPrice": 400,
     "priceRange": "₦250–₦600",
-    "description": "Table water (local brands) Table water 1.5 L PET bottle. Bottled & table water."
+    "description": "Table water (local brands) Table water 1.5 L PET bottle. Bottled & table water.",
+    "imageUrl": "/products/pure-bottled-table-water-1-5-l-pet-bottle.png"
   },
   {
     "id": "bev-maltina-53",
@@ -1480,7 +1486,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥫",
     "suggestedPrice": 650,
     "priceRange": "₦450–₦850",
-    "description": "Maltonic Malt / tonic drink 33 cl Can. Malt drinks."
+    "description": "Maltonic Malt / tonic drink 33 cl Can. Malt drinks.",
+    "imageUrl": "/products/maltonic-malt-tonic-33-cl-can.png"
   },
   {
     "id": "bev-fearless-64",
@@ -1491,7 +1498,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "⚡",
     "suggestedPrice": 600,
     "priceRange": "₦400–₦800",
-    "description": "Fearless Energy drink 40 cl PET bottle. Energy & functional drinks."
+    "description": "Fearless Energy drink 40 cl PET bottle. Energy & functional drinks.",
+    "imageUrl": "/products/fearless-energy-drink-40-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-fearless-65",
@@ -1730,7 +1738,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 1500,
     "priceRange": "₦1,000–₦1,900",
-    "description": "5 Alive Pulpy Tropical 85 cl PET bottle. Juices & fruit drinks."
+    "description": "5 Alive Pulpy Tropical 85 cl PET bottle. Juices & fruit drinks.",
+    "imageUrl": "/products/5-alive-pulpy-tropical-85-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-chi-85",
@@ -1741,7 +1750,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 450,
     "priceRange": "₦300–₦600",
-    "description": "Chi Exotic 250 ml Carton. Juices & fruit drinks."
+    "description": "Chi Exotic 250 ml Carton. Juices & fruit drinks.",
+    "imageUrl": "/products/chi-exotic-250-ml-carton.jpg"
   },
   {
     "id": "bev-chi-86",
@@ -1776,7 +1786,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 600,
     "priceRange": "₦400–₦800",
-    "description": "Hollandia Yoghurt drink 180 ml Bottle. Juices & fruit drinks."
+    "description": "Hollandia Yoghurt drink 180 ml Bottle. Juices & fruit drinks.",
+    "imageUrl": "/products/hollandia-yoghurt-drink-180-ml-bottle.jpg"
   },
   {
     "id": "bev-hollandia-89",
@@ -1787,7 +1798,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 900,
     "priceRange": "₦600–₦1,200",
-    "description": "Hollandia Yoghurt drink 315 ml Bottle. Juices & fruit drinks."
+    "description": "Hollandia Yoghurt drink 315 ml Bottle. Juices & fruit drinks.",
+    "imageUrl": "/products/hollandia-yoghurt-drink-315-ml-bottle.jpg"
   },
   {
     "id": "bev-hollandia-90",
@@ -1798,7 +1810,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 1400,
     "priceRange": "₦900–₦1,800",
-    "description": "Hollandia Yoghurt drink 500 ml Bottle. Juices & fruit drinks."
+    "description": "Hollandia Yoghurt drink 500 ml Bottle. Juices & fruit drinks.",
+    "imageUrl": "/products/hollandia-yoghurt-drink-500-ml-bottle.jpg"
   },
   {
     "id": "bev-hollandia-91",
@@ -1809,7 +1822,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 2500,
     "priceRange": "₦1,800–₦3,200",
-    "description": "Hollandia Yoghurt drink 1 L Bottle. Juices & fruit drinks."
+    "description": "Hollandia Yoghurt drink 1 L Bottle. Juices & fruit drinks.",
+    "imageUrl": "/products/hollandia-yoghurt-drink-1-l-bottle.jpg"
   },
   {
     "id": "bev-caprisun-92",
@@ -1832,7 +1846,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 500,
     "priceRange": "₦350–₦700",
-    "description": "Viju V-Cool cola / fruit drink 50 cl Bottle. Juices & fruit drinks."
+    "description": "Viju V-Cool cola / fruit drink 50 cl Bottle. Juices & fruit drinks.",
+    "imageUrl": "/products/viju-v-cool-cola-fruit-drink-50-cl-bottle.jpg"
   },
   {
     "id": "bev-cway-94",
@@ -1867,7 +1882,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 900,
     "priceRange": "₦600–₦1,200",
-    "description": "La Casera Apple drink 1 L PET bottle. Juices & fruit drinks."
+    "description": "La Casera Apple drink 1 L PET bottle. Juices & fruit drinks.",
+    "imageUrl": "/products/la-casera-apple-drink-1-l-pet-bottle.png"
   },
   {
     "id": "bev-peak-97",
@@ -1890,7 +1906,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥛",
     "suggestedPrice": 900,
     "priceRange": "₦600–₦1,200",
-    "description": "Peak Evaporated milk 160 g Tin. Dairy, soy & hot beverage drinks."
+    "description": "Peak Evaporated milk 160 g Tin. Dairy, soy & hot beverage drinks.",
+    "imageUrl": "/products/peak-evaporated-milk-160-g-tin.png"
   },
   {
     "id": "bev-hollandia-99",
@@ -1937,7 +1954,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥛",
     "suggestedPrice": 3500,
     "priceRange": "₦2,500–₦4,500",
-    "description": "Loya Milk powder 250 g Pouch / tin. Dairy, soy & hot beverage drinks."
+    "description": "Loya Milk powder 250 g Pouch / tin. Dairy, soy & hot beverage drinks.",
+    "imageUrl": "/products/loya-milk-powder-250-g-pouch-tin.jpg"
   },
   {
     "id": "bev-milo-103",
@@ -1996,7 +2014,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥛",
     "suggestedPrice": 3000,
     "priceRange": "₦2,000–₦4,500",
-    "description": "Bournvita Malted chocolate beverage 250 g Pouch / tin. Dairy, soy & hot beverage drinks."
+    "description": "Bournvita Malted chocolate beverage 250 g Pouch / tin. Dairy, soy & hot beverage drinks.",
+    "imageUrl": "/products/bournvita-malted-chocolate-beverage-250-g-pouch-tin.jpg"
   },
   {
     "id": "bev-bournvita-108",
@@ -2067,7 +2086,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥛",
     "suggestedPrice": 600,
     "priceRange": "₦400–₦800",
-    "description": "Nutri Milk Flavoured dairy / nutrition drink 200 ml Bottle. Dairy, soy & hot beverage drinks."
+    "description": "Nutri Milk Flavoured dairy / nutrition drink 200 ml Bottle. Dairy, soy & hot beverage drinks.",
+    "imageUrl": "/products/nutri-milk-flavoured-dairy-nutrition-drink-200-ml-bottle.png"
   },
   {
     "id": "bev-localinhousebrand-114",
@@ -2078,7 +2098,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🍶",
     "suggestedPrice": 500,
     "priceRange": "₦250–₦800",
-    "description": "Local / in-house brand Zobo drink 35 cl Sealed bottle. Local & traditional non-alcoholic drinks."
+    "description": "Local / in-house brand Zobo drink 35 cl Sealed bottle. Local & traditional non-alcoholic drinks.",
+    "imageUrl": "/products/fresh-zobo-drink-35-cl-sealed-bottle.png"
   },
   {
     "id": "bev-localinhousebrand-115",
@@ -2089,7 +2110,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🍶",
     "suggestedPrice": 700,
     "priceRange": "₦400–₦1,000",
-    "description": "Local / in-house brand Zobo drink 50 cl Sealed bottle. Local & traditional non-alcoholic drinks."
+    "description": "Local / in-house brand Zobo drink 50 cl Sealed bottle. Local & traditional non-alcoholic drinks.",
+    "imageUrl": "/products/fresh-zobo-drink-50-cl-sealed-bottle.jpg"
   },
   {
     "id": "bev-localinhousebrand-116",
@@ -2100,7 +2122,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🍶",
     "suggestedPrice": 400,
     "priceRange": "₦200–₦700",
-    "description": "Local / in-house brand Kunu drink 35 cl Sealed bottle. Local & traditional non-alcoholic drinks."
+    "description": "Local / in-house brand Kunu drink 35 cl Sealed bottle. Local & traditional non-alcoholic drinks.",
+    "imageUrl": "/products/fresh-kunu-drink-35-cl-sealed-bottle.jpg"
   },
   {
     "id": "bev-localinhousebrand-117",
@@ -2111,7 +2134,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🍶",
     "suggestedPrice": 600,
     "priceRange": "₦300–₦900",
-    "description": "Local / in-house brand Kunu drink 50 cl Sealed bottle. Local & traditional non-alcoholic drinks."
+    "description": "Local / in-house brand Kunu drink 50 cl Sealed bottle. Local & traditional non-alcoholic drinks.",
+    "imageUrl": "/products/fresh-kunu-drink-50-cl-sealed-bottle.jpg"
   },
   {
     "id": "bev-localinhousebrand-118",
@@ -2122,7 +2146,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🍶",
     "suggestedPrice": 700,
     "priceRange": "₦400–₦1,000",
-    "description": "Local / in-house brand Fura da nono 35 cl Sealed bottle. Local & traditional non-alcoholic drinks."
+    "description": "Local / in-house brand Fura da nono 35 cl Sealed bottle. Local & traditional non-alcoholic drinks.",
+    "imageUrl": "/products/fresh-fura-da-nono-35-cl-sealed-bottle.jpg"
   },
   {
     "id": "bev-localinhousebrand-119",
@@ -2133,7 +2158,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🍶",
     "suggestedPrice": 600,
     "priceRange": "₦300–₦900",
-    "description": "Local / in-house brand Ginger drink 35 cl Sealed bottle. Local & traditional non-alcoholic drinks."
+    "description": "Local / in-house brand Ginger drink 35 cl Sealed bottle. Local & traditional non-alcoholic drinks.",
+    "imageUrl": "/products/fresh-ginger-drink-35-cl-sealed-bottle.jpg"
   },
   {
     "id": "bev-localinhousebrand-120",
@@ -2144,6 +2170,7 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🍶",
     "suggestedPrice": 500,
     "priceRange": "₦250–₦800",
-    "description": "Local / in-house brand Lemonade 35 cl Sealed bottle. Local & traditional non-alcoholic drinks."
+    "description": "Local / in-house brand Lemonade 35 cl Sealed bottle. Local & traditional non-alcoholic drinks.",
+    "imageUrl": "/products/fresh-lemonade-35-cl-sealed-bottle.jpg"
   }
 ];
