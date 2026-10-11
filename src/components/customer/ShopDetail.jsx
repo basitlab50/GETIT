@@ -145,8 +145,15 @@ export default function ShopDetail({ vendorId, onBack, onOpenCart }) {
         })}
       </div>
 
-      {/* Products Grid */}
-      <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      {/* Products Grid - Box Forms Stacked in Rows and Columns */}
+      <div
+        style={{
+          padding: '1rem',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+          gap: '0.85rem',
+        }}
+      >
         {displayedProducts.map((prod) => {
           const inCart = cart.find((c) => c.productId === prod.id);
           return (
@@ -154,69 +161,129 @@ export default function ShopDetail({ vendorId, onBack, onOpenCart }) {
               key={prod.id}
               style={{
                 display: 'flex',
-                alignItems: 'center',
+                flexDirection: 'column',
                 justifyContent: 'space-between',
-                padding: '0.85rem',
                 background: '#FFFFFF',
-                borderRadius: '14px',
+                borderRadius: '16px',
                 border: '1px solid #E2E8F0',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
+                overflow: 'hidden',
+                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div
+              {/* Box Image Preview on Top */}
+              <div
+                style={{
+                  height: '110px',
+                  background: '#F8FAFC',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  position: 'relative',
+                  borderBottom: '1px solid #F1F5F9',
+                }}
+              >
+                <ProductMedia src={prod.imageUrl} alt={prod.name} size={64} />
+                <span
                   style={{
-                    width: '48px',
-                    height: '48px',
-                    borderRadius: '10px',
-                    background: '#FFFFFF',
+                    position: 'absolute',
+                    top: '8px',
+                    left: '8px',
+                    fontSize: '0.65rem',
+                    fontWeight: 700,
+                    color: prod.stock > 5 ? '#047857' : '#DC2626',
+                    background: 'rgba(255, 255, 255, 0.92)',
+                    padding: '2px 6px',
+                    borderRadius: '6px',
                     border: '1px solid #E2E8F0',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    overflow: 'hidden',
-                    padding: '2px',
-                    flexShrink: 0,
                   }}
                 >
-                  <ProductMedia src={prod.imageUrl} alt={prod.name} size={44} />
-                </div>
+                  {prod.stock > 0 ? `${prod.stock} in stock` : 'Out of stock'}
+                </span>
+                {inCart && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: '8px',
+                      right: '8px',
+                      fontSize: '0.65rem',
+                      fontWeight: 800,
+                      color: '#FFFFFF',
+                      background: '#008751',
+                      padding: '2px 6px',
+                      borderRadius: '6px',
+                    }}
+                  >
+                    {inCart.quantity} in bag
+                  </span>
+                )}
+              </div>
+
+              {/* Box Content & Actions */}
+              <div
+                style={{
+                  padding: '0.75rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  flex: 1,
+                  justifyContent: 'space-between',
+                }}
+              >
                 <div>
-                  <h4 style={{ fontSize: '0.88rem', fontWeight: 800, color: '#0F172A', lineHeight: 1.25 }}>
+                  <h4
+                    style={{
+                      fontSize: '0.82rem',
+                      fontWeight: 800,
+                      color: '#0F172A',
+                      lineHeight: 1.3,
+                      minHeight: '2.4rem',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}
+                  >
                     {prod.name}
                   </h4>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-                    <span style={{ fontSize: '0.7rem', color: '#64748B' }}>{prod.unit}</span>
-                    <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>•</span>
-                    <span style={{ fontSize: '0.7rem', color: prod.stock > 5 ? '#059669' : '#DC2626' }}>
-                      {prod.stock > 0 ? `${prod.stock} in stock` : 'Out of stock'}
-                    </span>
+                  <div style={{ fontSize: '0.68rem', color: '#64748B', marginTop: '2px' }}>
+                    {prod.unit}
                   </div>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#008751', marginTop: '2px' }}>
+                  <div
+                    style={{
+                      fontSize: '0.92rem',
+                      fontWeight: 800,
+                      color: '#008751',
+                      marginTop: '4px',
+                      marginBottom: '8px',
+                    }}
+                  >
                     {formatNaira(prod.price)}
                   </div>
                 </div>
-              </div>
 
-              {/* Add Button */}
-              <div>
+                {/* Add Button */}
                 <button
                   disabled={prod.stock <= 0}
                   onClick={() => addToCart(prod, 1)}
                   style={{
-                    padding: '7px 12px',
-                    borderRadius: '8px',
-                    background: inCart ? '#008751' : '#1E293B',
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: '9px',
+                    background: inCart ? '#008751' : '#0F172A',
                     color: '#FFFFFF',
-                    fontSize: '0.78rem',
+                    fontSize: '0.75rem',
                     fontWeight: 700,
                     display: 'flex',
                     alignItems: 'center',
+                    justifyContent: 'center',
                     gap: '4px',
+                    border: 'none',
+                    cursor: prod.stock <= 0 ? 'not-allowed' : 'pointer',
+                    opacity: prod.stock <= 0 ? 0.6 : 1,
                   }}
                 >
                   <Plus size={13} />
-                  {inCart ? `Added (${inCart.quantity})` : 'Add'}
+                  {inCart ? `Added (${inCart.quantity})` : 'Add to Basket'}
                 </button>
               </div>
             </div>

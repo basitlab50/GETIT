@@ -913,6 +913,7 @@ export default function App() {
   const [selectedStore, setSelectedStore] = useState(null);
   const [storeProductSearch, setStoreProductSearch] = useState('');
   const [storeProductCategory, setStoreProductCategory] = useState('All');
+  const [storeCatalogViewMode, setStoreCatalogViewMode] = useState('grid'); // 'grid' | 'list'
 
   // Cart State
   const [cart, setCart] = useState([]);
@@ -4001,14 +4002,53 @@ export default function App() {
                   </ScrollView>
                 </View>
 
-                {/* Store Catalog Header & Results Counter */}
+                {/* Store Catalog Header & Results Counter with Grid/List Toggle */}
                 <View style={styles.catalogHeaderRow}>
-                  <Text style={styles.sectionHeading}>
-                    {storeProductSearch ? 'Matching Products' : 'Curated Catalog'}
-                  </Text>
-                  <Text style={styles.catalogCountText}>
-                    {filteredStoreProducts.length} item{filteredStoreProducts.length === 1 ? '' : 's'}
-                  </Text>
+                  <View>
+                    <Text style={styles.sectionHeading}>
+                      {storeProductSearch ? 'Matching Products' : 'Curated Catalog'}
+                    </Text>
+                    <Text style={styles.catalogCountText}>
+                      {filteredStoreProducts.length} item{filteredStoreProducts.length === 1 ? '' : 's'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.catalogViewToggleRow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.catalogViewToggleBtn,
+                        storeCatalogViewMode === 'grid' && styles.catalogViewToggleBtnActive,
+                      ]}
+                      onPress={() => setStoreCatalogViewMode('grid')}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.catalogViewToggleText,
+                          storeCatalogViewMode === 'grid' && styles.catalogViewToggleTextActive,
+                        ]}
+                      >
+                        ⊞ Grid
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.catalogViewToggleBtn,
+                        storeCatalogViewMode === 'list' && styles.catalogViewToggleBtnActive,
+                      ]}
+                      onPress={() => setStoreCatalogViewMode('list')}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.catalogViewToggleText,
+                          storeCatalogViewMode === 'list' && styles.catalogViewToggleTextActive,
+                        ]}
+                      >
+                        ☰ List
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 {/* Products List or Empty Search State */}
@@ -4029,7 +4069,99 @@ export default function App() {
                       <Text style={styles.resetSearchBtnText}>Show All Products</Text>
                     </TouchableOpacity>
                   </View>
+                ) : storeCatalogViewMode === 'grid' ? (
+                  /* Box Form Layout: Stacked in 2-Column Rows & Columns */
+                  <View style={styles.productGrid}>
+                    {filteredStoreProducts.map((prod) => {
+                      const inCartItem = cart.find((i) => i.id === prod.id);
+                      return (
+                        <View key={prod.id} style={styles.productBoxCard}>
+                          {/* Top Image Preview Box */}
+                          <View style={styles.productBoxMediaWrap}>
+                            {getProductImageSource(prod.imageUrl || prod.imageUri) ? (
+                              <Image
+                                source={getProductImageSource(prod.imageUrl || prod.imageUri)}
+                                style={styles.productBoxImage}
+                                resizeMode="contain"
+                              />
+                            ) : (
+                              <Text style={styles.productBoxEmoji}>{prod.icon}</Text>
+                            )}
+
+                            {/* Category Tag Chip */}
+                            <View style={styles.productBoxBadge}>
+                              <Text style={styles.productBoxBadgeText} numberOfLines={1}>
+                                {prod.category}
+                              </Text>
+                            </View>
+
+                            {/* In-cart indicator bubble */}
+                            {inCartItem && (
+                              <View style={styles.productBoxInCartPill}>
+                                <Text style={styles.productBoxInCartPillText}>
+                                  {inCartItem.qty} in bag
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+
+                          {/* Bottom Details Box */}
+                          <View style={styles.productBoxBody}>
+                            <Text style={styles.productBoxTitle} numberOfLines={2}>
+                              {prod.name}
+                            </Text>
+
+                            <View style={styles.productBoxPriceRow}>
+                              <Text style={styles.productBoxPrice}>
+                                {formatNaira(prod.price)}
+                              </Text>
+                            </View>
+
+                            {/* Action: Add / Quantity / Sold Out */}
+                            <View style={styles.productBoxActionRow}>
+                              {prod.outOfStock ? (
+                                <View style={styles.productBoxSoldOut}>
+                                  <Text style={styles.productBoxSoldOutText}>Sold Out</Text>
+                                </View>
+                              ) : inCartItem ? (
+                                <View style={styles.productBoxQtyControls}>
+                                  <TouchableOpacity
+                                    style={styles.productBoxQtyBtn}
+                                    onPress={() => removeFromCart(prod.id)}
+                                    activeOpacity={0.7}
+                                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                  >
+                                    <Text style={styles.productBoxQtyBtnText}>−</Text>
+                                  </TouchableOpacity>
+                                  <Text style={styles.productBoxQtyCount}>
+                                    {inCartItem.qty}
+                                  </Text>
+                                  <TouchableOpacity
+                                    style={styles.productBoxQtyBtn}
+                                    onPress={() => addToCart(prod, selectedStore)}
+                                    activeOpacity={0.7}
+                                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                  >
+                                    <Text style={styles.productBoxQtyBtnText}>+</Text>
+                                  </TouchableOpacity>
+                                </View>
+                              ) : (
+                                <TouchableOpacity
+                                  style={styles.productBoxAddBtn}
+                                  onPress={() => addToCart(prod, selectedStore)}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={styles.productBoxAddBtnText}>+ Add</Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
                 ) : (
+                  /* Classic Horizontal Row List */
                   filteredStoreProducts.map((prod) => {
                     const inCartItem = cart.find((i) => i.id === prod.id);
                     return (
@@ -7746,6 +7878,194 @@ const styles = StyleSheet.create({
   catalogCountText: {
     fontSize: 11.5,
     color: COLORS.roseGold,
+    fontWeight: '700',
+  },
+  catalogViewToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F7F5F0',
+    borderRadius: 8,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  catalogViewToggleBtn: {
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 6,
+  },
+  catalogViewToggleBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  catalogViewToggleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+  },
+  catalogViewToggleTextActive: {
+    color: COLORS.emeraldDeep,
+  },
+
+  // Box form product grid (rows and columns)
+  productGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  productBoxCard: {
+    width: '48.5%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(217, 185, 155, 0.35)',
+    marginBottom: 12,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+  },
+  productBoxMediaWrap: {
+    height: 116,
+    backgroundColor: '#FAF8F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(217, 185, 155, 0.2)',
+  },
+  productBoxImage: {
+    width: 76,
+    height: 76,
+    borderRadius: 8,
+  },
+  productBoxEmoji: {
+    fontSize: 44,
+  },
+  productBoxBadge: {
+    position: 'absolute',
+    top: 7,
+    left: 7,
+    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    paddingHorizontal: 6,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(217, 185, 155, 0.35)',
+    maxWidth: '75%',
+  },
+  productBoxBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: COLORS.roseGold,
+  },
+  productBoxInCartPill: {
+    position: 'absolute',
+    top: 7,
+    right: 7,
+    backgroundColor: COLORS.emeraldDeep,
+    paddingHorizontal: 6,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  productBoxInCartPillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  productBoxBody: {
+    padding: 10,
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  productBoxTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    lineHeight: 16,
+    minHeight: 32,
+  },
+  productBoxPriceRow: {
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  productBoxPrice: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: COLORS.emeraldPrimary,
+  },
+  productBoxActionRow: {
+    width: '100%',
+  },
+  productBoxAddBtn: {
+    backgroundColor: COLORS.emeraldDeep,
+    height: 32,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: COLORS.emeraldDeep,
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  productBoxAddBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  productBoxQtyControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.emeraldSurface,
+    borderRadius: 9,
+    height: 32,
+    paddingHorizontal: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(6, 78, 59, 0.12)',
+  },
+  productBoxQtyBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  productBoxQtyBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+  },
+  productBoxQtyCount: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+    paddingHorizontal: 4,
+  },
+  productBoxSoldOut: {
+    backgroundColor: '#F3F4F6',
+    height: 32,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  productBoxSoldOutText: {
+    color: '#9CA3AF',
+    fontSize: 11,
     fontWeight: '700',
   },
 
