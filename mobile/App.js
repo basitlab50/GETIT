@@ -34,6 +34,7 @@ import {
   subscribeToStores,
   getStoreInventory,
   updateDatabaseStore,
+  deleteDatabaseStore,
   findDatabaseUser,
   registerDatabaseUser,
   seedDefaultDatabaseUsers,

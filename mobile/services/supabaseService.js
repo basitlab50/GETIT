@@ -285,6 +285,34 @@ export async function updateDatabaseStore(storeId, updates) {
   }
 }
 
+export async function deleteDatabaseStore(storeId) {
+  try {
+    // 1. Reassign any orders referencing this store to default store to prevent foreign key constraint violations
+    await supabase
+      .from('orders')
+      .update({ store_id: 'store-fresh-mart', store_name: 'Fresh Mart Maitama' })
+      .eq('store_id', storeId);
+
+    // 2. Delete inventory items belonging to this store
+    await supabase
+      .from('store_inventory')
+      .delete()
+      .eq('store_id', storeId);
+
+    // 3. Delete store record
+    const { error } = await supabase
+      .from('stores')
+      .delete()
+      .eq('id', storeId);
+
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('Failed to delete store in Supabase:', err);
+    return false;
+  }
+}
+
 // 6. User Accounts & Database Authentication
 export const DEFAULT_DATABASE_USERS = [
   {
