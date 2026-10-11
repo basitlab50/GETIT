@@ -95,6 +95,20 @@ CREATE TABLE IF NOT EXISTS public.riders (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 6. USERS & ACCOUNTS TABLE (Shoppers & Merchants)
+CREATE TABLE IF NOT EXISTS public.users (
+    id TEXT PRIMARY KEY,
+    role TEXT NOT NULL DEFAULT 'buyer', -- 'buyer', 'seller'
+    full_name TEXT NOT NULL,
+    email TEXT,
+    phone TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    address TEXT,
+    business_name TEXT,
+    store_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- =========================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- Ensures open access for the GETIT customer & merchant apps using anon key
@@ -105,6 +119,7 @@ ALTER TABLE public.master_catalog_products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.store_inventory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.riders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
 -- Allow anon public full read/write for seamless app operations
 DO $$
@@ -123,6 +138,9 @@ BEGIN
 
     DROP POLICY IF EXISTS "Public riders access" ON public.riders;
     CREATE POLICY "Public riders access" ON public.riders FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public users access" ON public.users;
+    CREATE POLICY "Public users access" ON public.users FOR ALL USING (true) WITH CHECK (true);
 END $$;
 
 -- Enable Real-time publications for live order & inventory updates

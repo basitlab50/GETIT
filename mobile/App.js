@@ -34,6 +34,10 @@ import {
   subscribeToStores,
   getStoreInventory,
   updateDatabaseStore,
+  findDatabaseUser,
+  registerDatabaseUser,
+  seedDefaultDatabaseUsers,
+  DEFAULT_DATABASE_USERS,
 } from './services/supabaseService';
 import { getProductImageSource } from './assets/productImages';
 
@@ -1378,6 +1382,9 @@ export default function App() {
         if (storedTiming) {
           setStoreTiming(JSON.parse(storedTiming));
         }
+
+        // Ensure default accounts exist in database
+        seedDefaultDatabaseUsers().catch(console.warn);
       } catch (err) {
         console.warn('Error loading AsyncStorage user state:', err);
       }
@@ -2230,138 +2237,230 @@ export default function App() {
   };
 
   const handleSwitchToDemoBuyer = async () => {
-    const buyerObj = {
-      id: 'demo-buyer-01',
-      role: 'buyer',
-      fullName: 'Amina Bello',
-      email: 'amina.bello@gmail.com',
-      phone: '+234 802 334 5566',
-      address: 'Plot 14 Gana Street, Maitama, Abuja',
-    };
-    setCurrentUser(buyerObj);
+    const demoBuyer = (await findDatabaseUser('08032941194')) || DEFAULT_DATABASE_USERS[0];
+    setCurrentUser(demoBuyer);
     setAppMode('customer');
     setIsLoggedIn(true);
     setAuthModalVisible(false);
     try {
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(buyerObj));
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(demoBuyer));
     } catch (e) {}
-    Alert.alert('🛍️ Buyer Account Active', 'Switched to Amina Bello (Demo Buyer).');
+    Alert.alert('🛍️ Buyer Account Active', `Signed in from database as ${demoBuyer.fullName} (${demoBuyer.phone}).`);
   };
 
   const handleSwitchToDemoSeller = async () => {
-    const sellerObj = {
-      id: 'demo-seller-01',
-      role: 'seller',
-      fullName: 'Emeka Okafor',
-      email: 'emeka@freshmart.ng',
-      phone: '+234 803 111 2233',
-      address: 'Adetokunbo Ademola Crescent, Wuse 2, Abuja',
-      businessName: 'The Gourmet Emporium',
-      storeId: 's1',
-    };
-    setCurrentUser(sellerObj);
-    setMerchantStoreId('s1');
+    const demoSeller = (await findDatabaseUser('08031112233')) || DEFAULT_DATABASE_USERS[1];
+    setCurrentUser(demoSeller);
+    setMerchantStoreId(demoSeller.storeId || 's1');
     setAppMode('merchant');
     setIsLoggedIn(true);
     setAuthModalVisible(false);
     try {
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(sellerObj));
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(demoSeller));
     } catch (e) {}
-    Alert.alert('🏪 Merchant Account Active', 'Switched to Emeka Okafor — The Gourmet Emporium.');
+    Alert.alert('🏪 Merchant Hub Active', `Signed in from database as ${demoSeller.fullName} — ${demoSeller.businessName || 'The Gourmet Emporium'}.`);
   };
 
-  // --- DEDICATED LOGIN / SIGN UP SCREEN HANDLERS ---
+  // --- DEDICATED LOGIN / SIGN UP SCREEN HANDLERS (DATABASE CONNECTED) ---
   const handleAuthBuyerSignIn = async () => {
-    if (!authLoginInput.trim()) {
-      Alert.alert('Login Required', 'Please enter your email address or phone number.');
+    const input = authLoginInput.trim();
+    const pass = authLoginPassword.trim();
+
+    if (!input) {
+      Alert.alert('Login Required', 'Please enter your registered email address or phone number.');
       return;
     }
-    const input = authLoginInput.trim();
-    let name = 'Valued Shopper';
-    if (input.includes('@')) {
-      const part = input.split('@')[0];
-      name = part.charAt(0).toUpperCase() + part.slice(1);
+    if (!pass) {
+      Alert.alert('Password Required', 'Please enter your account password.');
+      return;
     }
-    const buyerObj = {
-      id: `user-buyer-${Date.now()}`,
-      role: 'buyer',
-      fullName: name,
-      email: input.includes('@') ? input : 'shopper@getit.ng',
-      phone: input.includes('@') ? '+234 803 294 1194' : input,
-      address: 'Plot 14 Gana Street, Maitama, Abuja',
-    };
-    setCurrentUser(buyerObj);
+
+    // 1. Strict Database Verification
+    const existingUser = await findDatabaseUser(input);
+    if (!existingUser) {
+      Alert.alert(
+        'Account Not Found',
+        'No account was found with this email or phone number in our database. An account must be created and stored first before you can sign in.\n\nPlease click "Create Account" above to register.'
+      );
+      return;
+    }
+
+    // 2. Password Verification
+    if (existingUser.password && pass !== existingUser.password) {
+      Alert.alert(
+        'Incorrect Password',
+        'The password entered does not match our database records. Please verify your password and try again.'
+      );
+      return;
+    }
+
+    // 3. Routing
+    if (existingUser.role === 'seller') {
+      Alert.alert(
+        'Merchant Account Detected',
+        `Welcome ${existingUser.fullName}! This account is registered as a Store Owner. We are directing you to your Merchant Hub.`
+      );
+      setCurrentUser(existingUser);
+      setMerchantStoreId(existingUser.storeId || 's1');
+      setAppMode('merchant');
+      setIsLoggedIn(true);
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingUser));
+      return;
+    }
+
+    setCurrentUser(existingUser);
     setAppMode('customer');
     setIsLoggedIn(true);
     try {
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(buyerObj));
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingUser));
     } catch (e) {}
-    Alert.alert('🎉 Welcome Back!', `Signed in successfully as ${buyerObj.fullName}. Enjoy shopping on GETIT!`);
+    Alert.alert('🎉 Welcome Back!', `Signed in successfully as ${existingUser.fullName}. Your database profile is loaded!`);
   };
 
   const handleAuthBuyerSignUp = async () => {
-    if (!authSignupFullName.trim()) {
+    const fullName = authSignupFullName.trim();
+    const phone = authSignupPhone.trim();
+    const email = authSignupEmail.trim();
+    const pass = authSignupPassword.trim();
+    const address = authSignupAddress.trim();
+
+    if (!fullName) {
       Alert.alert('Full Name Required', 'Please enter your full name to create an account.');
       return;
     }
-    const newBuyer = {
-      id: `user-buyer-${Date.now()}`,
+    if (!phone) {
+      Alert.alert('Phone Number Required', 'Please enter your phone number to create an account.');
+      return;
+    }
+    if (!pass) {
+      Alert.alert('Password Required', 'Please create a secure password for your account.');
+      return;
+    }
+
+    // 1. Check if user already exists in database
+    const existing = (await findDatabaseUser(phone)) || (email ? await findDatabaseUser(email) : null);
+    if (existing) {
+      Alert.alert(
+        'Account Already Exists',
+        'An account with this phone number or email is already registered in our database.\n\nPlease switch to "Sign In" to access your account.'
+      );
+      setAuthScreenMode('signin');
+      setAuthLoginInput(phone);
+      return;
+    }
+
+    // 2. Register & Store in Database
+    const newBuyer = await registerDatabaseUser({
       role: 'buyer',
-      fullName: authSignupFullName.trim(),
-      email: authSignupEmail.trim() || `${authSignupFullName.toLowerCase().replace(/\s+/g, '')}@getit.ng`,
-      phone: authSignupPhone.trim() || '+234 803 294 1194',
-      address: authSignupAddress.trim() || 'Maitama District, Abuja',
-    };
+      fullName: fullName,
+      phone: phone,
+      email: email || `${fullName.toLowerCase().replace(/\s+/g, '')}@getit.ng`,
+      password: pass,
+      address: address || 'Nigeria',
+    });
+
     setCurrentUser(newBuyer);
     setAppMode('customer');
     setIsLoggedIn(true);
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(newBuyer));
     } catch (e) {}
-    Alert.alert('🎉 Welcome to GETIT!', `Account created! Welcome, ${newBuyer.fullName}. Start shopping now!`);
+    Alert.alert(
+      '🎉 Account Created & Stored!',
+      `Welcome to GETIT, ${newBuyer.fullName}! Your account has been saved in the database. You can now log in anytime with your credentials.`
+    );
   };
 
   const handleAuthSellerSignIn = async () => {
-    if (!authLoginInput.trim()) {
-      Alert.alert('Store Email Required', 'Please enter your registered store email or official phone number.');
+    const input = authLoginInput.trim();
+    const pass = authLoginPassword.trim();
+
+    if (!input) {
+      Alert.alert('Store Email / Phone Required', 'Please enter your registered store email or official phone number.');
       return;
     }
-    const sellerObj = {
-      id: 'demo-seller-01',
-      role: 'seller',
-      fullName: 'Emeka Okafor',
-      email: authLoginInput.includes('@') ? authLoginInput.trim() : 'emeka@freshmart.ng',
-      phone: authLoginInput.includes('@') ? '+234 803 111 2233' : authLoginInput.trim(),
-      address: 'Adetokunbo Ademola Crescent, Wuse 2, Abuja',
-      businessName: 'The Gourmet Emporium',
-      storeId: 's1',
-    };
-    setCurrentUser(sellerObj);
-    setMerchantStoreId('s1');
+    if (!pass) {
+      Alert.alert('Password Required', 'Please enter your merchant password.');
+      return;
+    }
+
+    // 1. Strict Database Verification
+    const existingSeller = await findDatabaseUser(input);
+    if (!existingSeller) {
+      Alert.alert(
+        'Merchant Account Not Found',
+        'No store owner account was found with this email or phone in our database. An account must be created first before you can sign in.\n\nPlease click "Register Store" above to register and launch your store.'
+      );
+      return;
+    }
+
+    // 2. Password Verification
+    if (existingSeller.password && pass !== existingSeller.password) {
+      Alert.alert(
+        'Incorrect Password',
+        'The merchant password entered does not match our database records. Please verify and try again.'
+      );
+      return;
+    }
+
+    setCurrentUser(existingSeller);
+    setMerchantStoreId(existingSeller.storeId || 's1');
     setAppMode('merchant');
     setIsLoggedIn(true);
     try {
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(sellerObj));
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingSeller));
     } catch (e) {}
-    Alert.alert('🏪 Merchant Hub Live!', `Welcome back! Logged into ${sellerObj.businessName}. Your store is ready.`);
+    Alert.alert(
+      '🏪 Merchant Hub Live!',
+      `Welcome back, ${existingSeller.fullName}! Logged into "${existingSeller.businessName || 'your store'}" from the database.`
+    );
   };
 
   const handleAuthSellerSignUp = async () => {
-    if (!authSignupBusinessName.trim() || !authSignupFullName.trim()) {
+    const businessName = authSignupBusinessName.trim();
+    const fullName = authSignupFullName.trim();
+    const phone = authSignupPhone.trim();
+    const email = authSignupEmail.trim();
+    const pass = authSignupPassword.trim();
+    const address = authSignupAddress.trim();
+
+    if (!businessName || !fullName) {
       Alert.alert('Details Required', 'Please enter your Store / Business Name and Owner Name.');
       return;
     }
+    if (!phone) {
+      Alert.alert('Phone Required', 'Please enter your official WhatsApp or phone number.');
+      return;
+    }
+    if (!pass) {
+      Alert.alert('Password Required', 'Please create a merchant password.');
+      return;
+    }
+
+    // 1. Check if user already exists in database
+    const existing = (await findDatabaseUser(phone)) || (email ? await findDatabaseUser(email) : null);
+    if (existing) {
+      Alert.alert(
+        'Account Already Exists',
+        'A merchant account with this phone number or email is already registered in our database.\n\nPlease sign in with your password instead.'
+      );
+      setAuthScreenMode('signin');
+      setAuthLoginInput(phone);
+      return;
+    }
+
+    // 2. Generate Store & Register in Database
     const storeId = `store-${Date.now()}`;
-    const newSeller = {
-      id: `user-seller-${Date.now()}`,
+    const newSeller = await registerDatabaseUser({
       role: 'seller',
-      fullName: authSignupFullName.trim(),
-      email: authSignupEmail.trim() || `${authSignupFullName.toLowerCase().replace(/\s+/g, '')}@merchant.getit.ng`,
-      phone: authSignupPhone.trim() || '+234 800 111 2233',
-      address: authSignupAddress.trim() || 'Abuja, Nigeria',
-      businessName: authSignupBusinessName.trim(),
+      fullName: fullName,
+      phone: phone,
+      email: email || `${fullName.toLowerCase().replace(/\s+/g, '')}@merchant.getit.ng`,
+      password: pass,
+      address: address || 'Nigeria',
+      businessName: businessName,
       storeId: storeId,
-    };
+    });
 
     const newStoreObj = {
       id: storeId,
@@ -2376,13 +2475,13 @@ export default function App() {
       freeDeliveryThreshold: 25000,
       tag: 'NEW MERCHANT',
       badgeColor: COLORS.emeraldPrimary,
-      address: newSeller.address || 'Abuja, Nigeria',
-      district: 'Maitama, Abuja',
+      address: newSeller.address || 'Nigeria',
+      district: 'Nigeria',
       latitude: 9.0882,
       longitude: 7.4933,
       phone: newSeller.phone,
       image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
-      description: `${newSeller.businessName} — partner store live on GETIT Abuja.`,
+      description: `${newSeller.businessName} — partner store live on GETIT Nigeria.`,
       products: [],
       isOpen: true,
       is_open: true,
@@ -2403,8 +2502,8 @@ export default function App() {
       name: newSeller.businessName,
       category: 'Gourmet & Groceries',
       address: newSeller.address,
-      district: 'Maitama, Abuja',
-      city: 'Abuja',
+      district: 'Nigeria',
+      city: 'Nigeria',
       latitude: 9.0882,
       longitude: 7.4933,
       phone: newSeller.phone,
@@ -2412,7 +2511,10 @@ export default function App() {
       isOpen: true,
     }).catch(console.warn);
 
-    Alert.alert('🎉 Store Live on GETIT!', `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" is now active on GETIT.`);
+    Alert.alert(
+      '🎉 Store Registered & Stored on GETIT!',
+      `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" is now stored in the database and live on GETIT across Nigeria.`
+    );
   };
 
   const handleAuthGuestBrowse = () => {

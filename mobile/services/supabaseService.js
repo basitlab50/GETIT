@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { NIGERIAN_GROCERIES_CATALOG } from '../data/nigerianGroceriesCatalog';
 
@@ -283,5 +284,170 @@ export async function updateDatabaseStore(storeId, updates) {
     return null;
   }
 }
+
+// 6. User Accounts & Database Authentication
+export const DEFAULT_DATABASE_USERS = [
+  {
+    id: 'user-shopper-amina',
+    role: 'buyer',
+    fullName: 'Amina Bello',
+    email: 'amina@getit.ng',
+    phone: '08032941194',
+    password: 'password123',
+    address: 'Plot 14 Gana Street, Maitama, Abuja',
+    businessName: null,
+    storeId: null,
+    createdAt: '2026-10-10T00:00:00.000Z',
+  },
+  {
+    id: 'user-merchant-emeka',
+    role: 'seller',
+    fullName: 'Emeka Okafor',
+    email: 'emeka@freshmart.ng',
+    phone: '08031112233',
+    password: 'password123',
+    address: 'Adetokunbo Ademola Crescent, Wuse 2, Abuja',
+    businessName: 'The Gourmet Emporium',
+    storeId: 's1',
+    createdAt: '2026-10-10T00:00:00.000Z',
+  },
+];
+
+export async function seedDefaultDatabaseUsers() {
+  try {
+    const raw = await AsyncStorage.getItem('getit_registered_users');
+    let localUsers = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(localUsers) || localUsers.length === 0) {
+      localUsers = [...DEFAULT_DATABASE_USERS];
+      await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
+    } else {
+      DEFAULT_DATABASE_USERS.forEach((def) => {
+        if (!localUsers.some((u) => u.id === def.id || u.phone === def.phone)) {
+          localUsers.push(def);
+        }
+      });
+      await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
+    }
+  } catch (e) {
+    console.warn('Failed to seed default users in local storage:', e);
+  }
+}
+
+export async function findDatabaseUser(identifier) {
+  if (!identifier) return null;
+  const cleanId = String(identifier).trim().toLowerCase();
+  const digitsOnly = cleanId.replace(/\D/g, '');
+
+  // 1. Try querying remote Supabase 'users' table
+  try {
+    const { data, error } = await supabase.from('users').select('*');
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const match = data.find((u) => {
+        const uEmail = (u.email || '').toLowerCase().trim();
+        const uPhone = (u.phone || '').replace(/\D/g, '');
+        return (
+          (uEmail && uEmail === cleanId) ||
+          (uPhone && digitsOnly && (uPhone === digitsOnly || uPhone.endsWith(digitsOnly.slice(-10))))
+        );
+      });
+      if (match) {
+        return {
+          id: match.id,
+          role: match.role,
+          fullName: match.full_name,
+          email: match.email,
+          phone: match.phone,
+          password: match.password_hash || match.password,
+          address: match.address,
+          businessName: match.business_name,
+          storeId: match.store_id,
+          createdAt: match.created_at,
+        };
+      }
+    }
+  } catch (err) {
+    // If Supabase table is not yet reachable or table is not created yet
+  }
+
+  // 2. Query persistent local database storage
+  try {
+    const raw = await AsyncStorage.getItem('getit_registered_users');
+    let localUsers = raw ? JSON.parse(raw) : [...DEFAULT_DATABASE_USERS];
+    if (!Array.isArray(localUsers) || localUsers.length === 0) {
+      localUsers = [...DEFAULT_DATABASE_USERS];
+      await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
+    }
+
+    const match = localUsers.find((u) => {
+      const uEmail = (u.email || '').toLowerCase().trim();
+      const uPhone = (u.phone || '').replace(/\D/g, '');
+      return (
+        (uEmail && uEmail === cleanId) ||
+        (uPhone && digitsOnly && (uPhone === digitsOnly || uPhone.endsWith(digitsOnly.slice(-10))))
+      );
+    });
+
+    if (match) return match;
+  } catch (err) {
+    console.warn('Local database lookup failed:', err);
+  }
+
+  return null;
+}
+
+export async function registerDatabaseUser(user) {
+  const userRecord = {
+    id: user.id || `user-${user.role || 'buyer'}-${Date.now()}`,
+    role: user.role || 'buyer',
+    fullName: user.fullName || user.full_name || 'Valued User',
+    email: user.email ? user.email.trim().toLowerCase() : null,
+    phone: user.phone ? user.phone.trim() : '',
+    password: user.password || 'password123',
+    address: user.address || '',
+    businessName: user.businessName || user.business_name || null,
+    storeId: user.storeId || user.store_id || null,
+    createdAt: new Date().toISOString(),
+  };
+
+  // 1. Try to persist to Supabase 'users' table
+  try {
+    await supabase.from('users').upsert(
+      {
+        id: userRecord.id,
+        role: userRecord.role,
+        full_name: userRecord.fullName,
+        email: userRecord.email,
+        phone: userRecord.phone,
+        password_hash: userRecord.password,
+        address: userRecord.address,
+        business_name: userRecord.businessName,
+        store_id: userRecord.storeId,
+      },
+      { onConflict: 'id' }
+    );
+  } catch (err) {
+    console.warn('Supabase users table insert failed, storing locally:', err);
+  }
+
+  // 2. Persist to persistent local database
+  try {
+    const raw = await AsyncStorage.getItem('getit_registered_users');
+    let localUsers = raw ? JSON.parse(raw) : [...DEFAULT_DATABASE_USERS];
+    const existsIndex = localUsers.findIndex(
+      (u) => u.id === userRecord.id || (u.email && u.email === userRecord.email) || (u.phone && u.phone === userRecord.phone)
+    );
+    if (existsIndex >= 0) {
+      localUsers[existsIndex] = userRecord;
+    } else {
+      localUsers.push(userRecord);
+    }
+    await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
+  } catch (err) {
+    console.warn('AsyncStorage save failed:', err);
+  }
+
+  return userRecord;
+}
+
 
 
