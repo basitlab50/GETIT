@@ -2429,7 +2429,6 @@ export default function App() {
     setAuthScreenMode('signin');
     setAuthLoginInput('');
     setAuthLoginPassword('');
-    Alert.alert('Logged Out', 'You have been signed out. Sign in or create an account to continue.');
   };
 
   // --- STORE LIVE OPERATING STATUS & TIMING HANDLERS ---
@@ -2448,7 +2447,7 @@ export default function App() {
     Alert.alert(
       nextStatus ? '🟢 Store is LIVE!' : '🔴 Store is PAUSED',
       nextStatus
-        ? `${currentMerchantStore?.name} is now online and accepting orders from all buyers in Abuja.`
+        ? `${currentMerchantStore?.name} is now online and accepting orders across Nigeria.`
         : `${currentMerchantStore?.name} is paused. Buyers will see that your store is currently closed.`
     );
   };
@@ -2678,7 +2677,7 @@ export default function App() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Top Brand Header with Popping Transparent Logo on Luxury Badge */}
+          {/* Top Brand Header: Minimal, Classy, Nigeria-wide */}
           <View style={styles.authPageBrandSection}>
             <Animated.View style={[styles.luxeLogoMedallion, { transform: [{ scale: logoScaleAnim }] }]}>
               <Image
@@ -2690,34 +2689,21 @@ export default function App() {
 
             <Text style={styles.authPageBrandTitle}>GETIT</Text>
             <View style={styles.luxeBrandBadgePill}>
-              <Text style={styles.luxeBrandBadgeText}>ABUJA'S PREMIER CONCIERGE & MARKETPLACE</Text>
+              <Text style={styles.luxeBrandBadgeText}>🇳🇬 NIGERIA'S PREMIER MARKETPLACE</Text>
             </View>
-            <Text style={styles.authPageBrandTagline}>
-              Fresh Groceries • Fine Foods • Provisions • Express Delivery
-            </Text>
 
-            {/* Top Portal Indicator: Solely Shopper / Buyer at the top */}
-            {isBuyer ? (
-              <View style={styles.luxeShopperOnlyPill}>
-                <Text style={styles.luxeShopperOnlyText}>🛍️ SHOPPER & BUYER PORTAL</Text>
-              </View>
-            ) : (
-              <View style={{ alignItems: 'center', marginTop: 12 }}>
-                <View style={styles.luxeMerchantOnlyPill}>
-                  <Text style={styles.luxeMerchantOnlyText}>🏪 MERCHANT & STORE OWNER HUB</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.luxeBackToBuyerPill}
-                  onPress={() => switchAuthRole('buyer')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.luxeBackToBuyerText}>← Return to Shopper / Buyer Portal</Text>
-                </TouchableOpacity>
-              </View>
+            {!isBuyer && (
+              <TouchableOpacity
+                style={styles.luxeBackToBuyerPill}
+                onPress={() => switchAuthRole('buyer')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.luxeBackToBuyerText}>← Return to Shopper Portal</Text>
+              </TouchableOpacity>
             )}
           </View>
 
-          {/* Animated Main Luxury Card */}
+          {/* Animated Luxury Auth Card */}
           <Animated.View
             style={[
               styles.luxeAuthCard,
@@ -2727,27 +2713,29 @@ export default function App() {
               },
             ]}
           >
-            {/* Card Header & Role Indicator */}
+            {/* Card Header */}
             <View style={styles.luxeCardHeader}>
               <View style={{ flex: 1, paddingRight: 8 }}>
                 <Text style={styles.luxeCardTitle}>
-                  {isBuyer ? '🛍️ Buyer Account' : '🏪 Merchant Portal'}
+                  {isBuyer
+                    ? (isSignIn ? 'Shopper Sign In' : 'Create Account')
+                    : (isSignIn ? 'Merchant Sign In' : 'Register Store')}
                 </Text>
                 <Text style={styles.luxeCardSub}>
                   {isBuyer
-                    ? (isSignIn ? 'Sign in to access your orders & quick checkout' : 'Join GETIT for fast grocery delivery across Abuja')
-                    : (isSignIn ? 'Log in to manage catalog stock, orders & 24h hours' : 'Launch your store on GETIT Abuja marketplace')}
+                    ? (isSignIn ? 'Welcome back! Sign in to order groceries' : 'Quick sign up for grocery delivery across Nigeria')
+                    : (isSignIn ? 'Manage your store catalog & live orders' : 'Launch your store on GETIT Nigeria')}
                 </Text>
               </View>
 
               <View style={[styles.luxePortalBadge, isBuyer ? styles.buyerBadgePill : styles.merchantBadgePill]}>
                 <Text style={isBuyer ? styles.buyerBadgeText : styles.merchantBadgeText}>
-                  {isBuyer ? 'SHOPPER' : 'PARTNER'}
+                  {isBuyer ? 'SHOPPER' : 'MERCHANT'}
                 </Text>
               </View>
             </View>
 
-            {/* Segmented Sliding Pill: Sign In vs Sign Up */}
+            {/* Mode Switcher */}
             <View style={styles.luxeModePillsWrap}>
               <TouchableOpacity
                 style={[styles.luxeModePillBtn, isSignIn && styles.luxeModePillActive]}
@@ -2755,7 +2743,7 @@ export default function App() {
                 activeOpacity={0.85}
               >
                 <Text style={[styles.luxeModePillText, isSignIn && styles.luxeModePillTextActive]}>
-                  {isBuyer ? 'Sign In' : 'Merchant Sign In'}
+                  Sign In
                 </Text>
               </TouchableOpacity>
 
@@ -2775,16 +2763,15 @@ export default function App() {
               isSignIn ? (
                 /* Buyer Sign In Form */
                 <View style={styles.luxeFormContainer}>
-                  {/* Organized Luxury Input: Email or Phone */}
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>✉️</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>EMAIL OR PHONE NUMBER</Text>
+                      <Text style={styles.luxeInputLabel}>EMAIL OR PHONE</Text>
                       <TextInput
                         style={styles.luxeTextInput}
-                        placeholder="e.g. amina@gmail.com or 0803 294 1194"
+                        placeholder="e.g. 0803 123 4567 or email"
                         placeholderTextColor="#A8A29E"
                         value={authLoginInput}
                         onChangeText={setAuthLoginInput}
@@ -2793,7 +2780,6 @@ export default function App() {
                     </View>
                   </View>
 
-                  {/* Organized Luxury Input: Password */}
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>🔒</Text>
@@ -2802,7 +2788,7 @@ export default function App() {
                       <Text style={styles.luxeInputLabel}>PASSWORD</Text>
                       <TextInput
                         style={styles.luxeTextInput}
-                        placeholder="Enter your account password"
+                        placeholder="Enter password"
                         placeholderTextColor="#A8A29E"
                         secureTextEntry={!showPassword}
                         value={authLoginPassword}
@@ -2814,39 +2800,27 @@ export default function App() {
                       onPress={() => setShowPassword(!showPassword)}
                     >
                       <Text style={styles.luxeEyeToggleText}>
-                        {showPassword ? '👁️ Hide' : '👁️ Show'}
+                        {showPassword ? 'Hide' : 'Show'}
                       </Text>
                     </TouchableOpacity>
                   </View>
 
-                  {/* Primary Action Button */}
                   <TouchableOpacity
                     style={styles.luxePrimaryBtn}
                     onPress={handleAuthBuyerSignIn}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.luxePrimaryBtnText}>Sign In as Buyer ➔</Text>
+                    <Text style={styles.luxePrimaryBtnText}>Sign In ➔</Text>
                   </TouchableOpacity>
 
-                  {/* Quick VIP Demo Login */}
-                  <View style={styles.luxeDemoDivider}>
-                    <View style={styles.luxeDemoLine} />
-                    <Text style={styles.luxeDemoDividerText}>OR ONE-TAP INSTANT ACCESS</Text>
-                    <View style={styles.luxeDemoLine} />
-                  </View>
-
+                  {/* Compact Demo Sign In Button */}
                   <TouchableOpacity
                     style={styles.luxeDemoCardBtn}
                     onPress={handleSwitchToDemoBuyer}
                     activeOpacity={0.85}
                   >
-                    <View style={styles.luxeDemoIconBadge}>
-                      <Text style={{ fontSize: 16 }}>⚡</Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.luxeDemoCardTitle}>Quick Sign In: Amina Bello (Shopper)</Text>
-                      <Text style={styles.luxeDemoCardSub}>Plot 14 Gana St, Maitama • Instant live test</Text>
-                    </View>
+                    <Text style={{ fontSize: 13, marginRight: 8 }}>⚡</Text>
+                    <Text style={styles.luxeDemoCardTitle}>Demo Sign In (Amina Bello)</Text>
                   </TouchableOpacity>
 
                   {/* Guest Browse Option */}
@@ -2856,20 +2830,19 @@ export default function App() {
                     activeOpacity={0.8}
                   >
                     <Text style={styles.luxeGuestBrowseText}>
-                      Skip for now & Browse Stores as Guest ➔
+                      Browse Stores as Guest ➔
                     </Text>
                   </TouchableOpacity>
                 </View>
               ) : (
-                /* Streamlined Buyer Sign Up Form (Only 3 essential boxes!) */
+                /* Streamlined Buyer Sign Up Form */
                 <View style={styles.luxeFormContainer}>
-                  {/* Box 1: Full Name */}
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>👤</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>FULL NAME *</Text>
+                      <Text style={styles.luxeInputLabel}>FULL NAME</Text>
                       <TextInput
                         style={styles.luxeTextInput}
                         placeholder="e.g. Fatima Bello"
@@ -2880,13 +2853,12 @@ export default function App() {
                     </View>
                   </View>
 
-                  {/* Box 2: Phone / WhatsApp */}
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>📱</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>PHONE / WHATSAPP NUMBER *</Text>
+                      <Text style={styles.luxeInputLabel}>PHONE NUMBER</Text>
                       <TextInput
                         style={styles.luxeTextInput}
                         placeholder="e.g. 0802 345 6789"
@@ -2898,16 +2870,15 @@ export default function App() {
                     </View>
                   </View>
 
-                  {/* Box 3: Password */}
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>🔒</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>CREATE PASSWORD *</Text>
+                      <Text style={styles.luxeInputLabel}>PASSWORD</Text>
                       <TextInput
                         style={styles.luxeTextInput}
-                        placeholder="Create a secure password"
+                        placeholder="Create a password"
                         placeholderTextColor="#A8A29E"
                         secureTextEntry={!showPassword}
                         value={authSignupPassword}
@@ -2919,31 +2890,30 @@ export default function App() {
                       onPress={() => setShowPassword(!showPassword)}
                     >
                       <Text style={styles.luxeEyeToggleText}>
-                        {showPassword ? '👁️' : '👁️'}
+                        {showPassword ? 'Hide' : 'Show'}
                       </Text>
                     </TouchableOpacity>
                   </View>
 
-                  {/* Optional Details Toggle (Keeps form clean & uncluttered!) */}
+                  {/* Optional Details Toggle */}
                   <TouchableOpacity
                     style={styles.luxeOptionalToggle}
                     onPress={() => setShowSignupOptional(!showSignupOptional)}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.luxeOptionalToggleText}>
-                      {showSignupOptional ? '▼ Hide Delivery Address & Email' : '+ Add Delivery Address & Email (Optional)'}
+                      {showSignupOptional ? '▲ Hide Delivery Address & Email' : '+ Add Delivery Address & Email (Optional)'}
                     </Text>
                   </TouchableOpacity>
 
                   {showSignupOptional && (
-                    <View style={{ marginTop: 6 }}>
-                      {/* Optional Email */}
+                    <View style={{ marginTop: 4 }}>
                       <View style={styles.luxeInputBox}>
                         <View style={styles.luxeInputIconWrap}>
                           <Text style={styles.luxeInputIcon}>✉️</Text>
                         </View>
                         <View style={styles.luxeInputContent}>
-                          <Text style={styles.luxeInputLabel}>EMAIL ADDRESS (OPTIONAL)</Text>
+                          <Text style={styles.luxeInputLabel}>EMAIL (OPTIONAL)</Text>
                           <TextInput
                             style={styles.luxeTextInput}
                             placeholder="e.g. fatima@getit.ng"
@@ -2956,16 +2926,15 @@ export default function App() {
                         </View>
                       </View>
 
-                      {/* Optional Address */}
                       <View style={styles.luxeInputBox}>
                         <View style={styles.luxeInputIconWrap}>
                           <Text style={styles.luxeInputIcon}>📍</Text>
                         </View>
                         <View style={styles.luxeInputContent}>
-                          <Text style={styles.luxeInputLabel}>DELIVERY ADDRESS IN ABUJA</Text>
+                          <Text style={styles.luxeInputLabel}>DELIVERY ADDRESS (NIGERIA)</Text>
                           <TextInput
                             style={styles.luxeTextInput}
-                            placeholder="e.g. Plot 14 Gana Street, Maitama"
+                            placeholder="e.g. Maitama, Abuja / Ikeja, Lagos"
                             placeholderTextColor="#A8A29E"
                             value={authSignupAddress}
                             onChangeText={setAuthSignupAddress}
@@ -2975,23 +2944,21 @@ export default function App() {
                     </View>
                   )}
 
-                  {/* Primary Action Button */}
                   <TouchableOpacity
                     style={styles.luxePrimaryBtn}
                     onPress={handleAuthBuyerSignUp}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.luxePrimaryBtnText}>Create Account & Start Shopping ➔</Text>
+                    <Text style={styles.luxePrimaryBtnText}>Create Account ➔</Text>
                   </TouchableOpacity>
 
-                  {/* Guest Browse Option */}
                   <TouchableOpacity
                     style={styles.luxeGuestBrowseBtn}
                     onPress={handleAuthGuestBrowse}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.luxeGuestBrowseText}>
-                      Explore & Browse Stores as Guest ➔
+                      Browse Stores as Guest ➔
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -3006,10 +2973,10 @@ export default function App() {
                       <Text style={styles.luxeInputIcon}>🏪</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>REGISTERED EMAIL OR OFFICIAL PHONE</Text>
+                      <Text style={styles.luxeInputLabel}>EMAIL OR PHONE</Text>
                       <TextInput
                         style={styles.luxeTextInput}
-                        placeholder="e.g. emeka@freshmart.ng or 0803 111 2233"
+                        placeholder="e.g. 0803 111 2233 or email"
                         placeholderTextColor="#A8A29E"
                         value={authLoginInput}
                         onChangeText={setAuthLoginInput}
@@ -3038,7 +3005,7 @@ export default function App() {
                       onPress={() => setShowPassword(!showPassword)}
                     >
                       <Text style={styles.luxeEyeToggleText}>
-                        {showPassword ? '👁️ Hide' : '👁️ Show'}
+                        {showPassword ? 'Hide' : 'Show'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -3049,41 +3016,28 @@ export default function App() {
                     activeOpacity={0.85}
                   >
                     <Text style={[styles.luxePrimaryBtnText, { color: '#000000', fontWeight: '800' }]}>
-                      Log In to Merchant Hub ➔
+                      Log In to Hub ➔
                     </Text>
                   </TouchableOpacity>
-
-                  {/* One-Tap Demo Merchant Login */}
-                  <View style={styles.luxeDemoDivider}>
-                    <View style={styles.luxeDemoLine} />
-                    <Text style={styles.luxeDemoDividerText}>OR ONE-TAP INSTANT ACCESS</Text>
-                    <View style={styles.luxeDemoLine} />
-                  </View>
 
                   <TouchableOpacity
                     style={styles.luxeDemoCardBtn}
                     onPress={handleSwitchToDemoSeller}
                     activeOpacity={0.85}
                   >
-                    <View style={styles.luxeDemoIconBadge}>
-                      <Text style={{ fontSize: 16 }}>🏪</Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.luxeDemoCardTitle}>The Gourmet Emporium (Emeka Okafor)</Text>
-                      <Text style={styles.luxeDemoCardSub}>Full vendor dashboard • Orders & live inventory</Text>
-                    </View>
+                    <Text style={{ fontSize: 13, marginRight: 8 }}>🏪</Text>
+                    <Text style={styles.luxeDemoCardTitle}>Demo Merchant (The Gourmet Emporium)</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
                 /* Streamlined Merchant Sign Up */
                 <View style={styles.luxeFormContainer}>
-                  {/* Box 1: Store Name */}
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>🏪</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>STORE / BUSINESS NAME *</Text>
+                      <Text style={styles.luxeInputLabel}>STORE NAME</Text>
                       <TextInput
                         style={styles.luxeTextInput}
                         placeholder="e.g. Daily Fresh Organics"
@@ -3094,13 +3048,12 @@ export default function App() {
                     </View>
                   </View>
 
-                  {/* Box 2: Owner Name */}
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>👤</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>OWNER / MANAGER FULL NAME *</Text>
+                      <Text style={styles.luxeInputLabel}>OWNER / MANAGER NAME</Text>
                       <TextInput
                         style={styles.luxeTextInput}
                         placeholder="e.g. Chinedu Eze"
@@ -3111,13 +3064,12 @@ export default function App() {
                     </View>
                   </View>
 
-                  {/* Box 3: Official WhatsApp */}
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>📱</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>OFFICIAL PHONE / WHATSAPP *</Text>
+                      <Text style={styles.luxeInputLabel}>PHONE / WHATSAPP</Text>
                       <TextInput
                         style={styles.luxeTextInput}
                         placeholder="e.g. 0803 555 7788"
@@ -3129,16 +3081,15 @@ export default function App() {
                     </View>
                   </View>
 
-                  {/* Box 4: Password */}
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>🔒</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>CREATE MERCHANT PASSWORD *</Text>
+                      <Text style={styles.luxeInputLabel}>PASSWORD</Text>
                       <TextInput
                         style={styles.luxeTextInput}
-                        placeholder="Create a vendor password"
+                        placeholder="Create vendor password"
                         placeholderTextColor="#A8A29E"
                         secureTextEntry={!showPassword}
                         value={authSignupPassword}
@@ -3150,33 +3101,32 @@ export default function App() {
                       onPress={() => setShowPassword(!showPassword)}
                     >
                       <Text style={styles.luxeEyeToggleText}>
-                        {showPassword ? '👁️' : '👁️'}
+                        {showPassword ? 'Hide' : 'Show'}
                       </Text>
                     </TouchableOpacity>
                   </View>
 
-                  {/* Optional Merchant Address Toggle */}
                   <TouchableOpacity
                     style={styles.luxeOptionalToggle}
                     onPress={() => setShowSignupOptional(!showSignupOptional)}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.luxeOptionalToggleText}>
-                      {showSignupOptional ? '▼ Hide Physical Store Location & Email' : '+ Add Store Address in Abuja & Email (Optional)'}
+                      {showSignupOptional ? '▲ Hide Location & Email' : '+ Add Store Location & Email (Optional)'}
                     </Text>
                   </TouchableOpacity>
 
                   {showSignupOptional && (
-                    <View style={{ marginTop: 6 }}>
+                    <View style={{ marginTop: 4 }}>
                       <View style={styles.luxeInputBox}>
                         <View style={styles.luxeInputIconWrap}>
                           <Text style={styles.luxeInputIcon}>📍</Text>
                         </View>
                         <View style={styles.luxeInputContent}>
-                          <Text style={styles.luxeInputLabel}>PHYSICAL LOCATION IN ABUJA</Text>
+                          <Text style={styles.luxeInputLabel}>STORE LOCATION (NIGERIA)</Text>
                           <TextInput
                             style={styles.luxeTextInput}
-                            placeholder="e.g. Adetokunbo Ademola Crescent, Wuse 2"
+                            placeholder="e.g. Wuse 2, Abuja / Victoria Island, Lagos"
                             placeholderTextColor="#A8A29E"
                             value={authSignupAddress}
                             onChangeText={setAuthSignupAddress}
@@ -3210,7 +3160,7 @@ export default function App() {
                     activeOpacity={0.85}
                   >
                     <Text style={[styles.luxePrimaryBtnText, { color: '#000000', fontWeight: '800' }]}>
-                      🚀 Register Store & Launch Live on GETIT ➔
+                      Register Store ➔
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -3218,44 +3168,26 @@ export default function App() {
             )}
           </Animated.View>
 
-          {/* DEDICATED SLEEK VIP PARTNER CALLOUT BELOW */}
+          {/* Compact VIP Partner Switch Bar */}
           {isBuyer ? (
             <TouchableOpacity
               style={styles.luxeVipPartnerBar}
               onPress={() => switchAuthRole('seller')}
               activeOpacity={0.88}
             >
-              <View style={styles.luxeVipPartnerIconBox}>
-                <Text style={{ fontSize: 22 }}>🏪</Text>
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.luxeVipPartnerTitle}>Are you a Merchant or Shop Owner?</Text>
-                <Text style={styles.luxeVipPartnerSub}>
-                  Sell groceries, manage live stock & set 24h hours schedule
-                </Text>
-              </View>
-              <View style={styles.luxeVipPartnerArrowPill}>
-                <Text style={styles.luxeVipPartnerArrowText}>Merchant Portal ➔</Text>
-              </View>
+              <Text style={{ fontSize: 18, marginRight: 8 }}>🏪</Text>
+              <Text style={styles.luxeVipPartnerTitle}>Shop Owner? Access Merchant Portal</Text>
+              <Text style={styles.luxeVipPartnerArrowText}>➔</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={[styles.luxeVipPartnerBar, { borderColor: '#E2D9CC', backgroundColor: '#FFFFFF' }]}
+              style={[styles.luxeVipPartnerBar, { borderColor: '#E2D9CC' }]}
               onPress={() => switchAuthRole('buyer')}
               activeOpacity={0.88}
             >
-              <View style={[styles.luxeVipPartnerIconBox, { backgroundColor: '#F0FDF4' }]}>
-                <Text style={{ fontSize: 22 }}>🛍️</Text>
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.luxeVipPartnerTitle}>Looking to Buy Groceries?</Text>
-                <Text style={styles.luxeVipPartnerSub}>
-                  Switch to the shopper portal to order provisions & food
-                </Text>
-              </View>
-              <View style={[styles.luxeVipPartnerArrowPill, { backgroundColor: COLORS.emeraldDeep }]}>
-                <Text style={[styles.luxeVipPartnerArrowText, { color: '#FFFFFF' }]}>Shopper Portal ➔</Text>
-              </View>
+              <Text style={{ fontSize: 18, marginRight: 8 }}>🛍️</Text>
+              <Text style={styles.luxeVipPartnerTitle}>Shopper? Return to Buyer Portal</Text>
+              <Text style={[styles.luxeVipPartnerArrowText, { color: COLORS.emeraldDeep }]}>➔</Text>
             </TouchableOpacity>
           )}
 
@@ -3729,25 +3661,27 @@ export default function App() {
               </Text>
             ) : null}
 
-            <TouchableOpacity
-              style={[styles.primaryActionBtn, { marginTop: 14, paddingVertical: 10, paddingHorizontal: 20, backgroundColor: COLORS.emeraldDeep }]}
-              onPress={() => setAuthModalVisible(true)}
-              activeOpacity={0.85}
-            >
-              <Text style={[styles.primaryActionBtnText, { fontSize: 13 }]}>
-                👤 Create / Switch Account ➔
-              </Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12, width: '100%' }}>
+              <TouchableOpacity
+                style={[styles.primaryActionBtn, { flex: 1, paddingVertical: 9, backgroundColor: COLORS.emeraldDeep }]}
+                onPress={() => setAuthModalVisible(true)}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.primaryActionBtnText, { fontSize: 12 }]}>
+                  👤 Switch Account
+                </Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.primaryActionBtn, { marginTop: 8, paddingVertical: 8, paddingHorizontal: 20, backgroundColor: '#FEF2F2', borderColor: '#FCA5A5', borderWidth: 1 }]}
-              onPress={handleLogout}
-              activeOpacity={0.85}
-            >
-              <Text style={{ color: '#DC2626', fontSize: 12.5, fontWeight: '700' }}>
-                🚪 Log Out & Return to Login Screen
-              </Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.primaryActionBtn, { flex: 1, paddingVertical: 9, backgroundColor: '#FEF2F2', borderColor: '#FECACA', borderWidth: 1 }]}
+                onPress={handleLogout}
+                activeOpacity={0.85}
+              >
+                <Text style={{ color: '#DC2626', fontSize: 12, fontWeight: '700' }}>
+                  🚪 Sign Out
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* --- MERCHANT HUB SWITCHER CARD --- */}
@@ -6383,7 +6317,7 @@ export default function App() {
             </TouchableOpacity>
             <View style={{ alignItems: 'center' }}>
               <Text style={styles.modalHeaderTitle}>🏬 Register New Store</Text>
-              <Text style={styles.modalHeaderSubtitle}>Live immediately for all buyers across Abuja</Text>
+              <Text style={styles.modalHeaderSubtitle}>Live immediately for all buyers across Nigeria</Text>
             </View>
             <View style={{ width: 60 }} />
           </View>
@@ -6398,7 +6332,7 @@ export default function App() {
               <Text style={{ fontSize: 26, marginBottom: 4 }}>🏪 ✨</Text>
               <Text style={styles.customHeroTitle}>Create Your Storefront</Text>
               <Text style={styles.customHeroSub}>
-                Set up your store identity, pick your Abuja neighborhood, and start selling groceries, fresh foods, or provisions to thousands of customers.
+                Set up your store identity, pick your neighborhood or city, and start selling groceries, fresh foods, or provisions across Nigeria.
               </Text>
             </View>
 
@@ -6612,7 +6546,7 @@ export default function App() {
                 <Text style={styles.authActiveUserRole}>
                   {currentUser?.role === 'seller'
                     ? `Seller Account • ${currentUser?.businessName || 'Store Owner'}`
-                    : 'Buyer Account • Abuja Delivery'}
+                    : 'Buyer Account • Nigeria Delivery'}
                 </Text>
               </View>
             </View>
@@ -6645,7 +6579,7 @@ export default function App() {
               <View style={styles.authSectionBox}>
                 <Text style={styles.authSectionTitle}>Create New Buyer Profile</Text>
                 <Text style={styles.authSectionSub}>
-                  Enter details to register a customer account for instant ordering across Abuja.
+                  Enter details to register a customer account for instant ordering across Nigeria.
                 </Text>
 
                 <View style={styles.formGroup}>
@@ -6685,7 +6619,7 @@ export default function App() {
                 </View>
 
                 <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>DELIVERY ADDRESS (ABUJA)</Text>
+                  <Text style={styles.formLabel}>DELIVERY ADDRESS (NIGERIA)</Text>
                   <TextInput
                     style={styles.formInput}
                     placeholder="e.g. Plot 14 Gana Street, Maitama"
@@ -6780,7 +6714,7 @@ export default function App() {
                 </View>
 
                 <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>SHOP LOCATION / ADDRESS (ABUJA)</Text>
+                  <Text style={styles.formLabel}>SHOP LOCATION / ADDRESS (NIGERIA)</Text>
                   <TextInput
                     style={styles.formInput}
                     placeholder="e.g. Adetokunbo Ademola Crescent, Wuse 2"
@@ -11193,29 +11127,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#DFC694',
     shadowColor: '#C5A059',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.22,
-    shadowRadius: 14,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 5,
+    marginBottom: 6,
   },
   luxeLogoImg: {
-    width: 74,
-    height: 60,
+    width: 52,
+    height: 42,
   },
   authPageBrandTitle: {
-    fontSize: 27,
+    fontSize: 24,
     fontWeight: '900',
     color: COLORS.emeraldDeep,
-    letterSpacing: 3,
+    letterSpacing: 2,
   },
   luxeBrandBadgePill: {
     backgroundColor: 'rgba(217, 169, 78, 0.15)',
     paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 20,
+    paddingVertical: 3.5,
+    borderRadius: 16,
     marginTop: 4,
     borderWidth: 1,
     borderColor: 'rgba(217, 169, 78, 0.35)',
@@ -11227,9 +11162,9 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   authPageBrandTagline: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: '#78716C',
-    marginTop: 6,
+    marginTop: 4,
     textAlign: 'center',
     fontWeight: '500',
   },
@@ -11237,47 +11172,43 @@ const styles = StyleSheet.create({
   // Top Portal Badges & Indicators
   luxeShopperOnlyPill: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: 20,
-    marginTop: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 18,
+    marginTop: 8,
     borderWidth: 1.5,
     borderColor: '#E2D9CC',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    elevation: 1,
   },
   luxeShopperOnlyText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
     color: COLORS.emeraldDeep,
     letterSpacing: 0.8,
   },
   luxeMerchantOnlyPill: {
     backgroundColor: '#FFFBEB',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: 18,
     borderWidth: 1.5,
     borderColor: '#FDE68A',
   },
   luxeMerchantOnlyText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
     color: '#92400E',
     letterSpacing: 0.8,
   },
   luxeBackToBuyerPill: {
-    marginTop: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 14,
+    marginTop: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
     backgroundColor: '#F5EFE6',
   },
   luxeBackToBuyerText: {
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '700',
     color: COLORS.emeraldDeep,
     textDecorationLine: 'underline',
@@ -11286,34 +11217,34 @@ const styles = StyleSheet.create({
   // Luxury Card
   luxeAuthCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 20,
+    borderRadius: 20,
+    padding: 18,
     borderWidth: 1.5,
     borderColor: '#EFE7DA',
     shadowColor: '#443A2B',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 4,
-    marginBottom: 16,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 3,
+    marginBottom: 12,
   },
   luxeCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   luxeCardTitle: {
-    fontSize: 17,
-    fontWeight: '900',
+    fontSize: 16,
+    fontWeight: '800',
     color: '#1C1917',
     letterSpacing: 0.2,
   },
   luxeCardSub: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: '#78716C',
     marginTop: 2,
-    lineHeight: 16,
+    lineHeight: 15,
   },
   luxePortalBadge: {
     paddingHorizontal: 8,
@@ -11326,7 +11257,7 @@ const styles = StyleSheet.create({
     borderColor: '#A7F3D0',
   },
   buyerBadgeText: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '800',
     color: '#047857',
     letterSpacing: 0.5,
@@ -11336,7 +11267,7 @@ const styles = StyleSheet.create({
     borderColor: '#FDE68A',
   },
   merchantBadgeText: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '800',
     color: '#B45309',
     letterSpacing: 0.5,
@@ -11346,16 +11277,16 @@ const styles = StyleSheet.create({
   luxeModePillsWrap: {
     flexDirection: 'row',
     backgroundColor: '#F5EFE6',
-    borderRadius: 14,
-    padding: 4,
-    marginBottom: 18,
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: '#E8DFD0',
   },
   luxeModePillBtn: {
     flex: 1,
-    paddingVertical: 9,
-    borderRadius: 10,
+    paddingVertical: 7,
+    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -11363,12 +11294,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     elevation: 2,
     shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
     shadowOffset: { width: 0, height: 1 },
   },
   luxeModePillText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '700',
     color: '#78716C',
   },
@@ -11382,56 +11313,56 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   luxeInputBox: {
-    height: 60,
+    height: 50,
     backgroundColor: '#FAFAF9',
-    borderRadius: 15,
+    borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#E7DFD3',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    marginBottom: 10,
+    paddingHorizontal: 10,
+    marginBottom: 8,
   },
   luxeInputIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
+    width: 30,
+    height: 30,
+    borderRadius: 8,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#EAE1D5',
-    marginRight: 10,
+    marginRight: 8,
   },
   luxeInputIcon: {
-    fontSize: 15,
+    fontSize: 14,
   },
   luxeInputContent: {
     flex: 1,
     justifyContent: 'center',
   },
   luxeInputLabel: {
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: '800',
     color: '#8C827A',
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
     marginBottom: 1,
   },
   luxeTextInput: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#1C1917',
     padding: 0,
     margin: 0,
   },
   luxeEyeToggleBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
     borderRadius: 6,
     backgroundColor: '#F5EFE6',
   },
   luxeEyeToggleText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     color: COLORS.emeraldDeep,
   },
@@ -11439,27 +11370,27 @@ const styles = StyleSheet.create({
   // Action Buttons
   luxePrimaryBtn: {
     backgroundColor: COLORS.emeraldDeep,
-    borderRadius: 15,
-    paddingVertical: 14,
+    borderRadius: 12,
+    paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 6,
-    elevation: 3,
+    marginTop: 4,
+    elevation: 2,
     shadowColor: COLORS.emeraldDeep,
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
   },
   luxePrimaryBtnText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '800',
-    letterSpacing: 0.4,
+    letterSpacing: 0.3,
   },
   luxeDemoDivider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 14,
+    marginVertical: 10,
   },
   luxeDemoLine: {
     flex: 1,
@@ -11467,57 +11398,60 @@ const styles = StyleSheet.create({
     backgroundColor: '#EAE1D5',
   },
   luxeDemoDividerText: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '800',
     color: '#A8A29E',
     letterSpacing: 0.8,
-    marginHorizontal: 10,
+    marginHorizontal: 8,
   },
   luxeDemoCardBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#F5EFE6',
-    borderRadius: 14,
-    padding: 11,
+    borderRadius: 11,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: '#E2D9CC',
+    marginTop: 8,
   },
   luxeDemoIconBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+    width: 26,
+    height: 26,
+    borderRadius: 8,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
   luxeDemoCardTitle: {
-    fontSize: 12.5,
+    fontSize: 11.5,
     fontWeight: '700',
-    color: '#1C1917',
+    color: '#44403C',
   },
   luxeDemoCardSub: {
-    fontSize: 10.5,
+    fontSize: 10,
     color: '#78716C',
     marginTop: 1,
   },
   luxeGuestBrowseBtn: {
     alignItems: 'center',
-    marginTop: 12,
-    paddingVertical: 6,
+    marginTop: 8,
+    paddingVertical: 4,
   },
   luxeGuestBrowseText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700',
     color: COLORS.emeraldDeep,
     textDecorationLine: 'underline',
   },
   luxeOptionalToggle: {
     alignItems: 'center',
-    paddingVertical: 6,
-    marginVertical: 4,
+    paddingVertical: 4,
+    marginVertical: 2,
   },
   luxeOptionalToggleText: {
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '700',
     color: COLORS.emeraldPrimary,
   },
@@ -11526,21 +11460,23 @@ const styles = StyleSheet.create({
   luxeVipPartnerBar: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
+    borderRadius: 14,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
     borderWidth: 1.5,
     borderColor: '#DFD7C7',
     elevation: 2,
     shadowColor: '#000',
     shadowOpacity: 0.04,
-    shadowRadius: 6,
+    shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
   },
   luxeVipPartnerIconBox: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     backgroundColor: '#FFFBEB',
     alignItems: 'center',
     justifyContent: 'center',
@@ -11548,26 +11484,27 @@ const styles = StyleSheet.create({
     borderColor: '#FDE68A',
   },
   luxeVipPartnerTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#1C1917',
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#44403C',
   },
   luxeVipPartnerSub: {
-    fontSize: 10.5,
+    fontSize: 10,
     color: '#78716C',
-    marginTop: 2,
+    marginTop: 1,
   },
   luxeVipPartnerArrowPill: {
     backgroundColor: '#F5EFE6',
-    borderRadius: 10,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     marginLeft: 6,
   },
   luxeVipPartnerArrowText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
     color: '#92400E',
+    marginLeft: 6,
   },
 });
 
