@@ -26,6 +26,7 @@ import {
   updateDatabaseOrderStatus,
   subscribeToOrders,
 } from './services/supabaseService';
+import { getProductImageSource } from './assets/productImages';
 
 const { width } = Dimensions.get('window');
 
@@ -533,6 +534,16 @@ const STORES_AROUND_ME = [
     image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
     description: 'Imported artisanal cheeses, prime truffles, charcuterie, and fine everyday provisions.',
     products: [
+      { id: 'gp-coca-50cl', name: 'Coca-Cola Original (50 cl, PET bottle)', price: 450, icon: '🥤', imageUrl: '/products/coca-cola-original-50-cl-pet-bottle.png', category: 'Drinks' },
+      { id: 'gp-coca-can', name: 'Coca-Cola Original (33 cl, Can)', price: 550, icon: '🥤', imageUrl: '/products/coca-cola-original-33-cl-can.jpg', category: 'Drinks' },
+      { id: 'gp-coca-zero', name: 'Coca-Cola Zero Sugar (33 cl, Can)', price: 600, icon: '🥤', imageUrl: '/products/coca-cola-zero-sugar-33-cl-can.jpg', category: 'Drinks' },
+      { id: 'gp-fanta-50cl', name: 'Fanta Orange (50 cl, PET bottle)', price: 450, icon: '🍊', imageUrl: '/products/fanta-orange-50-cl-pet-bottle.jpg', category: 'Drinks' },
+      { id: 'gp-sprite-can', name: 'Sprite Lemon-Lime (33 cl, Can)', price: 550, icon: '🍋', imageUrl: '/products/sprite-lemon-lime-33-cl-can.png', category: 'Drinks' },
+      { id: 'gp-malta-can', name: 'Malta Guinness Classic (33 cl, Can)', price: 600, icon: '🍺', imageUrl: '/products/malta-guinness-classic-33-cl-can.jpg', category: 'Drinks' },
+      { id: 'gp-maltina-can', name: 'Maltina Classic Malt (33 cl, Can)', price: 600, icon: '🍺', imageUrl: '/products/maltina-classic-malt-33-cl-can.jpg', category: 'Drinks' },
+      { id: 'gp-eva-water', name: 'Eva Premium Table Water (75 cl, PET bottle)', price: 300, icon: '💧', imageUrl: '/products/eva-premium-table-water-75-cl-pet-bottle.png', category: 'Drinks' },
+      { id: 'gp-redbull-can', name: 'Red Bull Energy Drink (25 cl, Can)', price: 1800, icon: '⚡', imageUrl: '/products/red-bull-energy-drink-25-cl-can.png', category: 'Drinks' },
+      { id: 'gp-milo-500g', name: 'Milo Malted Chocolate Beverage (500g)', price: 3800, icon: '☕', imageUrl: '/products/milo-malted-chocolate-beverage-500-g-pouch-tin.jpg', category: 'Drinks' },
       { id: 'gp1', name: 'Truffle Infused Extra Virgin Oil (250ml)', price: 16500, icon: '🫒', category: 'Pantry' },
       { id: 'gp2', name: 'Aged Parmigiano Reggiano (300g)', price: 12800, icon: '🧀', category: 'Deli' },
       { id: 'gp3', name: 'Organic Cold-Pressed Valencia Juices', price: 4200, icon: '🍊', category: 'Beverage' },
@@ -2560,7 +2571,15 @@ export default function App() {
                     return (
                       <View key={prod.id} style={styles.productCard}>
                         <View style={styles.productIconWrap}>
-                          <Text style={{ fontSize: 26 }}>{prod.icon}</Text>
+                          {getProductImageSource(prod.imageUrl || prod.imageUri) ? (
+                            <Image
+                              source={getProductImageSource(prod.imageUrl || prod.imageUri)}
+                              style={{ width: 44, height: 44, borderRadius: 8 }}
+                              resizeMode="contain"
+                            />
+                          ) : (
+                            <Text style={{ fontSize: 26 }}>{prod.icon}</Text>
+                          )}
                         </View>
                         <View style={{ flex: 1, paddingHorizontal: 12 }}>
                           <Text style={styles.productName}>{prod.name}</Text>
@@ -2689,7 +2708,15 @@ export default function App() {
 
                 {cart.map((item) => (
                   <View key={item.id} style={styles.cartItemRow}>
-                    <Text style={{ fontSize: 24, marginRight: 12 }}>{item.icon}</Text>
+                    {getProductImageSource(item.imageUrl || item.imageUri) ? (
+                      <Image
+                        source={getProductImageSource(item.imageUrl || item.imageUri)}
+                        style={{ width: 34, height: 34, borderRadius: 6, marginRight: 12 }}
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <Text style={{ fontSize: 24, marginRight: 12 }}>{item.icon}</Text>
+                    )}
                     <View style={{ flex: 1 }}>
                       <Text style={styles.cartItemName}>{item.name}</Text>
                       <Text style={styles.cartItemStore}>{item.storeName}</Text>
@@ -3923,11 +3950,10 @@ export default function App() {
                 <View style={{ marginTop: 12 }}>
                   {currentMerchantStore?.products.map((p) => (
                     <View key={p.id} style={styles.inventoryItemCard}>
-                      {p.imageUri ? (
+                      {getProductImageSource(p.imageUrl || p.imageUri) ? (
                         <Image
-                          source={{ uri: p.imageUri }}
-                          style={styles.inventoryItemImageThumbnail}
-                          resizeMode="cover"
+                          source={getProductImageSource(p.imageUrl || p.imageUri)}
+                          style={[styles.inventoryItemImageThumbnail, { resizeMode: 'contain' }]}
                         />
                       ) : (
                         <Text style={{ fontSize: 26, marginRight: 12 }}>{p.icon || '🛍️'}</Text>
@@ -4357,7 +4383,15 @@ export default function App() {
                     <View key={item.id} style={styles.suggestedCard}>
                       <View style={styles.suggestedCardTopRow}>
                         <View style={styles.suggestedIconWrap}>
-                          <Text style={{ fontSize: 26 }}>{item.icon}</Text>
+                          {getProductImageSource(item.imageUrl) ? (
+                            <Image
+                              source={getProductImageSource(item.imageUrl)}
+                              style={{ width: 44, height: 44, borderRadius: 8 }}
+                              resizeMode="contain"
+                            />
+                          ) : (
+                            <Text style={{ fontSize: 26 }}>{item.icon}</Text>
+                          )}
                         </View>
                         <View style={{ flex: 1, marginLeft: 10 }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>

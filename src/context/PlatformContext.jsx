@@ -13,7 +13,7 @@ const PlatformContext = createContext(null);
 
 const STORAGE_KEYS = {
   ORDERS: 'getit_orders_v1',
-  PRODUCTS: 'getit_products_v1',
+  PRODUCTS: 'getit_products_v3', // Bumped to v3 to force cache flush for real product photos
   VENDORS: 'getit_vendors_v1',
   RIDERS: 'getit_riders_v1',
   CONFIG: 'getit_config_v1',
@@ -21,8 +21,31 @@ const STORAGE_KEYS = {
 
 function loadStored(key, fallback) {
   try {
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : fallback;
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const data = JSON.parse(raw);
+    
+    // For products, always guarantee fresh image URLs and newly added items from INITIAL_PRODUCTS
+    if (key === STORAGE_KEYS.PRODUCTS && Array.isArray(data) && Array.isArray(fallback)) {
+      const fallbackMap = new Map(fallback.map((p) => [p.id, p]));
+      const merged = data.map((item) => {
+        const fresh = fallbackMap.get(item.id);
+        if (fresh && fresh.imageUrl && fresh.imageUrl.startsWith('/')) {
+          return { ...item, imageUrl: fresh.imageUrl, name: fresh.name, brand: fresh.brand };
+        }
+        return item;
+      });
+
+      // Add any new items from fallback that are not yet in stored list
+      for (const fresh of fallback) {
+        if (!merged.some((m) => m.id === fresh.id)) {
+          merged.push(fresh);
+        }
+      }
+      return merged;
+    }
+
+    return data;
   } catch (err) {
     console.warn('Error reading from localStorage', err);
     return fallback;
