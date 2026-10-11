@@ -15,6 +15,8 @@ import {
   Image,
   Linking,
   ActivityIndicator,
+  Animated,
+  Easing,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker } from 'react-native-maps';
@@ -967,6 +969,58 @@ export default function App() {
   const [authSignupBusinessName, setAuthSignupBusinessName] = useState('');
   const [authSignupPassword, setAuthSignupPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showSignupOptional, setShowSignupOptional] = useState(false);
+
+  // Smooth Animations
+  const authFadeAnim = useRef(new Animated.Value(1)).current;
+  const authSlideAnim = useRef(new Animated.Value(0)).current;
+  const logoScaleAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(logoScaleAnim, {
+          toValue: 1.04,
+          duration: 2200,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(logoScaleAnim, {
+          toValue: 1.0,
+          duration: 2200,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  const switchAuthRole = (newRole) => {
+    Animated.parallel([
+      Animated.timing(authFadeAnim, { toValue: 0, duration: 140, useNativeDriver: true }),
+      Animated.timing(authSlideAnim, { toValue: 8, duration: 140, useNativeDriver: true }),
+    ]).start(() => {
+      setAuthScreenRole(newRole);
+      setAuthScreenMode('signin');
+      Animated.parallel([
+        Animated.timing(authFadeAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
+        Animated.timing(authSlideAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+      ]).start();
+    });
+  };
+
+  const switchAuthMode = (newMode) => {
+    Animated.parallel([
+      Animated.timing(authFadeAnim, { toValue: 0, duration: 120, useNativeDriver: true }),
+      Animated.timing(authSlideAnim, { toValue: 6, duration: 120, useNativeDriver: true }),
+    ]).start(() => {
+      setAuthScreenMode(newMode);
+      Animated.parallel([
+        Animated.timing(authFadeAnim, { toValue: 1, duration: 180, useNativeDriver: true }),
+        Animated.timing(authSlideAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
+      ]).start();
+    });
+  };
 
   const [currentUser, setCurrentUser] = useState({
     id: 'user-client-01',
@@ -2610,474 +2664,604 @@ export default function App() {
     ),
   ];
 
-  // --- DEDICATED LOGIN / SIGN UP SCREEN (BUYER & MERCHANT) ---
+  // --- DEDICATED LUXURY LOGIN / SIGN UP SCREEN (ANIMATED & ORGANIZED) ---
   if (!isLoggedIn) {
+    const isBuyer = authScreenRole === 'buyer';
+    const isSignIn = authScreenMode === 'signin';
+
     return (
       <SafeAreaView style={styles.authPageSafeArea}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+        <StatusBar barStyle="dark-content" backgroundColor="#FAF7F2" />
         <ScrollView
           style={styles.authPageScroll}
           contentContainerStyle={styles.authPageScrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Top Brand Header */}
+          {/* Top Brand Header with Popping Transparent Logo on Luxury Badge */}
           <View style={styles.authPageBrandSection}>
-            <View style={styles.authPageLogoCircle}>
+            <Animated.View style={[styles.luxeLogoMedallion, { transform: [{ scale: logoScaleAnim }] }]}>
               <Image
                 source={LOGO_TRANSPARENT}
-                style={styles.authPageLogoImg}
+                style={styles.luxeLogoImg}
                 resizeMode="contain"
               />
-            </View>
+            </Animated.View>
+
             <Text style={styles.authPageBrandTitle}>GETIT</Text>
-            <View style={styles.authPageBrandPill}>
-              <Text style={styles.authPageBrandPillText}>ABUJA'S PREMIER CONCIERGE & MARKETPLACE</Text>
+            <View style={styles.luxeBrandBadgePill}>
+              <Text style={styles.luxeBrandBadgeText}>ABUJA'S PREMIER CONCIERGE & MARKETPLACE</Text>
             </View>
             <Text style={styles.authPageBrandTagline}>
               Fresh Groceries • Fine Foods • Provisions • Express Delivery
             </Text>
-          </View>
 
-          {/* MAIN CONTAINER: BUYER PORTAL (Default) */}
-          {authScreenRole === 'buyer' ? (
-            <View style={styles.authPageCard}>
-              <View style={styles.authPageCardHeader}>
-                <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text style={styles.authPageCardTitle}>🛍️ Shopper & Buyer Portal</Text>
-                  <Text style={styles.authPageCardSub}>
-                    {authScreenMode === 'signin'
-                      ? 'Sign in to access your orders and fast checkout.'
-                      : 'Create your account to start ordering across Abuja.'}
-                  </Text>
-                </View>
-                <View style={styles.buyerBadgePill}>
-                  <Text style={styles.buyerBadgeText}>BUYER</Text>
-                </View>
-              </View>
-
-              {/* Segmented Switcher: Sign In vs Sign Up */}
-              <View style={styles.authTabsWrap}>
-                <TouchableOpacity
-                  style={[styles.authTabBtn, authScreenMode === 'signin' && styles.authTabBtnActive]}
-                  onPress={() => setAuthScreenMode('signin')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.authTabBtnText, authScreenMode === 'signin' && styles.authTabBtnTextActive]}>
-                    Sign In
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.authTabBtn, authScreenMode === 'signup' && styles.authTabBtnActive]}
-                  onPress={() => setAuthScreenMode('signup')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.authTabBtnText, authScreenMode === 'signup' && styles.authTabBtnTextActive]}>
-                    Create Account
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Form Fields: Sign In */}
-              {authScreenMode === 'signin' ? (
-                <View>
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>EMAIL OR PHONE NUMBER</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. amina@gmail.com or 08032941194"
-                      placeholderTextColor="#94A3B8"
-                      value={authLoginInput}
-                      onChangeText={setAuthLoginInput}
-                      autoCapitalize="none"
-                    />
-                  </View>
-
-                  <View style={styles.formGroup}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={styles.formLabel}>PASSWORD</Text>
-                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                        <Text style={{ fontSize: 11, color: COLORS.emeraldPrimary, fontWeight: '700' }}>
-                          {showPassword ? 'Hide' : 'Show'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="Enter your account password"
-                      placeholderTextColor="#94A3B8"
-                      secureTextEntry={!showPassword}
-                      value={authLoginPassword}
-                      onChangeText={setAuthLoginPassword}
-                    />
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.primaryActionBtn, { marginTop: 8 }]}
-                    onPress={handleAuthBuyerSignIn}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.primaryActionBtnText}>🛍️ Sign In as Buyer ➔</Text>
-                  </TouchableOpacity>
-
-                  {/* One-Tap Demo Buyer Login */}
-                  <View style={styles.quickDemoDivider}>
-                    <View style={styles.quickDemoLine} />
-                    <Text style={styles.quickDemoDividerText}>OR INSTANT DEMO</Text>
-                    <View style={styles.quickDemoLine} />
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.quickDemoBtn}
-                    onPress={handleSwitchToDemoBuyer}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.quickDemoBtnIcon}>⚡</Text>
-                    <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.quickDemoBtnTitle}>One-Tap Sign In: Amina Bello (Buyer)</Text>
-                      <Text style={styles.quickDemoBtnSub}>Plot 14 Gana St, Maitama • Instant shopping session</Text>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                /* Form Fields: Buyer Sign Up */
-                <View>
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>FULL NAME *</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. Fatima Bello"
-                      placeholderTextColor="#94A3B8"
-                      value={authSignupFullName}
-                      onChangeText={setAuthSignupFullName}
-                    />
-                  </View>
-
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>EMAIL ADDRESS</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. fatima.bello@example.ng"
-                      placeholderTextColor="#94A3B8"
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      value={authSignupEmail}
-                      onChangeText={setAuthSignupEmail}
-                    />
-                  </View>
-
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>PHONE NUMBER (WHATSAPP/CALLS) *</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. +234 802 345 6789"
-                      placeholderTextColor="#94A3B8"
-                      keyboardType="phone-pad"
-                      value={authSignupPhone}
-                      onChangeText={setAuthSignupPhone}
-                    />
-                  </View>
-
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>DELIVERY ADDRESS (ABUJA)</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. Plot 14 Gana Street, Maitama"
-                      placeholderTextColor="#94A3B8"
-                      value={authSignupAddress}
-                      onChangeText={setAuthSignupAddress}
-                    />
-                  </View>
-
-                  <View style={styles.formGroup}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={styles.formLabel}>CREATE PASSWORD</Text>
-                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                        <Text style={{ fontSize: 11, color: COLORS.emeraldPrimary, fontWeight: '700' }}>
-                          {showPassword ? 'Hide' : 'Show'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="Create a secure password"
-                      placeholderTextColor="#94A3B8"
-                      secureTextEntry={!showPassword}
-                      value={authSignupPassword}
-                      onChangeText={setAuthSignupPassword}
-                    />
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.primaryActionBtn, { marginTop: 8 }]}
-                    onPress={handleAuthBuyerSignUp}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.primaryActionBtnText}>
-                      🛍️ Create Buyer Account & Start Shopping ➔
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* Guest / Browse First Option */}
+            {/* High Luxury Role Selector: Shopper vs Merchant */}
+            <View style={styles.luxeRoleSwitcherWrap}>
               <TouchableOpacity
-                style={styles.authGuestLinkBtn}
-                onPress={handleAuthGuestBrowse}
-                activeOpacity={0.8}
+                style={[styles.luxeRoleBtn, isBuyer && styles.luxeRoleBtnActiveBuyer]}
+                onPress={() => switchAuthRole('buyer')}
+                activeOpacity={0.85}
               >
-                <Text style={styles.authGuestLinkText}>
-                  Explore & Browse Stores as Guest ➔
+                <Text style={{ fontSize: 15, marginRight: 6 }}>🛍️</Text>
+                <Text style={[styles.luxeRoleBtnText, isBuyer && styles.luxeRoleBtnTextActiveBuyer]}>
+                  Shopper / Buyer
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.luxeRoleBtn, !isBuyer && styles.luxeRoleBtnActiveMerchant]}
+                onPress={() => switchAuthRole('seller')}
+                activeOpacity={0.85}
+              >
+                <Text style={{ fontSize: 15, marginRight: 6 }}>🏪</Text>
+                <Text style={[styles.luxeRoleBtnText, !isBuyer && styles.luxeRoleBtnTextActiveMerchant]}>
+                  Shop Owner / Vendor
                 </Text>
               </TouchableOpacity>
             </View>
-          ) : (
-            /* MERCHANT PORTAL CONTAINER */
-            <View style={styles.authPageCard}>
-              <View style={styles.authPageCardHeader}>
-                <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text style={styles.authPageCardTitle}>🏪 Merchant & Shop Owner Hub</Text>
-                  <Text style={styles.authPageCardSub}>
-                    {authScreenMode === 'signin'
-                      ? 'Log in to manage orders, catalog stock & 24h schedule.'
-                      : 'Register your store and launch on GETIT marketplace.'}
-                  </Text>
-                </View>
-                <View style={styles.merchantBadgePill}>
-                  <Text style={styles.merchantBadgeText}>MERCHANT</Text>
-                </View>
+          </View>
+
+          {/* Animated Main Luxury Card */}
+          <Animated.View
+            style={[
+              styles.luxeAuthCard,
+              {
+                opacity: authFadeAnim,
+                transform: [{ translateY: authSlideAnim }],
+              },
+            ]}
+          >
+            {/* Card Header & Role Indicator */}
+            <View style={styles.luxeCardHeader}>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={styles.luxeCardTitle}>
+                  {isBuyer ? '🛍️ Buyer Account' : '🏪 Merchant Portal'}
+                </Text>
+                <Text style={styles.luxeCardSub}>
+                  {isBuyer
+                    ? (isSignIn ? 'Sign in to access your orders & quick checkout' : 'Join GETIT for fast grocery delivery across Abuja')
+                    : (isSignIn ? 'Log in to manage catalog stock, orders & 24h hours' : 'Launch your store on GETIT Abuja marketplace')}
+                </Text>
               </View>
 
-              {/* Segmented Switcher: Sign In vs Sign Up */}
-              <View style={styles.authTabsWrap}>
-                <TouchableOpacity
-                  style={[styles.authTabBtn, authScreenMode === 'signin' && styles.authTabBtnActive]}
-                  onPress={() => setAuthScreenMode('signin')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.authTabBtnText, authScreenMode === 'signin' && styles.authTabBtnTextActive]}>
-                    Merchant Sign In
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.authTabBtn, authScreenMode === 'signup' && styles.authTabBtnActive]}
-                  onPress={() => setAuthScreenMode('signup')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.authTabBtnText, authScreenMode === 'signup' && styles.authTabBtnTextActive]}>
-                    Register New Shop
-                  </Text>
-                </TouchableOpacity>
+              <View style={[styles.luxePortalBadge, isBuyer ? styles.buyerBadgePill : styles.merchantBadgePill]}>
+                <Text style={isBuyer ? styles.buyerBadgeText : styles.merchantBadgeText}>
+                  {isBuyer ? 'SHOPPER' : 'PARTNER'}
+                </Text>
               </View>
+            </View>
 
-              {/* Form Fields: Merchant Sign In */}
-              {authScreenMode === 'signin' ? (
-                <View>
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>REGISTERED BUSINESS EMAIL OR PHONE</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. emeka@freshmart.ng or 08031112233"
-                      placeholderTextColor="#94A3B8"
-                      value={authLoginInput}
-                      onChangeText={setAuthLoginInput}
-                      autoCapitalize="none"
-                    />
+            {/* Segmented Sliding Pill: Sign In vs Sign Up */}
+            <View style={styles.luxeModePillsWrap}>
+              <TouchableOpacity
+                style={[styles.luxeModePillBtn, isSignIn && styles.luxeModePillActive]}
+                onPress={() => switchAuthMode('signin')}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.luxeModePillText, isSignIn && styles.luxeModePillTextActive]}>
+                  {isBuyer ? 'Sign In' : 'Merchant Sign In'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.luxeModePillBtn, !isSignIn && styles.luxeModePillActive]}
+                onPress={() => switchAuthMode('signup')}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.luxeModePillText, !isSignIn && styles.luxeModePillTextActive]}>
+                  {isBuyer ? 'Create Account' : 'Register Store'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* --- BUYER / SHOPPER FORMS --- */}
+            {isBuyer ? (
+              isSignIn ? (
+                /* Buyer Sign In Form */
+                <View style={styles.luxeFormContainer}>
+                  {/* Organized Luxury Input: Email or Phone */}
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>✉️</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>EMAIL OR PHONE NUMBER</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="e.g. amina@gmail.com or 0803 294 1194"
+                        placeholderTextColor="#A8A29E"
+                        value={authLoginInput}
+                        onChangeText={setAuthLoginInput}
+                        autoCapitalize="none"
+                      />
+                    </View>
                   </View>
 
-                  <View style={styles.formGroup}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={styles.formLabel}>PASSWORD</Text>
-                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                        <Text style={{ fontSize: 11, color: COLORS.emeraldPrimary, fontWeight: '700' }}>
-                          {showPassword ? 'Hide' : 'Show'}
-                        </Text>
-                      </TouchableOpacity>
+                  {/* Organized Luxury Input: Password */}
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>🔒</Text>
                     </View>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="Enter merchant password"
-                      placeholderTextColor="#94A3B8"
-                      secureTextEntry={!showPassword}
-                      value={authLoginPassword}
-                      onChangeText={setAuthLoginPassword}
-                    />
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>PASSWORD</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="Enter your account password"
+                        placeholderTextColor="#A8A29E"
+                        secureTextEntry={!showPassword}
+                        value={authLoginPassword}
+                        onChangeText={setAuthLoginPassword}
+                      />
+                    </View>
+                    <TouchableOpacity
+                      style={styles.luxeEyeToggleBtn}
+                      onPress={() => setShowPassword(!showPassword)}
+                    >
+                      <Text style={styles.luxeEyeToggleText}>
+                        {showPassword ? '👁️ Hide' : '👁️ Show'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Primary Action Button */}
+                  <TouchableOpacity
+                    style={styles.luxePrimaryBtn}
+                    onPress={handleAuthBuyerSignIn}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.luxePrimaryBtnText}>Sign In as Buyer ➔</Text>
+                  </TouchableOpacity>
+
+                  {/* Quick VIP Demo Login */}
+                  <View style={styles.luxeDemoDivider}>
+                    <View style={styles.luxeDemoLine} />
+                    <Text style={styles.luxeDemoDividerText}>OR ONE-TAP INSTANT ACCESS</Text>
+                    <View style={styles.luxeDemoLine} />
                   </View>
 
                   <TouchableOpacity
-                    style={[styles.primaryActionBtn, { marginTop: 8, backgroundColor: COLORS.goldPrimary }]}
+                    style={styles.luxeDemoCardBtn}
+                    onPress={handleSwitchToDemoBuyer}
+                    activeOpacity={0.85}
+                  >
+                    <View style={styles.luxeDemoIconBadge}>
+                      <Text style={{ fontSize: 16 }}>⚡</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.luxeDemoCardTitle}>Quick Sign In: Amina Bello (Shopper)</Text>
+                      <Text style={styles.luxeDemoCardSub}>Plot 14 Gana St, Maitama • Instant live test</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Guest Browse Option */}
+                  <TouchableOpacity
+                    style={styles.luxeGuestBrowseBtn}
+                    onPress={handleAuthGuestBrowse}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.luxeGuestBrowseText}>
+                      Skip for now & Browse Stores as Guest ➔
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                /* Streamlined Buyer Sign Up Form (Only 3 essential boxes!) */
+                <View style={styles.luxeFormContainer}>
+                  {/* Box 1: Full Name */}
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>👤</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>FULL NAME *</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="e.g. Fatima Bello"
+                        placeholderTextColor="#A8A29E"
+                        value={authSignupFullName}
+                        onChangeText={setAuthSignupFullName}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Box 2: Phone / WhatsApp */}
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>📱</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>PHONE / WHATSAPP NUMBER *</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="e.g. 0802 345 6789"
+                        placeholderTextColor="#A8A29E"
+                        keyboardType="phone-pad"
+                        value={authSignupPhone}
+                        onChangeText={setAuthSignupPhone}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Box 3: Password */}
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>🔒</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>CREATE PASSWORD *</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="Create a secure password"
+                        placeholderTextColor="#A8A29E"
+                        secureTextEntry={!showPassword}
+                        value={authSignupPassword}
+                        onChangeText={setAuthSignupPassword}
+                      />
+                    </View>
+                    <TouchableOpacity
+                      style={styles.luxeEyeToggleBtn}
+                      onPress={() => setShowPassword(!showPassword)}
+                    >
+                      <Text style={styles.luxeEyeToggleText}>
+                        {showPassword ? '👁️' : '👁️'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Optional Details Toggle (Keeps form clean & uncluttered!) */}
+                  <TouchableOpacity
+                    style={styles.luxeOptionalToggle}
+                    onPress={() => setShowSignupOptional(!showSignupOptional)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.luxeOptionalToggleText}>
+                      {showSignupOptional ? '▼ Hide Delivery Address & Email' : '+ Add Delivery Address & Email (Optional)'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {showSignupOptional && (
+                    <View style={{ marginTop: 6 }}>
+                      {/* Optional Email */}
+                      <View style={styles.luxeInputBox}>
+                        <View style={styles.luxeInputIconWrap}>
+                          <Text style={styles.luxeInputIcon}>✉️</Text>
+                        </View>
+                        <View style={styles.luxeInputContent}>
+                          <Text style={styles.luxeInputLabel}>EMAIL ADDRESS (OPTIONAL)</Text>
+                          <TextInput
+                            style={styles.luxeTextInput}
+                            placeholder="e.g. fatima@getit.ng"
+                            placeholderTextColor="#A8A29E"
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                            value={authSignupEmail}
+                            onChangeText={setAuthSignupEmail}
+                          />
+                        </View>
+                      </View>
+
+                      {/* Optional Address */}
+                      <View style={styles.luxeInputBox}>
+                        <View style={styles.luxeInputIconWrap}>
+                          <Text style={styles.luxeInputIcon}>📍</Text>
+                        </View>
+                        <View style={styles.luxeInputContent}>
+                          <Text style={styles.luxeInputLabel}>DELIVERY ADDRESS IN ABUJA</Text>
+                          <TextInput
+                            style={styles.luxeTextInput}
+                            placeholder="e.g. Plot 14 Gana Street, Maitama"
+                            placeholderTextColor="#A8A29E"
+                            value={authSignupAddress}
+                            onChangeText={setAuthSignupAddress}
+                          />
+                        </View>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Primary Action Button */}
+                  <TouchableOpacity
+                    style={styles.luxePrimaryBtn}
+                    onPress={handleAuthBuyerSignUp}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.luxePrimaryBtnText}>Create Account & Start Shopping ➔</Text>
+                  </TouchableOpacity>
+
+                  {/* Guest Browse Option */}
+                  <TouchableOpacity
+                    style={styles.luxeGuestBrowseBtn}
+                    onPress={handleAuthGuestBrowse}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.luxeGuestBrowseText}>
+                      Explore & Browse Stores as Guest ➔
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )
+            ) : (
+              /* --- MERCHANT / VENDOR FORMS --- */
+              isSignIn ? (
+                /* Merchant Sign In */
+                <View style={styles.luxeFormContainer}>
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>🏪</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>REGISTERED EMAIL OR OFFICIAL PHONE</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="e.g. emeka@freshmart.ng or 0803 111 2233"
+                        placeholderTextColor="#A8A29E"
+                        value={authLoginInput}
+                        onChangeText={setAuthLoginInput}
+                        autoCapitalize="none"
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>🔒</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>MERCHANT PASSWORD</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="Enter merchant password"
+                        placeholderTextColor="#A8A29E"
+                        secureTextEntry={!showPassword}
+                        value={authLoginPassword}
+                        onChangeText={setAuthLoginPassword}
+                      />
+                    </View>
+                    <TouchableOpacity
+                      style={styles.luxeEyeToggleBtn}
+                      onPress={() => setShowPassword(!showPassword)}
+                    >
+                      <Text style={styles.luxeEyeToggleText}>
+                        {showPassword ? '👁️ Hide' : '👁️ Show'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.luxePrimaryBtn, { backgroundColor: COLORS.goldPrimary }]}
                     onPress={handleAuthSellerSignIn}
                     activeOpacity={0.85}
                   >
-                    <Text style={[styles.primaryActionBtnText, { color: '#000000', fontWeight: '800' }]}>
-                      🏪 Log In to Merchant Portal ➔
+                    <Text style={[styles.luxePrimaryBtnText, { color: '#000000', fontWeight: '800' }]}>
+                      Log In to Merchant Hub ➔
                     </Text>
                   </TouchableOpacity>
 
                   {/* One-Tap Demo Merchant Login */}
-                  <View style={styles.quickDemoDivider}>
-                    <View style={styles.quickDemoLine} />
-                    <Text style={styles.quickDemoDividerText}>OR INSTANT DEMO</Text>
-                    <View style={styles.quickDemoLine} />
+                  <View style={styles.luxeDemoDivider}>
+                    <View style={styles.luxeDemoLine} />
+                    <Text style={styles.luxeDemoDividerText}>OR ONE-TAP INSTANT ACCESS</Text>
+                    <View style={styles.luxeDemoLine} />
                   </View>
 
                   <TouchableOpacity
-                    style={styles.quickDemoBtn}
+                    style={styles.luxeDemoCardBtn}
                     onPress={handleSwitchToDemoSeller}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.quickDemoBtnIcon}>🏪</Text>
+                    <View style={styles.luxeDemoIconBadge}>
+                      <Text style={{ fontSize: 16 }}>🏪</Text>
+                    </View>
                     <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.quickDemoBtnTitle}>One-Tap Sign In: The Gourmet Emporium</Text>
-                      <Text style={styles.quickDemoBtnSub}>Emeka Okafor • Full merchant dashboard access</Text>
+                      <Text style={styles.luxeDemoCardTitle}>The Gourmet Emporium (Emeka Okafor)</Text>
+                      <Text style={styles.luxeDemoCardSub}>Full vendor dashboard • Orders & live inventory</Text>
                     </View>
                   </TouchableOpacity>
                 </View>
               ) : (
-                /* Form Fields: Merchant Register */
-                <View>
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>STORE / BUSINESS NAME *</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. Daily Fresh Organics"
-                      placeholderTextColor="#94A3B8"
-                      value={authSignupBusinessName}
-                      onChangeText={setAuthSignupBusinessName}
-                    />
-                  </View>
-
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>OWNER / MANAGER FULL NAME *</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. Chinedu Eze"
-                      placeholderTextColor="#94A3B8"
-                      value={authSignupFullName}
-                      onChangeText={setAuthSignupFullName}
-                    />
-                  </View>
-
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>BUSINESS EMAIL</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. chinedu@freshdaily.ng"
-                      placeholderTextColor="#94A3B8"
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      value={authSignupEmail}
-                      onChangeText={setAuthSignupEmail}
-                    />
-                  </View>
-
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>OFFICIAL PHONE / WHATSAPP *</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. +234 803 555 7788"
-                      placeholderTextColor="#94A3B8"
-                      keyboardType="phone-pad"
-                      value={authSignupPhone}
-                      onChangeText={setAuthSignupPhone}
-                    />
-                  </View>
-
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>SHOP PHYSICAL ADDRESS IN ABUJA *</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="e.g. Adetokunbo Ademola Crescent, Wuse 2"
-                      placeholderTextColor="#94A3B8"
-                      value={authSignupAddress}
-                      onChangeText={setAuthSignupAddress}
-                    />
-                  </View>
-
-                  <View style={styles.formGroup}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={styles.formLabel}>CREATE PASSWORD</Text>
-                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                        <Text style={{ fontSize: 11, color: COLORS.emeraldPrimary, fontWeight: '700' }}>
-                          {showPassword ? 'Hide' : 'Show'}
-                        </Text>
-                      </TouchableOpacity>
+                /* Streamlined Merchant Sign Up */
+                <View style={styles.luxeFormContainer}>
+                  {/* Box 1: Store Name */}
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>🏪</Text>
                     </View>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="Create a merchant password"
-                      placeholderTextColor="#94A3B8"
-                      secureTextEntry={!showPassword}
-                      value={authSignupPassword}
-                      onChangeText={setAuthSignupPassword}
-                    />
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>STORE / BUSINESS NAME *</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="e.g. Daily Fresh Organics"
+                        placeholderTextColor="#A8A29E"
+                        value={authSignupBusinessName}
+                        onChangeText={setAuthSignupBusinessName}
+                      />
+                    </View>
                   </View>
+
+                  {/* Box 2: Owner Name */}
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>👤</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>OWNER / MANAGER FULL NAME *</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="e.g. Chinedu Eze"
+                        placeholderTextColor="#A8A29E"
+                        value={authSignupFullName}
+                        onChangeText={setAuthSignupFullName}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Box 3: Official WhatsApp */}
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>📱</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>OFFICIAL PHONE / WHATSAPP *</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="e.g. 0803 555 7788"
+                        placeholderTextColor="#A8A29E"
+                        keyboardType="phone-pad"
+                        value={authSignupPhone}
+                        onChangeText={setAuthSignupPhone}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Box 4: Password */}
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>🔒</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>CREATE MERCHANT PASSWORD *</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="Create a vendor password"
+                        placeholderTextColor="#A8A29E"
+                        secureTextEntry={!showPassword}
+                        value={authSignupPassword}
+                        onChangeText={setAuthSignupPassword}
+                      />
+                    </View>
+                    <TouchableOpacity
+                      style={styles.luxeEyeToggleBtn}
+                      onPress={() => setShowPassword(!showPassword)}
+                    >
+                      <Text style={styles.luxeEyeToggleText}>
+                        {showPassword ? '👁️' : '👁️'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Optional Merchant Address Toggle */}
+                  <TouchableOpacity
+                    style={styles.luxeOptionalToggle}
+                    onPress={() => setShowSignupOptional(!showSignupOptional)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.luxeOptionalToggleText}>
+                      {showSignupOptional ? '▼ Hide Physical Store Location & Email' : '+ Add Store Address in Abuja & Email (Optional)'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {showSignupOptional && (
+                    <View style={{ marginTop: 6 }}>
+                      <View style={styles.luxeInputBox}>
+                        <View style={styles.luxeInputIconWrap}>
+                          <Text style={styles.luxeInputIcon}>📍</Text>
+                        </View>
+                        <View style={styles.luxeInputContent}>
+                          <Text style={styles.luxeInputLabel}>PHYSICAL LOCATION IN ABUJA</Text>
+                          <TextInput
+                            style={styles.luxeTextInput}
+                            placeholder="e.g. Adetokunbo Ademola Crescent, Wuse 2"
+                            placeholderTextColor="#A8A29E"
+                            value={authSignupAddress}
+                            onChangeText={setAuthSignupAddress}
+                          />
+                        </View>
+                      </View>
+
+                      <View style={styles.luxeInputBox}>
+                        <View style={styles.luxeInputIconWrap}>
+                          <Text style={styles.luxeInputIcon}>✉️</Text>
+                        </View>
+                        <View style={styles.luxeInputContent}>
+                          <Text style={styles.luxeInputLabel}>BUSINESS EMAIL</Text>
+                          <TextInput
+                            style={styles.luxeTextInput}
+                            placeholder="e.g. store@merchant.getit.ng"
+                            placeholderTextColor="#A8A29E"
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                            value={authSignupEmail}
+                            onChangeText={setAuthSignupEmail}
+                          />
+                        </View>
+                      </View>
+                    </View>
+                  )}
 
                   <TouchableOpacity
-                    style={[styles.primaryActionBtn, { marginTop: 8, backgroundColor: COLORS.goldPrimary }]}
+                    style={[styles.luxePrimaryBtn, { backgroundColor: COLORS.goldPrimary }]}
                     onPress={handleAuthSellerSignUp}
                     activeOpacity={0.85}
                   >
-                    <Text style={[styles.primaryActionBtnText, { color: '#000000', fontWeight: '800' }]}>
+                    <Text style={[styles.luxePrimaryBtnText, { color: '#000000', fontWeight: '800' }]}>
                       🚀 Register Store & Launch Live on GETIT ➔
                     </Text>
                   </TouchableOpacity>
                 </View>
-              )}
-            </View>
-          )}
+              )
+            )}
+          </Animated.View>
 
-          {/* DEDICATED PROMINENT CALLOUT BELOW */}
-          {authScreenRole === 'buyer' ? (
-            <View style={styles.authMerchantPromoCallout}>
-              <View style={styles.authPromoIconWrap}>
-                <Text style={{ fontSize: 26 }}>🏪</Text>
+          {/* DEDICATED SLEEK VIP PARTNER CALLOUT BELOW */}
+          {isBuyer ? (
+            <TouchableOpacity
+              style={styles.luxeVipPartnerBar}
+              onPress={() => switchAuthRole('seller')}
+              activeOpacity={0.88}
+            >
+              <View style={styles.luxeVipPartnerIconBox}>
+                <Text style={{ fontSize: 22 }}>🏪</Text>
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.authPromoTitle}>Are you a Merchant or Shop Owner?</Text>
-                <Text style={styles.authPromoSub}>
-                  List your store, sell groceries & provisions, manage live orders, and set your 24/7 hours schedule on GETIT.
+                <Text style={styles.luxeVipPartnerTitle}>Are you a Merchant or Shop Owner?</Text>
+                <Text style={styles.luxeVipPartnerSub}>
+                  Sell groceries, manage live stock & set 24h hours schedule
                 </Text>
-                <TouchableOpacity
-                  style={styles.authPromoActionBtn}
-                  onPress={() => {
-                    setAuthScreenRole('seller');
-                    setAuthScreenMode('signin');
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.authPromoActionBtnText}>
-                    🏪 Log In or Sign Up as Shop Owner ➔
-                  </Text>
-                </TouchableOpacity>
               </View>
-            </View>
+              <View style={styles.luxeVipPartnerArrowPill}>
+                <Text style={styles.luxeVipPartnerArrowText}>Merchant Portal ➔</Text>
+              </View>
+            </TouchableOpacity>
           ) : (
-            <View style={styles.authBuyerPromoCallout}>
-              <View style={styles.authPromoIconWrap}>
-                <Text style={{ fontSize: 26 }}>🛍️</Text>
+            <TouchableOpacity
+              style={[styles.luxeVipPartnerBar, { borderColor: '#E2D9CC', backgroundColor: '#FFFFFF' }]}
+              onPress={() => switchAuthRole('buyer')}
+              activeOpacity={0.88}
+            >
+              <View style={[styles.luxeVipPartnerIconBox, { backgroundColor: '#F0FDF4' }]}>
+                <Text style={{ fontSize: 22 }}>🛍️</Text>
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.authPromoTitle}>Looking to Buy Groceries?</Text>
-                <Text style={styles.authPromoSub}>
-                  Switch to the Shopper / Buyer portal to order fresh provisions, food, and drinks delivered anywhere in Abuja.
+                <Text style={styles.luxeVipPartnerTitle}>Looking to Buy Groceries?</Text>
+                <Text style={styles.luxeVipPartnerSub}>
+                  Switch to the shopper portal to order provisions & food
                 </Text>
-                <TouchableOpacity
-                  style={styles.authBuyerPromoActionBtn}
-                  onPress={() => {
-                    setAuthScreenRole('buyer');
-                    setAuthScreenMode('signin');
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.authBuyerPromoActionBtnText}>
-                    🛍️ Return to Buyer Sign In / Sign Up ➔
-                  </Text>
-                </TouchableOpacity>
               </View>
-            </View>
+              <View style={[styles.luxeVipPartnerArrowPill, { backgroundColor: COLORS.emeraldDeep }]}>
+                <Text style={[styles.luxeVipPartnerArrowText, { color: '#FFFFFF' }]}>Shopper Portal ➔</Text>
+              </View>
+            </TouchableOpacity>
           )}
 
           <View style={{ height: 40 }} />
@@ -10988,108 +11172,162 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
   },
 
-  // --- Dedicated Login / Sign Up Page Styles ---
+  // --- Dedicated Luxury Login / Sign Up Page Styles ---
   authPageSafeArea: {
     flex: 1,
-    backgroundColor: COLORS.emeraldDeep,
+    backgroundColor: '#FAF7F2',
   },
   authPageScroll: {
     flex: 1,
-    backgroundColor: COLORS.beigeBg,
+    backgroundColor: '#FAF7F2',
   },
   authPageScrollContent: {
-    padding: 20,
-    paddingTop: 36,
+    paddingHorizontal: 20,
+    paddingTop: 24,
     paddingBottom: 60,
   },
   authPageBrandSection: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
-  authPageLogoCircle: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: COLORS.emeraldDeep,
+  luxeLogoMedallion: {
+    width: 94,
+    height: 94,
+    borderRadius: 47,
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
-    borderWidth: 2.5,
-    borderColor: COLORS.goldPrimary,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
+    borderWidth: 2,
+    borderColor: '#DFC694',
+    shadowColor: '#C5A059',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
+    elevation: 8,
   },
-  authPageLogoImg: {
-    width: 48,
-    height: 48,
+  luxeLogoImg: {
+    width: 74,
+    height: 60,
   },
   authPageBrandTitle: {
-    fontSize: 28,
+    fontSize: 27,
     fontWeight: '900',
     color: COLORS.emeraldDeep,
     letterSpacing: 3,
   },
-  authPageBrandPill: {
-    backgroundColor: COLORS.emeraldSurface,
+  luxeBrandBadgePill: {
+    backgroundColor: 'rgba(217, 169, 78, 0.15)',
     paddingHorizontal: 12,
-    paddingVertical: 5,
+    paddingVertical: 4,
     borderRadius: 20,
-    marginTop: 6,
+    marginTop: 4,
     borderWidth: 1,
-    borderColor: 'rgba(4, 120, 87, 0.25)',
+    borderColor: 'rgba(217, 169, 78, 0.35)',
   },
-  authPageBrandPillText: {
+  luxeBrandBadgeText: {
     fontSize: 9.5,
     fontWeight: '800',
-    color: COLORS.emeraldDeep,
+    color: '#8A6D3B',
     letterSpacing: 0.8,
   },
   authPageBrandTagline: {
     fontSize: 12,
-    color: COLORS.textMuted,
-    marginTop: 8,
+    color: '#78716C',
+    marginTop: 6,
     textAlign: 'center',
     fontWeight: '500',
   },
-  authPageCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 20,
+
+  // Role Switcher
+  luxeRoleSwitcherWrap: {
+    flexDirection: 'row',
+    backgroundColor: '#EBE4D8',
+    borderRadius: 24,
+    padding: 4,
+    marginTop: 18,
+    width: '100%',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    elevation: 3,
-    marginBottom: 20,
+    borderColor: '#DFD7C7',
   },
-  authPageCardHeader: {
+  luxeRoleBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  luxeRoleBtnActiveBuyer: {
+    backgroundColor: COLORS.emeraldDeep,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  luxeRoleBtnActiveMerchant: {
+    backgroundColor: '#92400E',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  luxeRoleBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#6B6358',
+  },
+  luxeRoleBtnTextActiveBuyer: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  luxeRoleBtnTextActiveMerchant: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+
+  // Luxury Card
+  luxeAuthCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1.5,
+    borderColor: '#EFE7DA',
+    shadowColor: '#443A2B',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 4,
+    marginBottom: 16,
+  },
+  luxeCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 16,
+    marginBottom: 14,
   },
-  authPageCardTitle: {
+  luxeCardTitle: {
     fontSize: 17,
-    fontWeight: '800',
-    color: COLORS.textDark,
+    fontWeight: '900',
+    color: '#1C1917',
+    letterSpacing: 0.2,
   },
-  authPageCardSub: {
+  luxeCardSub: {
     fontSize: 11.5,
-    color: COLORS.textMuted,
-    marginTop: 3,
+    color: '#78716C',
+    marginTop: 2,
     lineHeight: 16,
+  },
+  luxePortalBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
   },
   buyerBadgePill: {
     backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
     borderColor: '#A7F3D0',
   },
   buyerBadgeText: {
@@ -11100,10 +11338,6 @@ const styles = StyleSheet.create({
   },
   merchantBadgePill: {
     backgroundColor: '#FFFBEB',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
     borderColor: '#FDE68A',
   },
   merchantBadgeText: {
@@ -11112,83 +11346,233 @@ const styles = StyleSheet.create({
     color: '#B45309',
     letterSpacing: 0.5,
   },
-  authGuestLinkBtn: {
-    marginTop: 16,
-    alignItems: 'center',
-    paddingVertical: 8,
+
+  // Mode Switcher Pills
+  luxeModePillsWrap: {
+    flexDirection: 'row',
+    backgroundColor: '#F5EFE6',
+    borderRadius: 14,
+    padding: 4,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: '#E8DFD0',
   },
-  authGuestLinkText: {
+  luxeModePillBtn: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  luxeModePillActive: {
+    backgroundColor: '#FFFFFF',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  luxeModePillText: {
     fontSize: 12.5,
     fontWeight: '700',
+    color: '#78716C',
+  },
+  luxeModePillTextActive: {
     color: COLORS.emeraldDeep,
-    textDecorationLine: 'underline',
+    fontWeight: '800',
   },
-  authMerchantPromoCallout: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 18,
-    padding: 18,
+
+  // Luxury Organized Input Boxes
+  luxeFormContainer: {
+    gap: 2,
+  },
+  luxeInputBox: {
+    height: 60,
+    backgroundColor: '#FAFAF9',
+    borderRadius: 15,
     borderWidth: 1.5,
-    borderColor: COLORS.emeraldPrimary,
+    borderColor: '#E7DFD3',
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    marginBottom: 10,
   },
-  authBuyerPromoCallout: {
-    backgroundColor: '#FFFBEB',
-    borderRadius: 18,
-    padding: 18,
-    borderWidth: 1.5,
-    borderColor: COLORS.goldPrimary,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  authPromoIconWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+  luxeInputIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#EAE1D5',
+    marginRight: 10,
   },
-  authPromoTitle: {
-    fontSize: 14.5,
+  luxeInputIcon: {
+    fontSize: 15,
+  },
+  luxeInputContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  luxeInputLabel: {
+    fontSize: 9,
     fontWeight: '800',
-    color: COLORS.textDark,
+    color: '#8C827A',
+    letterSpacing: 0.8,
+    marginBottom: 1,
   },
-  authPromoSub: {
-    fontSize: 11.5,
-    color: COLORS.textMuted,
-    marginTop: 4,
-    lineHeight: 16,
+  luxeTextInput: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1C1917',
+    padding: 0,
+    margin: 0,
   },
-  authPromoActionBtn: {
-    marginTop: 12,
+  luxeEyeToggleBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#F5EFE6',
+  },
+  luxeEyeToggleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.emeraldDeep,
+  },
+
+  // Action Buttons
+  luxePrimaryBtn: {
     backgroundColor: COLORS.emeraldDeep,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    alignSelf: 'flex-start',
+    borderRadius: 15,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+    elevation: 3,
+    shadowColor: COLORS.emeraldDeep,
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
   },
-  authPromoActionBtnText: {
+  luxePrimaryBtnText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
-    letterSpacing: 0.2,
+    letterSpacing: 0.4,
   },
-  authBuyerPromoActionBtn: {
-    marginTop: 12,
-    backgroundColor: COLORS.goldPrimary,
+  luxeDemoDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 14,
+  },
+  luxeDemoLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#EAE1D5',
+  },
+  luxeDemoDividerText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#A8A29E',
+    letterSpacing: 0.8,
+    marginHorizontal: 10,
+  },
+  luxeDemoCardBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5EFE6',
+    borderRadius: 14,
+    padding: 11,
+    borderWidth: 1,
+    borderColor: '#E2D9CC',
+  },
+  luxeDemoIconBadge: {
+    width: 32,
+    height: 32,
     borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  authBuyerPromoActionBtnText: {
-    color: '#000000',
+  luxeDemoCardTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#1C1917',
+  },
+  luxeDemoCardSub: {
+    fontSize: 10.5,
+    color: '#78716C',
+    marginTop: 1,
+  },
+  luxeGuestBrowseBtn: {
+    alignItems: 'center',
+    marginTop: 12,
+    paddingVertical: 6,
+  },
+  luxeGuestBrowseText: {
     fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.emeraldDeep,
+    textDecorationLine: 'underline',
+  },
+  luxeOptionalToggle: {
+    alignItems: 'center',
+    paddingVertical: 6,
+    marginVertical: 4,
+  },
+  luxeOptionalToggleText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: COLORS.emeraldPrimary,
+  },
+
+  // VIP Partner Bar
+  luxeVipPartnerBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#DFD7C7',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  luxeVipPartnerIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFFBEB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  luxeVipPartnerTitle: {
+    fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 0.2,
+    color: '#1C1917',
+  },
+  luxeVipPartnerSub: {
+    fontSize: 10.5,
+    color: '#78716C',
+    marginTop: 2,
+  },
+  luxeVipPartnerArrowPill: {
+    backgroundColor: '#F5EFE6',
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    marginLeft: 6,
+  },
+  luxeVipPartnerArrowText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#92400E',
   },
 });
 
