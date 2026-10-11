@@ -421,7 +421,35 @@ export async function seedDefaultDatabaseUsers() {
       }
     });
 
-    // Fetch cloud users from Supabase so any registered account survives app reload
+    // 1. Fetch users from dedicated Supabase 'users' table
+    try {
+      const { data: dbUsers } = await supabase.from('users').select('*');
+      if (Array.isArray(dbUsers) && dbUsers.length > 0) {
+        dbUsers.forEach((u) => {
+          const mapped = {
+            id: u.id,
+            role: u.role || 'buyer',
+            fullName: u.full_name,
+            email: u.email,
+            phone: u.phone,
+            password: u.password_hash || u.password,
+            address: u.address || '',
+            businessName: u.business_name || null,
+            storeId: u.store_id || null,
+            createdAt: u.created_at,
+          };
+          if (!localUsers.some((lu) => lu.id === mapped.id || (mapped.phone && getCorePhoneDigits(lu.phone) === getCorePhoneDigits(mapped.phone)))) {
+            localUsers.push(mapped);
+          }
+          if (!MEMORY_REGISTERED_USERS.some((m) => m.id === mapped.id || (mapped.phone && getCorePhoneDigits(m.phone) === getCorePhoneDigits(mapped.phone)))) {
+            MEMORY_REGISTERED_USERS.push(mapped);
+          }
+        });
+        await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
+      }
+    } catch (e) {}
+
+    // 2. Fetch cloud backup users from Supabase riders table so any account survives reload
     try {
       const { data: cloudUsers } = await supabase
         .from('riders')
