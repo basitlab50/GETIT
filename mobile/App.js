@@ -26,6 +26,10 @@ import {
   createDatabaseOrder,
   updateDatabaseOrderStatus,
   subscribeToOrders,
+  getStores,
+  createDatabaseStore,
+  subscribeToStores,
+  getStoreInventory,
 } from './services/supabaseService';
 import { getProductImageSource } from './assets/productImages';
 
@@ -936,6 +940,18 @@ export default function App() {
   const [bulkSelectedFileName, setBulkSelectedFileName] = useState('');
   const [isParsingFile, setIsParsingFile] = useState(false);
 
+  // Create Store Modal State
+  const [createStoreModalVisible, setCreateStoreModalVisible] = useState(false);
+  const [newStoreName, setNewStoreName] = useState('');
+  const [newStoreCategory, setNewStoreCategory] = useState('Gourmet Groceries');
+  const [newStoreDistrict, setNewStoreDistrict] = useState('Maitama District, Abuja');
+  const [newStoreAddress, setNewStoreAddress] = useState('Plot 14 Gana Street');
+  const [newStorePhone, setNewStorePhone] = useState('+234 803 123 4567');
+  const [newStoreDeliveryFee, setNewStoreDeliveryFee] = useState('1200');
+  const [newStoreDeliveryTime, setNewStoreDeliveryTime] = useState('15-25 min');
+  const [newStoreDescription, setNewStoreDescription] = useState('');
+  const [isCreatingStore, setIsCreatingStore] = useState(false);
+
   // High performance memoized filtered suggested catalog
   const filteredSuggestedProducts = useMemo(() => {
     const query = suggestedSearch.trim().toLowerCase();
@@ -1115,6 +1131,123 @@ export default function App() {
 
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, []);
+
+  // Supabase Real-time Cloud Stores Sync (Connects Merchants & Buyers)
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCloudStores() {
+      try {
+        const cloudStores = await getStores();
+        if (!isMounted || !cloudStores || cloudStores.length === 0) return;
+
+        // Fetch custom store inventories
+        const enriched = await Promise.all(
+          cloudStores.map(async (dbStore) => {
+            const inventory = await getStoreInventory(dbStore.id);
+            const prods =
+              inventory && inventory.length > 0
+                ? inventory
+                : STORES_AROUND_ME.find((s) => s.id === dbStore.id)?.products || [];
+
+            const categoryKey = (dbStore.category || 'gourmet').toLowerCase().includes('organ')
+              ? 'organic'
+              : (dbStore.category || '').toLowerCase().includes('bake')
+              ? 'bakery'
+              : (dbStore.category || '').toLowerCase().includes('cell')
+              ? 'cellar'
+              : (dbStore.category || '').toLowerCase().includes('herit')
+              ? 'heritage'
+              : 'gourmet';
+
+            return {
+              id: dbStore.id,
+              name: dbStore.name,
+              category: categoryKey,
+              categoryLabel: dbStore.category || 'Gourmet & Groceries',
+              rating: Number(dbStore.rating) || 5.0,
+              reviewCount: 'New',
+              distance: '1.2 km',
+              deliveryTime: '20-30 min',
+              deliveryFee: dbStore.delivery_fee ? `₦${Number(dbStore.delivery_fee).toLocaleString()}` : '₦1,200',
+              freeDeliveryThreshold: 25000,
+              tag: 'VERIFIED MERCHANT',
+              badgeColor: COLORS.emeraldPrimary,
+              address: dbStore.address || 'Abuja, Nigeria',
+              district: dbStore.district || 'Maitama, Abuja',
+              latitude: Number(dbStore.latitude) || 9.0882,
+              longitude: Number(dbStore.longitude) || 7.4933,
+              phone: dbStore.phone || '+234 800 000 0000',
+              image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+              description: `${dbStore.name} — fresh provisions, artisan goods and rapid doorstep delivery across Abuja.`,
+              products: prods,
+            };
+          })
+        );
+
+        if (!isMounted) return;
+
+        setStoresList((prev) => {
+          const existingIds = new Set(enriched.map((s) => s.id));
+          const remainingStatic = prev.filter((s) => !existingIds.has(s.id));
+          return [...enriched, ...remainingStatic];
+        });
+      } catch (err) {
+        console.warn('Error loading cloud stores:', err);
+      }
+    }
+
+    loadCloudStores();
+
+    // Realtime subscription for newly created stores
+    const unsubscribeStores = subscribeToStores((payload) => {
+      if (payload.eventType === 'INSERT' && payload.new) {
+        const dbStore = payload.new;
+        const categoryKey = (dbStore.category || 'gourmet').toLowerCase().includes('organ')
+          ? 'organic'
+          : (dbStore.category || '').toLowerCase().includes('bake')
+          ? 'bakery'
+          : (dbStore.category || '').toLowerCase().includes('cell')
+          ? 'cellar'
+          : (dbStore.category || '').toLowerCase().includes('herit')
+          ? 'heritage'
+          : 'gourmet';
+
+        const newStoreObj = {
+          id: dbStore.id,
+          name: dbStore.name,
+          category: categoryKey,
+          categoryLabel: dbStore.category || 'Gourmet & Groceries',
+          rating: Number(dbStore.rating) || 5.0,
+          reviewCount: 'New',
+          distance: '0.8 km',
+          deliveryTime: '15-25 min',
+          deliveryFee: dbStore.delivery_fee ? `₦${Number(dbStore.delivery_fee).toLocaleString()}` : '₦1,200',
+          freeDeliveryThreshold: 25000,
+          tag: 'NEW MERCHANT',
+          badgeColor: COLORS.emeraldPrimary,
+          address: dbStore.address || 'Abuja, Nigeria',
+          district: dbStore.district || 'Maitama, Abuja',
+          latitude: Number(dbStore.latitude) || 9.0882,
+          longitude: Number(dbStore.longitude) || 7.4933,
+          phone: dbStore.phone || '+234 800 000 0000',
+          image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+          description: `${dbStore.name} — partner store live on GETIT Abuja.`,
+          products: [],
+        };
+
+        setStoresList((prev) => {
+          if (prev.some((s) => s.id === newStoreObj.id)) return prev;
+          return [newStoreObj, ...prev];
+        });
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      if (typeof unsubscribeStores === 'function') unsubscribeStores();
     };
   }, []);
 
@@ -1776,6 +1909,98 @@ export default function App() {
 
   const addNewProduct = () => {
     handleAddCustomProduct();
+  };
+
+  // Handle Create & Launch New Store on Supabase & GETIT
+  const handleCreateStore = async () => {
+    if (!newStoreName.trim()) {
+      Alert.alert('Store Name Required', 'Please enter a name for your store.');
+      return;
+    }
+
+    setIsCreatingStore(true);
+    const storeId = `store-${Date.now()}`;
+    const selectedLoc =
+      SEARCHABLE_LOCATIONS.find((l) =>
+        l.district.toLowerCase().includes(newStoreDistrict.toLowerCase())
+      ) || SEARCHABLE_LOCATIONS[0];
+
+    const categoryKey = newStoreCategory.toLowerCase().includes('organ')
+      ? 'organic'
+      : newStoreCategory.toLowerCase().includes('bake')
+      ? 'bakery'
+      : newStoreCategory.toLowerCase().includes('cell')
+      ? 'cellar'
+      : newStoreCategory.toLowerCase().includes('herit')
+      ? 'heritage'
+      : 'gourmet';
+
+    const storeRecord = {
+      id: storeId,
+      name: newStoreName.trim(),
+      category: newStoreCategory,
+      address: newStoreAddress.trim() || selectedLoc.name,
+      district: newStoreDistrict,
+      city: 'Abuja',
+      latitude: selectedLoc.latitude || 9.0882,
+      longitude: selectedLoc.longitude || 7.4933,
+      phone: newStorePhone.trim(),
+      rating: 5.0,
+      isOpen: true,
+      deliveryFee: Number(newStoreDeliveryFee) || 1200,
+    };
+
+    const newStoreObj = {
+      id: storeId,
+      name: storeRecord.name,
+      category: categoryKey,
+      categoryLabel: newStoreCategory,
+      rating: 5.0,
+      reviewCount: 'New',
+      distance: '0.9 km',
+      deliveryTime: newStoreDeliveryTime || '15-25 min',
+      deliveryFee: `₦${Number(storeRecord.deliveryFee).toLocaleString()}`,
+      freeDeliveryThreshold: 25000,
+      tag: 'NEW MERCHANT',
+      badgeColor: COLORS.emeraldPrimary,
+      address: storeRecord.address,
+      district: storeRecord.district,
+      latitude: storeRecord.latitude,
+      longitude: storeRecord.longitude,
+      phone: storeRecord.phone,
+      image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+      description:
+        newStoreDescription.trim() ||
+        `${storeRecord.name} — partner store live on GETIT Abuja. Fast doorstep delivery.`,
+      products: [],
+    };
+
+    // 1. Instant local update so merchant and buyers see it immediately
+    setStoresList((prev) => [newStoreObj, ...prev]);
+    setMerchantStoreId(storeId);
+    setCreateStoreModalVisible(false);
+    setIsCreatingStore(false);
+    setNewStoreName('');
+
+    Alert.alert(
+      '🎉 Store Created & Live on GETIT!',
+      `"${storeRecord.name}" is now live and visible to buyers! You can now stock your shop with products from our catalog.`,
+      [
+        {
+          text: 'Stock Products Now 📦',
+          onPress: () => {
+            setMerchantTab('inventory');
+            setAddProductModalVisible(true);
+          },
+        },
+        { text: 'Later', style: 'cancel' },
+      ]
+    );
+
+    // 2. Persist to Supabase Cloud stores table
+    createDatabaseStore(storeRecord).catch((err) => {
+      console.warn('Failed to persist store to Supabase:', err);
+    });
   };
 
   // Bulk Inventory Import Handlers (SRT, CSV, TSV, POS Files)
@@ -4135,6 +4360,28 @@ export default function App() {
                   </View>
                 </View>
 
+                {/* Create & Launch New Store Action Banner */}
+                <View style={styles.createStorePromptCard}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={styles.createStoreIconWrap}>
+                      <Text style={{ fontSize: 26 }}>🏬</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={styles.createStorePromptTitle}>Open a New Store on GETIT</Text>
+                      <Text style={styles.createStorePromptSub}>
+                        Create a store branch that will instantly appear live to all buyers on the map & home feed.
+                      </Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.createStoreLaunchBtn}
+                    onPress={() => setCreateStoreModalVisible(true)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.createStoreLaunchBtnText}>+ Register & Launch New Store ✨</Text>
+                  </TouchableOpacity>
+                </View>
+
                 {/* Switch Store Branch Selector */}
                 <View style={styles.switchBranchCard}>
                   <Text style={styles.financeCardTitle}>Select Store Branch to Manage</Text>
@@ -4901,6 +5148,204 @@ export default function App() {
                 </Text>
               </TouchableOpacity>
             )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* --- CREATE & LAUNCH NEW STORE MODAL --- */}
+      <Modal
+        visible={createStoreModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setCreateStoreModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+          {/* Modal Header */}
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setCreateStoreModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={styles.modalHeaderTitle}>🏬 Register New Store</Text>
+              <Text style={styles.modalHeaderSubtitle}>Live immediately for all buyers across Abuja</Text>
+            </View>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <ScrollView
+            style={{ flex: 1, backgroundColor: COLORS.beigeBg }}
+            contentContainerStyle={{ padding: 18, paddingBottom: 90 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Hero Card */}
+            <View style={styles.customHeroCard}>
+              <Text style={{ fontSize: 26, marginBottom: 4 }}>🏪 ✨</Text>
+              <Text style={styles.customHeroTitle}>Create Your Storefront</Text>
+              <Text style={styles.customHeroSub}>
+                Set up your store identity, pick your Abuja neighborhood, and start selling groceries, fresh foods, or provisions to thousands of customers.
+              </Text>
+            </View>
+
+            {/* Store Name Input */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>STORE NAME *</Text>
+              <TextInput
+                style={styles.formInput}
+                placeholder="e.g. Basit Gourmet Market, Maitama Provisions"
+                placeholderTextColor="#94A3B8"
+                value={newStoreName}
+                onChangeText={setNewStoreName}
+              />
+            </View>
+
+            {/* Category Selection */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>STORE CATEGORY *</Text>
+              <View style={styles.categoryPillWrap}>
+                {[
+                  { id: 'Gourmet Marts', icon: '🛒', label: 'Gourmet Mart' },
+                  { id: 'Organic & Fresh', icon: '🌿', label: 'Organic & Produce' },
+                  { id: 'Artisan Bakery', icon: '🥖', label: 'Artisan Bakery' },
+                  { id: 'Pantry & Cellar', icon: '🍷', label: 'Pantry & Cellar' },
+                  { id: 'Local Specialties', icon: '🌾', label: 'Local Staples' },
+                  { id: 'Pharmacy & Health', icon: '💊', label: 'Pharmacy & Health' },
+                ].map((cat) => {
+                  const active = newStoreCategory === cat.id;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[styles.customCatPill, active && styles.customCatPillActive]}
+                      onPress={() => setNewStoreCategory(cat.id)}
+                    >
+                      <Text style={{ fontSize: 13, marginRight: 6 }}>{cat.icon}</Text>
+                      <Text style={[styles.customCatPillText, active && styles.customCatPillTextActive]}>
+                        {cat.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* District Location Selection */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>ABUJA DISTRICT / ZONE *</Text>
+              <View style={styles.categoryPillWrap}>
+                {[
+                  'Maitama District, Abuja',
+                  'Wuse 2, Abuja',
+                  'Asokoro Presidential Wing, Abuja',
+                  'Jabi District, Abuja',
+                  'Gwarinpa Estate, Abuja',
+                  'Garki District, Abuja',
+                  'Katampe, Abuja',
+                  'Guzape District, Abuja',
+                ].map((dist) => {
+                  const active = newStoreDistrict === dist;
+                  const shortName = dist
+                    .split(',')[0]
+                    .replace(' Presidential Wing', '')
+                    .replace(' District', '')
+                    .replace(' Estate', '');
+                  return (
+                    <TouchableOpacity
+                      key={dist}
+                      style={[styles.customCatPill, active && styles.customCatPillActive]}
+                      onPress={() => setNewStoreDistrict(dist)}
+                    >
+                      <Text style={{ fontSize: 12, marginRight: 4 }}>📍</Text>
+                      <Text style={[styles.customCatPillText, active && styles.customCatPillTextActive]}>
+                        {shortName}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Street Address */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>PHYSICAL STREET ADDRESS / LANDMARK *</Text>
+              <TextInput
+                style={styles.formInput}
+                placeholder="e.g. Plot 14 Gana Street, Opposite Transcorp"
+                placeholderTextColor="#94A3B8"
+                value={newStoreAddress}
+                onChangeText={setNewStoreAddress}
+              />
+            </View>
+
+            {/* Phone & Delivery Fee Row */}
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={[styles.formGroup, { flex: 1 }]}>
+                <Text style={styles.formLabel}>MERCHANT PHONE *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="+234 803 123 4567"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="phone-pad"
+                  value={newStorePhone}
+                  onChangeText={setNewStorePhone}
+                />
+              </View>
+              <View style={[styles.formGroup, { flex: 1 }]}>
+                <Text style={styles.formLabel}>DELIVERY FEE (₦)</Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="1200"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                  value={newStoreDeliveryFee}
+                  onChangeText={setNewStoreDeliveryFee}
+                />
+              </View>
+            </View>
+
+            {/* Estimated Delivery Time */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>ESTIMATED DELIVERY WINDOW</Text>
+              <TextInput
+                style={styles.formInput}
+                placeholder="e.g. 15-25 min"
+                placeholderTextColor="#94A3B8"
+                value={newStoreDeliveryTime}
+                onChangeText={setNewStoreDeliveryTime}
+              />
+            </View>
+
+            {/* Store Description */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>STORE DESCRIPTION (OPTIONAL)</Text>
+              <TextInput
+                style={[styles.formInput, { height: 70, textAlignVertical: 'top' }]}
+                placeholder="Brief tagline or description for buyers..."
+                placeholderTextColor="#94A3B8"
+                multiline
+                value={newStoreDescription}
+                onChangeText={setNewStoreDescription}
+              />
+            </View>
+
+            {/* Submit Button */}
+            <TouchableOpacity
+              style={[styles.primaryActionBtn, { marginTop: 12 }]}
+              onPress={handleCreateStore}
+              disabled={isCreatingStore}
+              activeOpacity={0.85}
+            >
+              {isCreatingStore ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.primaryActionBtnText}>
+                  🚀 Launch Store on GETIT ➔
+                </Text>
+              )}
+            </TouchableOpacity>
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -8681,6 +9126,52 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginRight: 12,
     backgroundColor: '#E2E8F0',
+  },
+  createStorePromptCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  createStoreIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.emeraldSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  createStorePromptTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  createStorePromptSub: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  createStoreLaunchBtn: {
+    marginTop: 14,
+    backgroundColor: COLORS.emeraldDeep,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  createStoreLaunchBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
 });
 

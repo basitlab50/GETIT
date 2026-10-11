@@ -192,3 +192,68 @@ export function subscribeToOrders(callback) {
     supabase.removeChannel(channel);
   };
 }
+
+// 5. Stores Management & Sync
+export async function getStores() {
+  try {
+    const { data, error } = await supabase
+      .from('stores')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.warn('Failed to fetch stores from Supabase:', err);
+    return [];
+  }
+}
+
+export async function createDatabaseStore(store) {
+  try {
+    const record = {
+      id: store.id || `store-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      name: store.name,
+      category: store.category || 'Gourmet & Groceries',
+      address: store.address || 'Abuja, Nigeria',
+      district: store.district || 'Maitama, Abuja',
+      city: store.city || 'Abuja',
+      latitude: Number(store.latitude) || 9.0882,
+      longitude: Number(store.longitude) || 7.4933,
+      phone: store.phone || '+234 800 000 0000',
+      rating: Number(store.rating) || 5.0,
+      is_open: store.isOpen !== undefined ? store.isOpen : true,
+      delivery_fee: Number(store.deliveryFee) || 1200,
+    };
+
+    const { data, error } = await supabase
+      .from('stores')
+      .insert(record)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Failed to create store in Supabase:', err);
+    return null;
+  }
+}
+
+export function subscribeToStores(callback) {
+  const channel = supabase
+    .channel('public:stores')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'stores' },
+      payload => {
+        if (callback) callback(payload);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
