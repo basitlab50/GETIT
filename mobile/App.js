@@ -2696,30 +2696,25 @@ export default function App() {
               Fresh Groceries • Fine Foods • Provisions • Express Delivery
             </Text>
 
-            {/* High Luxury Role Selector: Shopper vs Merchant */}
-            <View style={styles.luxeRoleSwitcherWrap}>
-              <TouchableOpacity
-                style={[styles.luxeRoleBtn, isBuyer && styles.luxeRoleBtnActiveBuyer]}
-                onPress={() => switchAuthRole('buyer')}
-                activeOpacity={0.85}
-              >
-                <Text style={{ fontSize: 15, marginRight: 6 }}>🛍️</Text>
-                <Text style={[styles.luxeRoleBtnText, isBuyer && styles.luxeRoleBtnTextActiveBuyer]}>
-                  Shopper / Buyer
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.luxeRoleBtn, !isBuyer && styles.luxeRoleBtnActiveMerchant]}
-                onPress={() => switchAuthRole('seller')}
-                activeOpacity={0.85}
-              >
-                <Text style={{ fontSize: 15, marginRight: 6 }}>🏪</Text>
-                <Text style={[styles.luxeRoleBtnText, !isBuyer && styles.luxeRoleBtnTextActiveMerchant]}>
-                  Shop Owner / Vendor
-                </Text>
-              </TouchableOpacity>
-            </View>
+            {/* Top Portal Indicator: Solely Shopper / Buyer at the top */}
+            {isBuyer ? (
+              <View style={styles.luxeShopperOnlyPill}>
+                <Text style={styles.luxeShopperOnlyText}>🛍️ SHOPPER & BUYER PORTAL</Text>
+              </View>
+            ) : (
+              <View style={{ alignItems: 'center', marginTop: 12 }}>
+                <View style={styles.luxeMerchantOnlyPill}>
+                  <Text style={styles.luxeMerchantOnlyText}>🏪 MERCHANT & STORE OWNER HUB</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.luxeBackToBuyerPill}
+                  onPress={() => switchAuthRole('buyer')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.luxeBackToBuyerText}>← Return to Shopper / Buyer Portal</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
 
           {/* Animated Main Luxury Card */}
@@ -11239,53 +11234,53 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  // Role Switcher
-  luxeRoleSwitcherWrap: {
-    flexDirection: 'row',
-    backgroundColor: '#EBE4D8',
-    borderRadius: 24,
-    padding: 4,
-    marginTop: 18,
-    width: '100%',
-    borderWidth: 1,
-    borderColor: '#DFD7C7',
-  },
-  luxeRoleBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
+  // Top Portal Badges & Indicators
+  luxeShopperOnlyPill: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 7,
     borderRadius: 20,
-  },
-  luxeRoleBtnActiveBuyer: {
-    backgroundColor: COLORS.emeraldDeep,
-    elevation: 3,
+    marginTop: 14,
+    borderWidth: 1.5,
+    borderColor: '#E2D9CC',
     shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  luxeRoleBtnActiveMerchant: {
-    backgroundColor: '#92400E',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
+  luxeShopperOnlyText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+    letterSpacing: 0.8,
   },
-  luxeRoleBtnText: {
-    fontSize: 12.5,
+  luxeMerchantOnlyPill: {
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#FDE68A',
+  },
+  luxeMerchantOnlyText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#92400E',
+    letterSpacing: 0.8,
+  },
+  luxeBackToBuyerPill: {
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: '#F5EFE6',
+  },
+  luxeBackToBuyerText: {
+    fontSize: 11.5,
     fontWeight: '700',
-    color: '#6B6358',
-  },
-  luxeRoleBtnTextActiveBuyer: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  luxeRoleBtnTextActiveMerchant: {
-    color: '#FFFFFF',
-    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+    textDecorationLine: 'underline',
   },
 
   // Luxury Card
