@@ -2309,27 +2309,17 @@ export default function App() {
       platform: 'GETIT Mobile Expo'
     }, input).catch(() => {});
 
-    // 3. Routing
-    if (existingUser.role === 'seller') {
-      Alert.alert(
-        'Merchant Account Detected',
-        `Welcome ${existingUser.fullName}! This account is registered as a Store Owner. We are directing you to your Merchant Hub.`
-      );
-      setCurrentUser(existingUser);
-      setMerchantStoreId(existingUser.storeId || 's1');
-      setAppMode('merchant');
-      setIsLoggedIn(true);
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingUser));
-      return;
-    }
-
+    // 3. Routing: Sign in directly to Customer Shopping mode
     setCurrentUser(existingUser);
     setAppMode('customer');
     setIsLoggedIn(true);
+    if (existingUser.storeId) {
+      setMerchantStoreId(existingUser.storeId);
+    }
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingUser));
     } catch (e) {}
-    Alert.alert('🎉 Welcome Back!', `Signed in successfully as ${existingUser.fullName}. Your database profile is loaded!`);
+    Alert.alert('🎉 Welcome Back!', `Signed in successfully as ${existingUser.fullName}. Your account is ready!`);
   };
 
   const handleAuthBuyerSignUp = async () => {
