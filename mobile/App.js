@@ -2281,7 +2281,7 @@ export default function App() {
     if (!existingUser) {
       Alert.alert(
         'Account Not Found',
-        'No account was found with this email or phone number in our database. An account must be created and stored first before you can sign in.\n\nPlease click "Create Account" above to register.'
+        `No account matching "${input}" was found in our database.\n\nPlease ensure you entered the exact phone number (e.g. 0803...) or email you registered with, or click "Create Account" above to register.`
       );
       return;
     }
@@ -2346,7 +2346,7 @@ export default function App() {
         'An account with this phone number or email is already registered in our database.\n\nPlease switch to "Sign In" to access your account.'
       );
       setAuthScreenMode('signin');
-      setAuthLoginInput(phone);
+      setAuthLoginInput(phone || email);
       return;
     }
 
@@ -2355,7 +2355,7 @@ export default function App() {
       role: 'buyer',
       fullName: fullName,
       phone: phone,
-      email: email || `${fullName.toLowerCase().replace(/\s+/g, '')}@getit.ng`,
+      email: email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@getit.ng`,
       password: pass,
       address: address || 'Nigeria',
     });
@@ -2363,12 +2363,15 @@ export default function App() {
     setCurrentUser(newBuyer);
     setAppMode('customer');
     setIsLoggedIn(true);
+    // Keep credentials remembered for seamless sign in
+    setAuthLoginInput(phone || email || newBuyer.email);
+    setAuthLoginPassword(pass);
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(newBuyer));
     } catch (e) {}
     Alert.alert(
       '🎉 Account Created & Stored!',
-      `Welcome to GETIT, ${newBuyer.fullName}! Your account has been saved in the database. You can now log in anytime with your credentials.`
+      `Welcome to GETIT, ${newBuyer.fullName}! Your account has been saved in the database. You can now log in anytime with your phone number (${phone}) or email.`
     );
   };
 
@@ -2390,7 +2393,7 @@ export default function App() {
     if (!existingSeller) {
       Alert.alert(
         'Merchant Account Not Found',
-        'No store owner account was found with this email or phone in our database. An account must be created first before you can sign in.\n\nPlease click "Register Store" above to register and launch your store.'
+        `No store owner account matching "${input}" was found in our database.\n\nPlease check your email or phone number, or click "Register Store" above to register.`
       );
       return;
     }
@@ -2408,6 +2411,8 @@ export default function App() {
     setMerchantStoreId(existingSeller.storeId || 's1');
     setAppMode('merchant');
     setIsLoggedIn(true);
+    setAuthLoginInput(existingSeller.phone || existingSeller.email || input);
+    setAuthLoginPassword(pass);
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingSeller));
     } catch (e) {}
@@ -2446,7 +2451,7 @@ export default function App() {
         'A merchant account with this phone number or email is already registered in our database.\n\nPlease sign in with your password instead.'
       );
       setAuthScreenMode('signin');
-      setAuthLoginInput(phone);
+      setAuthLoginInput(phone || email);
       return;
     }
 
@@ -2456,7 +2461,7 @@ export default function App() {
       role: 'seller',
       fullName: fullName,
       phone: phone,
-      email: email || `${fullName.toLowerCase().replace(/\s+/g, '')}@merchant.getit.ng`,
+      email: email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@merchant.getit.ng`,
       password: pass,
       address: address || 'Nigeria',
       businessName: businessName,
@@ -2493,6 +2498,8 @@ export default function App() {
     setCurrentUser(newSeller);
     setAppMode('merchant');
     setIsLoggedIn(true);
+    setAuthLoginInput(phone || email || newSeller.email);
+    setAuthLoginPassword(pass);
 
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(newSeller));
@@ -2975,6 +2982,24 @@ export default function App() {
 
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>✉️</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>EMAIL ADDRESS (OPTIONAL)</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="e.g. fatima@example.com"
+                        placeholderTextColor="#A8A29E"
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        value={authSignupEmail}
+                        onChangeText={setAuthSignupEmail}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>🔒</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
@@ -2998,37 +3023,19 @@ export default function App() {
                     </TouchableOpacity>
                   </View>
 
-                  {/* Optional Details Toggle */}
+                  {/* Optional Delivery Address Toggle */}
                   <TouchableOpacity
                     style={styles.luxeOptionalToggle}
                     onPress={() => setShowSignupOptional(!showSignupOptional)}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.luxeOptionalToggleText}>
-                      {showSignupOptional ? '▲ Hide Delivery Address & Email' : '+ Add Delivery Address & Email (Optional)'}
+                      {showSignupOptional ? '▲ Hide Delivery Address' : '+ Add Delivery Address (Optional)'}
                     </Text>
                   </TouchableOpacity>
 
                   {showSignupOptional && (
                     <View style={{ marginTop: 4 }}>
-                      <View style={styles.luxeInputBox}>
-                        <View style={styles.luxeInputIconWrap}>
-                          <Text style={styles.luxeInputIcon}>✉️</Text>
-                        </View>
-                        <View style={styles.luxeInputContent}>
-                          <Text style={styles.luxeInputLabel}>EMAIL (OPTIONAL)</Text>
-                          <TextInput
-                            style={styles.luxeTextInput}
-                            placeholder="e.g. fatima@getit.ng"
-                            placeholderTextColor="#A8A29E"
-                            keyboardType="email-address"
-                            autoCapitalize="none"
-                            value={authSignupEmail}
-                            onChangeText={setAuthSignupEmail}
-                          />
-                        </View>
-                      </View>
-
                       <View style={styles.luxeInputBox}>
                         <View style={styles.luxeInputIconWrap}>
                           <Text style={styles.luxeInputIcon}>📍</Text>
@@ -3186,6 +3193,24 @@ export default function App() {
 
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
+                      <Text style={styles.luxeInputIcon}>✉️</Text>
+                    </View>
+                    <View style={styles.luxeInputContent}>
+                      <Text style={styles.luxeInputLabel}>BUSINESS EMAIL (OPTIONAL)</Text>
+                      <TextInput
+                        style={styles.luxeTextInput}
+                        placeholder="e.g. store@example.com"
+                        placeholderTextColor="#A8A29E"
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        value={authSignupEmail}
+                        onChangeText={setAuthSignupEmail}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.luxeInputBox}>
+                    <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>🔒</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
@@ -3215,7 +3240,7 @@ export default function App() {
                     activeOpacity={0.8}
                   >
                     <Text style={styles.luxeOptionalToggleText}>
-                      {showSignupOptional ? '▲ Hide Location & Email' : '+ Add Store Location & Email (Optional)'}
+                      {showSignupOptional ? '▲ Hide Location' : '+ Add Store Location (Optional)'}
                     </Text>
                   </TouchableOpacity>
 
@@ -3233,24 +3258,6 @@ export default function App() {
                             placeholderTextColor="#A8A29E"
                             value={authSignupAddress}
                             onChangeText={setAuthSignupAddress}
-                          />
-                        </View>
-                      </View>
-
-                      <View style={styles.luxeInputBox}>
-                        <View style={styles.luxeInputIconWrap}>
-                          <Text style={styles.luxeInputIcon}>✉️</Text>
-                        </View>
-                        <View style={styles.luxeInputContent}>
-                          <Text style={styles.luxeInputLabel}>BUSINESS EMAIL</Text>
-                          <TextInput
-                            style={styles.luxeTextInput}
-                            placeholder="e.g. store@merchant.getit.ng"
-                            placeholderTextColor="#A8A29E"
-                            keyboardType="email-address"
-                            autoCapitalize="none"
-                            value={authSignupEmail}
-                            onChangeText={setAuthSignupEmail}
                           />
                         </View>
                       </View>
