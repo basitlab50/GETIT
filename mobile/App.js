@@ -1,9 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
   View,
   ScrollView,
+  FlatList,
   TouchableOpacity,
   TextInput,
   Modal,
@@ -935,6 +936,26 @@ export default function App() {
   const [bulkSelectedFileName, setBulkSelectedFileName] = useState('');
   const [isParsingFile, setIsParsingFile] = useState(false);
 
+  // High performance memoized filtered suggested catalog
+  const filteredSuggestedProducts = useMemo(() => {
+    const query = suggestedSearch.trim().toLowerCase();
+    return NIGERIAN_GROCERIES_CATALOG.filter((item) => {
+      let matchesCat = true;
+      if (suggestedCategoryFilter === 'All') {
+        matchesCat = item.category !== 'Pharmacy';
+      } else {
+        matchesCat = item.category === suggestedCategoryFilter;
+      }
+      if (!matchesCat) return false;
+      if (!query) return true;
+      return (
+        item.name.toLowerCase().includes(query) ||
+        item.category.toLowerCase().includes(query) ||
+        (item.brand && item.brand.toLowerCase().includes(query))
+      );
+    });
+  }, [suggestedCategoryFilter, suggestedSearch]);
+
   // Active Orders
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'orders' | 'profile'
   const [orders, setOrders] = useState([
@@ -1459,7 +1480,6 @@ export default function App() {
       }
       return [...prev, { ...product, qty: 1, storeName: store.name }];
     });
-    Alert.alert('Added to Selection', `${product.name} added to your basket.`);
   };
 
   const removeFromCart = (productId) => {
@@ -1706,12 +1726,8 @@ export default function App() {
     );
 
     setAddedItemsTracker((prev) => ({ ...prev, [item.id]: true }));
-    Alert.alert(
-      '✓ Added to Store!',
-      `${item.name} (₦${finalPrice.toLocaleString()}) added to ${currentMerchantStore?.name} inventory!`
-    );
 
-    // Sync to Supabase Cloud store_inventory
+    // Non-blocking sync to Supabase Cloud store_inventory
     addStoreInventoryItem(merchantStoreId || 'store-fresh-mart', newProd).catch((e) =>
       console.log('Supabase inventory sync notice:', e?.message)
     );
@@ -4350,47 +4366,48 @@ export default function App() {
                 </ScrollView>
               </View>
 
-              {/* Suggested Groceries List */}
-              <ScrollView
+              {/* Suggested Groceries List (High Performance Virtualized FlatList) */}
+              <FlatList
+                data={filteredSuggestedProducts}
+                keyExtractor={(item) => item.id}
                 style={{ flex: 1 }}
                 contentContainerStyle={{ padding: 14, paddingBottom: 60 }}
                 keyboardShouldPersistTaps="handled"
-              >
-                <Text style={styles.addListHeaderNote}>
-                  {suggestedCategoryFilter === 'All'
-                    ? 'Showing all everyday supermarket items (Pantry, Drinks, Snacks, Skincare, Baby & Household). For medicines and health supplies, select the Pharmacy & Healthcare category.'
-                    : `Showing items in ${suggestedCategoryFilter}. Tap the '+' sign to add any item to your shop with 1 click.`}
-                </Text>
-
-                {NIGERIAN_GROCERIES_CATALOG.filter((item) => {
-                  let matchesCat = true;
-                  if (suggestedCategoryFilter === 'All') {
-                    // All general supermarket products EXCEPT Pharmacy & Healthcare!
-                    matchesCat = item.category !== 'Pharmacy';
-                  } else {
-                    matchesCat = item.category === suggestedCategoryFilter;
-                  }
-
-                  const matchesQuery =
-                    !suggestedSearch ||
-                    item.name.toLowerCase().includes(suggestedSearch.toLowerCase()) ||
-                    item.category.toLowerCase().includes(suggestedSearch.toLowerCase()) ||
-                    (item.brand && item.brand.toLowerCase().includes(suggestedSearch.toLowerCase()));
-                  return matchesCat && matchesQuery;
-                }).map((item) => {
-                  const isAdded = addedItemsTracker[item.id];
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={5}
+                removeClippedSubviews={true}
+                ListHeaderComponent={
+                  <Text style={styles.addListHeaderNote}>
+                    {suggestedCategoryFilter === 'All'
+                      ? 'Showing all everyday supermarket items (Pantry, Drinks, Snacks, Skincare, Baby & Household). For medicines and health supplies, select the Pharmacy & Healthcare category.'
+                      : `Showing items in ${suggestedCategoryFilter}. Tap the '+' sign to add any item to your shop with 1 click.`}
+                  </Text>
+                }
+                ListEmptyComponent={
+                  <View style={{ alignItems: 'center', padding: 36 }}>
+                    <Text style={{ fontSize: 32, marginBottom: 8 }}>🔍</Text>
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.textDark }}>No matching products</Text>
+                    <Text style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 4, textAlign: 'center' }}>
+                      Try a different search term or category filter.
+                    </Text>
+                  </View>
+                }
+                renderItem={({ item }) => {
+                  const isAdded = !!addedItemsTracker[item.id];
                   const currentPriceValue =
                     adjustedPrices[item.id] !== undefined
                       ? String(adjustedPrices[item.id])
                       : String(item.suggestedPrice);
+                  const imgSource = getProductImageSource(item.imageUrl);
 
                   return (
                     <View key={item.id} style={styles.suggestedCard}>
                       <View style={styles.suggestedCardTopRow}>
                         <View style={styles.suggestedIconWrap}>
-                          {getProductImageSource(item.imageUrl) ? (
+                          {imgSource ? (
                             <Image
-                              source={getProductImageSource(item.imageUrl)}
+                              source={imgSource}
                               style={{ width: 44, height: 44, borderRadius: 8 }}
                               resizeMode="contain"
                             />
@@ -4436,7 +4453,7 @@ export default function App() {
                             isAdded && styles.suggestedAddBtnDone,
                           ]}
                           onPress={() => handleAddSuggestedProduct(item)}
-                          activeOpacity={0.8}
+                          activeOpacity={0.7}
                         >
                           <Text style={styles.suggestedAddBtnText}>
                             {isAdded ? '✓ Added to Store' : '+ Add to Store'}
@@ -4445,8 +4462,8 @@ export default function App() {
                       </View>
                     </View>
                   );
-                })}
-              </ScrollView>
+                }}
+              />
             </View>
           )}
 
