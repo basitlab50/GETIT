@@ -3413,12 +3413,19 @@ export default function App() {
 
                 {/* Store Details Section Below Box */}
                 <View style={styles.storeDetailsContainer}>
-                  {/* Line 1: Shop name takes one line */}
+                  {/* Line 1: Shop Name */}
                   <Text style={styles.storeTitle} numberOfLines={1} ellipsizeMode="tail">
                     {store.name}
                   </Text>
 
-                  {/* Line 2: Open hours & category take the second line */}
+                  {/* Line 2: Category & Provisions Prefix (Always visible, never clipped) */}
+                  <View style={styles.storeCategoryRow}>
+                    <Text style={styles.storeCategoryTag} numberOfLines={1} ellipsizeMode="tail">
+                      🏷️ {store.categoryLabel || 'Gourmet & Provisions'}
+                    </Text>
+                  </View>
+
+                  {/* Line 3: Operating Hours / Live Timing Badge */}
                   <View style={styles.storeTimingRow}>
                     {(() => {
                       const badge = getStoreTimingBadge(store);
@@ -3431,33 +3438,30 @@ export default function App() {
                         </View>
                       );
                     })()}
-                    <Text style={styles.storeCategoryLine} numberOfLines={1} ellipsizeMode="tail">
-                      • {store.categoryLabel}
-                    </Text>
                   </View>
 
-                  <Text style={styles.storeDescription} numberOfLines={2}>
+                  {/* Line 4: Store Provisions Description */}
+                  <Text style={styles.storeDescription} numberOfLines={2} ellipsizeMode="tail">
                     {store.description}
                   </Text>
 
-                  {/* Bottom Store Footer Details */}
-                  <View style={styles.storeFooterRow}>
-                    <View style={styles.deliveryMetaRow}>
-                      <Text style={styles.deliveryFeeText}>Delivery: {store.deliveryFee}</Text>
-                      <Text style={styles.deliveryDot}>•</Text>
-                      <Text style={styles.minOrderText}>
-                        Free over {formatNaira(store.freeDeliveryThreshold)}
-                      </Text>
-                    </View>
-
-                    <TouchableOpacity
-                      style={styles.viewStoreBtn}
-                      onPress={() => openStoreModal(store)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.viewStoreBtnText}>Explore Store →</Text>
-                    </TouchableOpacity>
+                  {/* Line 5: Delivery & Proximity Info Row */}
+                  <View style={styles.storeDeliveryRow}>
+                    <Text style={styles.deliveryFeeText}>🛵 Delivery: {store.deliveryFee}</Text>
+                    <Text style={styles.deliveryDot}>•</Text>
+                    <Text style={styles.minOrderText}>
+                      Free over {formatNaira(store.freeDeliveryThreshold)}
+                    </Text>
                   </View>
+
+                  {/* Line 6: Full-Width Scalable Explore Store Button (Never disappears on mobile) */}
+                  <TouchableOpacity
+                    style={styles.viewStoreFullBtn}
+                    onPress={() => openStoreModal(store)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.viewStoreFullBtnText}>Explore Store & Provisions ➔</Text>
+                  </TouchableOpacity>
                 </View>
               </TouchableOpacity>
             );
@@ -7404,87 +7408,87 @@ const styles = StyleSheet.create({
     color: COLORS.textDark,
     fontFamily: 'serif',
     letterSpacing: 0.2,
+    marginBottom: 4,
+  },
+  storeCategoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 6,
+  },
+  storeCategoryTag: {
+    fontSize: 12,
+    color: COLORS.emeraldDeep,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   storeTimingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6,
-    flexWrap: 'nowrap',
-  },
-  storeCategoryLine: {
-    fontSize: 11.5,
-    color: COLORS.roseGold,
-    fontWeight: '600',
-    marginLeft: 6,
-    flexShrink: 1,
+    marginBottom: 8,
   },
   storeOpenPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.emeraldSurface,
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingVertical: 3.5,
+    borderRadius: 7,
   },
   greenPulseDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: COLORS.emeraldLight,
-    marginRight: 4,
+    marginRight: 5,
   },
   storeOpenText: {
-    fontSize: 9,
+    fontSize: 9.5,
     fontWeight: '800',
-    color: COLORS.emeraldPrimary,
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
   },
   storeDescription: {
     fontSize: 12,
     color: COLORS.textMuted,
     lineHeight: 17,
-    marginTop: 4,
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  storeFooterRow: {
+  storeDeliveryRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: COLORS.borderLight,
-  },
-  deliveryMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    marginBottom: 10,
   },
   deliveryFeeText: {
-    fontSize: 11,
+    fontSize: 11.5,
     color: COLORS.textDark,
     fontWeight: '700',
   },
   deliveryDot: {
-    marginHorizontal: 4,
+    marginHorizontal: 6,
     color: COLORS.textMuted,
   },
   minOrderText: {
-    fontSize: 10.5,
-    color: COLORS.emeraldPrimary,
-    fontWeight: '600',
-  },
-  viewStoreBtn: {
-    backgroundColor: COLORS.roseGoldSurface,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(183, 110, 121, 0.3)',
-  },
-  viewStoreBtnText: {
     fontSize: 11,
-    color: COLORS.roseGold,
+    color: COLORS.emeraldPrimary,
+    fontWeight: '700',
+  },
+  viewStoreFullBtn: {
+    backgroundColor: COLORS.emeraldDeep,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
+    shadowColor: COLORS.emeraldDeep,
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  viewStoreFullBtnText: {
+    fontSize: 12.5,
+    color: '#FFFFFF',
     fontWeight: '800',
+    letterSpacing: 0.3,
   },
 
   // Store Details Modal
