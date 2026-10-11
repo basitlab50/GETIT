@@ -16,6 +16,7 @@ import {
   Linking,
   ActivityIndicator,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
@@ -30,6 +31,7 @@ import {
   createDatabaseStore,
   subscribeToStores,
   getStoreInventory,
+  updateDatabaseStore,
 } from './services/supabaseService';
 import { getProductImageSource } from './assets/productImages';
 
@@ -952,6 +954,45 @@ export default function App() {
   const [newStoreDescription, setNewStoreDescription] = useState('');
   const [isCreatingStore, setIsCreatingStore] = useState(false);
 
+  // --- USER AUTH & PROFILES (BUYER & SELLER) ---
+  const [currentUser, setCurrentUser] = useState({
+    id: 'user-client-01',
+    role: 'buyer', // 'buyer' | 'seller'
+    fullName: 'Distinguished Client',
+    email: 'client@getit.ng',
+    phone: '+234 803 294 1194',
+    address: 'Plot 14 Gana Street, Maitama, Abuja',
+    businessName: '',
+  });
+  const [authModalVisible, setAuthModalVisible] = useState(false);
+  const [authTab, setAuthTab] = useState('buyer'); // 'buyer' | 'seller'
+  const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPhone, setAuthPhone] = useState('');
+  const [authAddress, setAuthAddress] = useState('Plot 14 Gana Street, Maitama');
+  const [authBusinessName, setAuthBusinessName] = useState('');
+
+  // --- STORE OPERATING SCHEDULE & TIMING STATE ---
+  const [timingModalVisible, setTimingModalVisible] = useState(false);
+  const [storeTiming, setStoreTiming] = useState({
+    is24Hours: true,
+    openTime: '08:00 AM',
+    closeTime: '10:00 PM',
+    operatingDays: 'Mon - Sun (Daily)',
+  });
+  const [tempIs24Hours, setTempIs24Hours] = useState(true);
+  const [tempOpenTime, setTempOpenTime] = useState('08:00 AM');
+  const [tempCloseTime, setTempCloseTime] = useState('10:00 PM');
+  const [tempOperatingDays, setTempOperatingDays] = useState('Mon - Sun (Daily)');
+
+  const openTimingModal = () => {
+    setTempIs24Hours(storeTiming.is24Hours);
+    setTempOpenTime(storeTiming.openTime);
+    setTempCloseTime(storeTiming.closeTime);
+    setTempOperatingDays(storeTiming.operatingDays);
+    setTimingModalVisible(true);
+  };
+
   // High performance memoized filtered suggested catalog
   const filteredSuggestedProducts = useMemo(() => {
     const query = suggestedSearch.trim().toLowerCase();
@@ -1249,6 +1290,31 @@ export default function App() {
       isMounted = false;
       if (typeof unsubscribeStores === 'function') unsubscribeStores();
     };
+  }, []);
+
+  // Load saved user & store timing from AsyncStorage on app launch
+  useEffect(() => {
+    async function loadStoredState() {
+      try {
+        const storedUser = await AsyncStorage.getItem('getit_current_user');
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          setCurrentUser(parsed);
+          if (parsed.role === 'seller') {
+            setAppMode('merchant');
+            if (parsed.storeId) setMerchantStoreId(parsed.storeId);
+          }
+        }
+
+        const storedTiming = await AsyncStorage.getItem('getit_store_timing');
+        if (storedTiming) {
+          setStoreTiming(JSON.parse(storedTiming));
+        }
+      } catch (err) {
+        console.warn('Error loading AsyncStorage user state:', err);
+      }
+    }
+    loadStoredState();
   }, []);
 
   // Live Online Places Search with Strict Nigeria Geofencing
@@ -2003,6 +2069,223 @@ export default function App() {
     });
   };
 
+  // --- ACCOUNT AUTH HANDLERS ---
+  const handleRegisterBuyer = async () => {
+    if (!authName.trim()) {
+      Alert.alert('Name Required', 'Please provide your full name.');
+      return;
+    }
+    const newBuyer = {
+      id: `user-buyer-${Date.now()}`,
+      role: 'buyer',
+      fullName: authName.trim(),
+      email: authEmail.trim() || `${authName.toLowerCase().replace(/\s+/g, '')}@getit.ng`,
+      phone: authPhone.trim() || '+234 803 294 1194',
+      address: authAddress.trim(),
+    };
+    setCurrentUser(newBuyer);
+    setAppMode('customer');
+    setAuthModalVisible(false);
+    try {
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(newBuyer));
+    } catch (e) {}
+    Alert.alert('🎉 Buyer Account Activated!', `Welcome, ${newBuyer.fullName}! You are now set up to order groceries and provisions.`);
+  };
+
+  const handleRegisterSeller = async () => {
+    if (!authName.trim() || !authBusinessName.trim()) {
+      Alert.alert('Details Required', 'Please enter your name and store/business name.');
+      return;
+    }
+    const storeId = `store-${Date.now()}`;
+    const newSeller = {
+      id: `user-seller-${Date.now()}`,
+      role: 'seller',
+      fullName: authName.trim(),
+      email: authEmail.trim() || `${authName.toLowerCase().replace(/\s+/g, '')}@merchant.getit.ng`,
+      phone: authPhone.trim() || '+234 800 111 2233',
+      address: authAddress.trim(),
+      businessName: authBusinessName.trim(),
+      storeId: storeId,
+    };
+
+    const newStoreObj = {
+      id: storeId,
+      name: newSeller.businessName,
+      category: 'gourmet',
+      categoryLabel: 'Gourmet Groceries & Provisions',
+      rating: 5.0,
+      reviewCount: 'New',
+      distance: '0.8 km',
+      deliveryTime: '15-25 min',
+      deliveryFee: '₦1,200',
+      freeDeliveryThreshold: 25000,
+      tag: 'NEW MERCHANT',
+      badgeColor: COLORS.emeraldPrimary,
+      address: newSeller.address || 'Abuja, Nigeria',
+      district: 'Maitama, Abuja',
+      latitude: 9.0882,
+      longitude: 7.4933,
+      phone: newSeller.phone,
+      image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+      description: `${newSeller.businessName} — partner store live on GETIT Abuja.`,
+      products: [],
+      isOpen: true,
+      is_open: true,
+    };
+
+    setStoresList((prev) => [newStoreObj, ...prev]);
+    setMerchantStoreId(storeId);
+    setCurrentUser(newSeller);
+    setAppMode('merchant');
+    setAuthModalVisible(false);
+
+    try {
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(newSeller));
+    } catch (e) {}
+
+    createDatabaseStore({
+      id: storeId,
+      name: newSeller.businessName,
+      category: 'Gourmet & Groceries',
+      address: newSeller.address,
+      district: 'Maitama, Abuja',
+      city: 'Abuja',
+      latitude: 9.0882,
+      longitude: 7.4933,
+      phone: newSeller.phone,
+      deliveryFee: 1200,
+      isOpen: true,
+    }).catch(console.warn);
+
+    Alert.alert('🎉 Seller Account & Store Live!', `Congratulations ${newSeller.fullName}! Your store "${newSeller.businessName}" is live on GETIT. You can now add products and manage your hours.`);
+  };
+
+  const handleSwitchToDemoBuyer = async () => {
+    const buyerObj = {
+      id: 'demo-buyer-01',
+      role: 'buyer',
+      fullName: 'Amina Bello',
+      email: 'amina.bello@gmail.com',
+      phone: '+234 802 334 5566',
+      address: 'Plot 14 Gana Street, Maitama, Abuja',
+    };
+    setCurrentUser(buyerObj);
+    setAppMode('customer');
+    setAuthModalVisible(false);
+    try {
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(buyerObj));
+    } catch (e) {}
+  };
+
+  const handleSwitchToDemoSeller = async () => {
+    const sellerObj = {
+      id: 'demo-seller-01',
+      role: 'seller',
+      fullName: 'Emeka Okafor',
+      email: 'emeka@freshmart.ng',
+      phone: '+234 803 111 2233',
+      address: 'Adetokunbo Ademola Crescent, Wuse 2, Abuja',
+      businessName: 'The Gourmet Emporium',
+      storeId: 's1',
+    };
+    setCurrentUser(sellerObj);
+    setMerchantStoreId('s1');
+    setAppMode('merchant');
+    setAuthModalVisible(false);
+    try {
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(sellerObj));
+    } catch (e) {}
+  };
+
+  // --- STORE LIVE OPERATING STATUS & TIMING HANDLERS ---
+  const handleToggleStoreLive = async () => {
+    const nextStatus = !storeOpenStatus;
+    setStoreOpenStatus(nextStatus);
+
+    setStoresList((prev) =>
+      prev.map((s) => (s.id === merchantStoreId ? { ...s, isOpen: nextStatus, is_open: nextStatus } : s))
+    );
+
+    if (merchantStoreId) {
+      updateDatabaseStore(merchantStoreId, { isOpen: nextStatus }).catch(console.warn);
+    }
+
+    Alert.alert(
+      nextStatus ? '🟢 Store is LIVE!' : '🔴 Store is PAUSED',
+      nextStatus
+        ? `${currentMerchantStore?.name} is now online and accepting orders from all buyers in Abuja.`
+        : `${currentMerchantStore?.name} is paused. Buyers will see that your store is currently closed.`
+    );
+  };
+
+  const handleSaveStoreTiming = async (newTiming) => {
+    const timingToSave = newTiming || {
+      is24Hours: tempIs24Hours,
+      openTime: tempOpenTime,
+      closeTime: tempCloseTime,
+      operatingDays: tempOperatingDays,
+    };
+    setStoreTiming(timingToSave);
+    setTimingModalVisible(false);
+    try {
+      await AsyncStorage.setItem('getit_store_timing', JSON.stringify(timingToSave));
+    } catch (e) {
+      console.warn('AsyncStorage error:', e);
+    }
+    Alert.alert(
+      '⏰ Shop Timing Updated!',
+      timingToSave.is24Hours
+        ? `${currentMerchantStore?.name} is now running 24 HOURS (Always Open)! Customers can order around the clock.`
+        : `Operating schedule updated: ${timingToSave.openTime} – ${timingToSave.closeTime} (${timingToSave.operatingDays}).`
+    );
+  };
+
+  const isStoreCurrentlyOpen = (store) => {
+    if (!store) return false;
+    if (store.isOpen === false || store.is_open === false) return false;
+    if (store.id === merchantStoreId) {
+      if (!storeOpenStatus) return false;
+      if (storeTiming.is24Hours) return true;
+
+      const now = new Date();
+      const currentHour = now.getHours();
+      let openH = parseInt(storeTiming.openTime, 10);
+      if (storeTiming.openTime.includes('PM') && openH !== 12) openH += 12;
+      if (storeTiming.openTime.includes('AM') && openH === 12) openH = 0;
+
+      let closeH = parseInt(storeTiming.closeTime, 10);
+      if (storeTiming.closeTime.includes('PM') && closeH !== 12) closeH += 12;
+      if (storeTiming.closeTime.includes('AM') && closeH === 12) closeH = 0;
+
+      return currentHour >= openH && currentHour < closeH;
+    }
+    return true;
+  };
+
+  const getStoreTimingBadge = (store) => {
+    const open = isStoreCurrentlyOpen(store);
+    if (!open) {
+      return {
+        label: '🔴 Closed • Opens 8:00 AM',
+        color: '#EF4444',
+        bg: '#FEF2F2',
+      };
+    }
+    if (store.id === merchantStoreId && storeTiming.is24Hours) {
+      return {
+        label: '⚡ Open 24 Hours',
+        color: '#047857',
+        bg: '#ECFDF5',
+      };
+    }
+    return {
+      label: `🟢 Open Now • Closes ${storeTiming.closeTime || '10:00 PM'}`,
+      color: '#047857',
+      bg: '#ECFDF5',
+    };
+  };
+
   // Bulk Inventory Import Handlers (SRT, CSV, TSV, POS Files)
   const handlePickInventoryFile = async () => {
     try {
@@ -2368,10 +2651,17 @@ export default function App() {
                       <Text style={styles.storeTitle}>{store.name}</Text>
                       <Text style={styles.storeCategoryLine}>{store.categoryLabel}</Text>
                     </View>
-                    <View style={styles.storeOpenPill}>
-                      <View style={styles.greenPulseDot} />
-                      <Text style={styles.storeOpenText}>OPEN</Text>
-                    </View>
+                    {(() => {
+                      const badge = getStoreTimingBadge(store);
+                      return (
+                        <View style={[styles.storeOpenPill, { backgroundColor: badge.bg, borderColor: badge.color, borderWidth: 1 }]}>
+                          <View style={[styles.greenPulseDot, { backgroundColor: badge.color }]} />
+                          <Text style={[styles.storeOpenText, { color: badge.color, fontWeight: '700' }]}>
+                            {badge.label}
+                          </Text>
+                        </View>
+                      );
+                    })()}
                   </View>
 
                   <Text style={styles.storeDescription} numberOfLines={2}>
@@ -2582,7 +2872,7 @@ export default function App() {
           style={styles.mainScrollView}
           contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
         >
-          {/* Member Card with Cream Logo Avatar */}
+          {/* Member Card with Dynamic User Profile & Account Center Switcher */}
           <View style={styles.profileAvatarBox}>
             <View style={styles.profileAvatarCircle}>
               <Image
@@ -2591,8 +2881,28 @@ export default function App() {
                 resizeMode="cover"
               />
             </View>
-            <Text style={styles.profileName}>Distinguished Client</Text>
-            <Text style={styles.profileTier}>GETIT Concierge Privilège</Text>
+            <Text style={styles.profileName}>{currentUser?.fullName || 'Distinguished Client'}</Text>
+            <Text style={styles.profileTier}>
+              {currentUser?.role === 'seller' ? `🏪 Verified Merchant • ${currentUser?.businessName || 'Partner Store'}` : '🛍️ Buyer Account • GETIT Privilège'}
+            </Text>
+            <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4, textAlign: 'center' }}>
+              {currentUser?.email} • {currentUser?.phone}
+            </Text>
+            {currentUser?.address ? (
+              <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2, textAlign: 'center' }}>
+                📍 {currentUser?.address}
+              </Text>
+            ) : null}
+
+            <TouchableOpacity
+              style={[styles.primaryActionBtn, { marginTop: 14, paddingVertical: 10, paddingHorizontal: 20, backgroundColor: COLORS.emeraldDeep }]}
+              onPress={() => setAuthModalVisible(true)}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.primaryActionBtnText, { fontSize: 13 }]}>
+                👤 Create / Switch Account ➔
+              </Text>
+            </TouchableOpacity>
           </View>
 
           {/* --- MERCHANT HUB SWITCHER CARD --- */}
@@ -2711,6 +3021,24 @@ export default function App() {
                 </View>
                 <Text style={styles.storeModalTitle}>{selectedStore.name}</Text>
                 <Text style={styles.storeModalAddress}>📍 {selectedStore.address}</Text>
+                {(() => {
+                  const badge = getStoreTimingBadge(selectedStore);
+                  return (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, flexWrap: 'wrap' }}>
+                      <View style={[styles.storeOpenPill, { backgroundColor: badge.bg, borderColor: badge.color, borderWidth: 1 }]}>
+                        <View style={[styles.greenPulseDot, { backgroundColor: badge.color }]} />
+                        <Text style={[styles.storeOpenText, { color: badge.color, fontWeight: '700' }]}>
+                          {badge.label}
+                        </Text>
+                      </View>
+                      {selectedStore.id === merchantStoreId && storeTiming.is24Hours && (
+                        <View style={[styles.infoGlassChip, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0', borderWidth: 1, marginLeft: 8 }]}>
+                          <Text style={{ fontSize: 11, color: '#047857', fontWeight: '700' }}>⚡ Always Open 24/7</Text>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })()}
                 <Text style={styles.storeModalDesc}>{selectedStore.description}</Text>
 
                 <View style={styles.modalStatsRow}>
@@ -3839,18 +4167,11 @@ export default function App() {
                     styles.storeStatusToggle,
                     storeOpenStatus ? styles.statusOpen : styles.statusPaused,
                   ]}
-                  onPress={() => {
-                    const next = !storeOpenStatus;
-                    setStoreOpenStatus(next);
-                    Alert.alert(
-                      'Store Status Updated',
-                      next ? 'Your store is now OPEN and accepting orders.' : 'Your store is PAUSED. Customers cannot order.'
-                    );
-                  }}
+                  onPress={handleToggleStoreLive}
                   activeOpacity={0.8}
                 >
                   <Text style={styles.storeStatusToggleText}>
-                    {storeOpenStatus ? '● OPEN' : '⏸ PAUSED'}
+                    {storeOpenStatus ? '● LIVE' : '⏸ PAUSED'}
                   </Text>
                 </TouchableOpacity>
 
@@ -4344,19 +4665,56 @@ export default function App() {
                     <Text style={styles.storeProfileAddress}>📍 {currentMerchantStore?.address}</Text>
 
                     <View style={styles.storeProfileRow}>
-                      <Text style={styles.storeProfileLbl}>Status:</Text>
-                      <Text style={[styles.storeProfileVal, { color: storeOpenStatus ? '#047857' : '#B91C1C' }]}>
-                        {storeOpenStatus ? 'Open for Orders' : 'Paused / Offline'}
+                      <Text style={styles.storeProfileLbl}>Live Shop Status:</Text>
+                      <TouchableOpacity
+                        style={[
+                          styles.storeStatusToggle,
+                          storeOpenStatus ? styles.statusOpen : styles.statusPaused,
+                          { paddingVertical: 4, paddingHorizontal: 10 }
+                        ]}
+                        onPress={handleToggleStoreLive}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.storeStatusToggleText, { fontSize: 11 }]}>
+                          {storeOpenStatus ? '🟢 LIVE & OPEN' : '🔴 PAUSED / OFFLINE'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.storeProfileRow}>
+                      <Text style={styles.storeProfileLbl}>Operating Hours:</Text>
+                      <Text style={[styles.storeProfileVal, { fontWeight: '800', color: COLORS.emeraldDeep }]}>
+                        {storeTiming.is24Hours
+                          ? '⚡ 24 Hours (Always Open)'
+                          : `${storeTiming.openTime} – ${storeTiming.closeTime}`}
                       </Text>
                     </View>
+
+                    <View style={styles.storeProfileRow}>
+                      <Text style={styles.storeProfileLbl}>Operating Days:</Text>
+                      <Text style={styles.storeProfileVal}>{storeTiming.operatingDays}</Text>
+                    </View>
+
                     <View style={styles.storeProfileRow}>
                       <Text style={styles.storeProfileLbl}>Delivery Window:</Text>
                       <Text style={styles.storeProfileVal}>{currentMerchantStore?.deliveryTime}</Text>
                     </View>
+
                     <View style={styles.storeProfileRow}>
                       <Text style={styles.storeProfileLbl}>Customer Rating:</Text>
                       <Text style={styles.storeProfileVal}>★ {currentMerchantStore?.rating} ({currentMerchantStore?.reviewCount} reviews)</Text>
                     </View>
+
+                    {/* Set Shop Timing Button */}
+                    <TouchableOpacity
+                      style={[styles.primaryActionBtn, { marginTop: 14, paddingVertical: 10, backgroundColor: COLORS.emeraldPrimary }]}
+                      onPress={openTimingModal}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={[styles.primaryActionBtnText, { fontSize: 12.5 }]}>
+                        ⏰ Set Shop Hours & 24h Timing Schedule ➔
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
 
@@ -5345,6 +5703,470 @@ export default function App() {
                   🚀 Launch Store on GETIT ➔
                 </Text>
               )}
+            </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* --- BUYER & SELLER ACCOUNT CREATION & SWITCHER MODAL --- */}
+      <Modal
+        visible={authModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setAuthModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+          {/* Modal Header */}
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setAuthModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalHeaderTitle}>Account Center</Text>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <ScrollView
+            style={styles.modalContent}
+            contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Header intro card */}
+            <View style={styles.authHeroCard}>
+              <View style={styles.authHeroBadge}>
+                <Text style={styles.authHeroBadgeText}>GETIT LUXURY CONCIERGE</Text>
+              </View>
+              <Text style={styles.authHeroTitle}>Personal & Merchant Profiles</Text>
+              <Text style={styles.authHeroSub}>
+                Seamlessly create and switch between your personal shopper (Buyer) account and your commercial store (Seller) dashboard.
+              </Text>
+            </View>
+
+            {/* Current Active User Banner */}
+            <View style={styles.authActiveUserBanner}>
+              <View style={styles.authActiveUserAvatar}>
+                <Text style={{ fontSize: 20 }}>
+                  {currentUser?.role === 'seller' ? '🏪' : '🛍️'}
+                </Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.authActiveUserLabel}>ACTIVE SESSION</Text>
+                <Text style={styles.authActiveUserName}>{currentUser?.fullName || 'Distinguished Client'}</Text>
+                <Text style={styles.authActiveUserRole}>
+                  {currentUser?.role === 'seller'
+                    ? `Seller Account • ${currentUser?.businessName || 'Store Owner'}`
+                    : 'Buyer Account • Abuja Delivery'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Role Switcher Tabs */}
+            <View style={styles.authTabsWrap}>
+              <TouchableOpacity
+                style={[styles.authTabBtn, authTab === 'buyer' && styles.authTabBtnActive]}
+                onPress={() => setAuthTab('buyer')}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.authTabBtnText, authTab === 'buyer' && styles.authTabBtnTextActive]}>
+                  🛍️ Buyer Account
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.authTabBtn, authTab === 'seller' && styles.authTabBtnActive]}
+                onPress={() => setAuthTab('seller')}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.authTabBtnText, authTab === 'seller' && styles.authTabBtnTextActive]}>
+                  🏪 Seller / Merchant
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* --- BUYER TAB CONTENT --- */}
+            {authTab === 'buyer' ? (
+              <View style={styles.authSectionBox}>
+                <Text style={styles.authSectionTitle}>Create New Buyer Profile</Text>
+                <Text style={styles.authSectionSub}>
+                  Enter details to register a customer account for instant ordering across Abuja.
+                </Text>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>FULL NAME *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. Fatima Bello"
+                    placeholderTextColor="#94A3B8"
+                    value={authName}
+                    onChangeText={setAuthName}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>EMAIL ADDRESS</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. fatima.bello@example.ng"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    value={authEmail}
+                    onChangeText={setAuthEmail}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>PHONE NUMBER (WHATSAPP/CALLS)</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. +234 802 345 6789"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="phone-pad"
+                    value={authPhone}
+                    onChangeText={setAuthPhone}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>DELIVERY ADDRESS (ABUJA)</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. Plot 14 Gana Street, Maitama"
+                    placeholderTextColor="#94A3B8"
+                    value={authAddress}
+                    onChangeText={setAuthAddress}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.primaryActionBtn, { marginTop: 10 }]}
+                  onPress={handleRegisterBuyer}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.primaryActionBtnText}>
+                    🛍️ Create Buyer Account & Start Shopping ➔
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Quick Demo Switch */}
+                <View style={styles.quickDemoDivider}>
+                  <View style={styles.quickDemoLine} />
+                  <Text style={styles.quickDemoDividerText}>OR QUICK DEMO</Text>
+                  <View style={styles.quickDemoLine} />
+                </View>
+
+                <TouchableOpacity
+                  style={styles.quickDemoBtn}
+                  onPress={handleSwitchToDemoBuyer}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.quickDemoBtnIcon}>⚡</Text>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.quickDemoBtnTitle}>One-Tap Switch: Amina Bello (Buyer)</Text>
+                    <Text style={styles.quickDemoBtnSub}>Plot 14 Gana St, Maitama • Instant switch</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              /* --- SELLER TAB CONTENT --- */
+              <View style={styles.authSectionBox}>
+                <Text style={styles.authSectionTitle}>Create Merchant Account & Launch Shop</Text>
+                <Text style={styles.authSectionSub}>
+                  Set up your business profile, open your store to buyers, and configure live shop hours.
+                </Text>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>STORE / BUSINESS NAME *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. Daily Fresh Organics"
+                    placeholderTextColor="#94A3B8"
+                    value={authBusinessName}
+                    onChangeText={setAuthBusinessName}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>OWNER / MANAGER FULL NAME *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. Chinedu Eze"
+                    placeholderTextColor="#94A3B8"
+                    value={authName}
+                    onChangeText={setAuthName}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>BUSINESS EMAIL</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. chinedu@freshdaily.ng"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    value={authEmail}
+                    onChangeText={setAuthEmail}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>OFFICIAL PHONE / WHATSAPP</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. +234 803 555 7788"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="phone-pad"
+                    value={authPhone}
+                    onChangeText={setAuthPhone}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>SHOP LOCATION / ADDRESS (ABUJA)</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. Adetokunbo Ademola Crescent, Wuse 2"
+                    placeholderTextColor="#94A3B8"
+                    value={authAddress}
+                    onChangeText={setAuthAddress}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.primaryActionBtn, { marginTop: 10, backgroundColor: COLORS.goldPrimary }]}
+                  onPress={handleRegisterSeller}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.primaryActionBtnText, { color: '#000000', fontWeight: '800' }]}>
+                    🚀 Register Seller Account & Go Live ➔
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Quick Demo Switch */}
+                <View style={styles.quickDemoDivider}>
+                  <View style={styles.quickDemoLine} />
+                  <Text style={styles.quickDemoDividerText}>OR QUICK DEMO</Text>
+                  <View style={styles.quickDemoLine} />
+                </View>
+
+                <TouchableOpacity
+                  style={styles.quickDemoBtn}
+                  onPress={handleSwitchToDemoSeller}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.quickDemoBtnIcon}>🏪</Text>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.quickDemoBtnTitle}>One-Tap Switch: Emeka Okafor (Seller)</Text>
+                    <Text style={styles.quickDemoBtnSub}>The Gourmet Emporium • Full store owner dashboard</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* --- SHOP OPERATING HOURS & 24H TIMING SCHEDULE MODAL --- */}
+      <Modal
+        visible={timingModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setTimingModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+          {/* Modal Header */}
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setTimingModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalHeaderTitle}>Shop Operating Hours</Text>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <ScrollView
+            style={styles.modalContent}
+            contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Store Banner */}
+            <View style={styles.timingStoreBanner}>
+              <Text style={styles.timingStoreName}>{currentMerchantStore?.name}</Text>
+              <Text style={styles.timingStoreSub}>📍 {currentMerchantStore?.address || 'Abuja, Nigeria'}</Text>
+              
+              <View style={styles.timingLivePillRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.storeStatusToggle,
+                    storeOpenStatus ? styles.statusOpen : styles.statusPaused,
+                    { alignSelf: 'flex-start', marginTop: 10 }
+                  ]}
+                  onPress={handleToggleStoreLive}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.storeStatusToggleText}>
+                    {storeOpenStatus ? '🟢 STORE IS LIVE (ONLINE)' : '⏸ STORE IS PAUSED (OFFLINE)'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* 24 Hours Toggle Card */}
+            <View style={[styles.timing24Card, tempIs24Hours && styles.timing24CardActive]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flex: 1, paddingRight: 14 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 22, marginRight: 8 }}>⚡</Text>
+                    <Text style={styles.timing24Title}>Open 24 Hours</Text>
+                  </View>
+                  <Text style={styles.timing24Sub}>
+                    Run continuously day and night. Your store will never automatically close and buyers can place orders 24/7.
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.switchToggleBase, tempIs24Hours ? styles.switchToggleOn : styles.switchToggleOff]}
+                  onPress={() => setTempIs24Hours(!tempIs24Hours)}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.switchToggleThumb, tempIs24Hours ? styles.switchThumbOn : styles.switchThumbOff]} />
+                </TouchableOpacity>
+              </View>
+
+              {tempIs24Hours && (
+                <View style={styles.timing24BadgeRow}>
+                  <Text style={styles.timing24BadgeText}>
+                    ✓ Always Open 24/7 Mode Enabled
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Custom Daily Hours Section (Visible if not 24h) */}
+            {!tempIs24Hours && (
+              <View style={styles.customTimingBox}>
+                <Text style={styles.customTimingSectionHeader}>Daily Operating Schedule</Text>
+                <Text style={styles.customTimingSectionSub}>
+                  Specify your regular morning opening time and evening closing time.
+                </Text>
+
+                {/* Opening Time */}
+                <View style={styles.timingFieldGroup}>
+                  <Text style={styles.formLabel}>STORE OPENS AT</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={tempOpenTime}
+                    onChangeText={setTempOpenTime}
+                    placeholder="e.g. 08:00 AM"
+                    placeholderTextColor="#94A3B8"
+                  />
+                  <View style={styles.timingPresetRow}>
+                    {['06:00 AM', '07:00 AM', '08:00 AM', '09:00 AM', '10:00 AM'].map((t) => (
+                      <TouchableOpacity
+                        key={t}
+                        style={[styles.timingPresetPill, tempOpenTime === t && styles.timingPresetPillActive]}
+                        onPress={() => setTempOpenTime(t)}
+                      >
+                        <Text style={[styles.timingPresetText, tempOpenTime === t && styles.timingPresetTextActive]}>
+                          {t}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Closing Time */}
+                <View style={styles.timingFieldGroup}>
+                  <Text style={styles.formLabel}>STORE CLOSES AT</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={tempCloseTime}
+                    onChangeText={setTempCloseTime}
+                    placeholder="e.g. 10:00 PM"
+                    placeholderTextColor="#94A3B8"
+                  />
+                  <View style={styles.timingPresetRow}>
+                    {['08:00 PM', '09:00 PM', '10:00 PM', '11:00 PM', '12:00 AM'].map((t) => (
+                      <TouchableOpacity
+                        key={t}
+                        style={[styles.timingPresetPill, tempCloseTime === t && styles.timingPresetPillActive]}
+                        onPress={() => setTempCloseTime(t)}
+                      >
+                        <Text style={[styles.timingPresetText, tempCloseTime === t && styles.timingPresetTextActive]}>
+                          {t}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Operating Days */}
+                <View style={styles.timingFieldGroup}>
+                  <Text style={styles.formLabel}>OPERATING DAYS</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={tempOperatingDays}
+                    onChangeText={setTempOperatingDays}
+                    placeholder="e.g. Mon - Sun (Daily)"
+                    placeholderTextColor="#94A3B8"
+                  />
+                  <View style={styles.timingPresetRow}>
+                    {['Mon - Sun (Daily)', 'Mon - Sat', 'Mon - Fri', 'Weekends Only'].map((d) => (
+                      <TouchableOpacity
+                        key={d}
+                        style={[styles.timingPresetPill, tempOperatingDays === d && styles.timingPresetPillActive]}
+                        onPress={() => setTempOperatingDays(d)}
+                      >
+                        <Text style={[styles.timingPresetText, tempOperatingDays === d && styles.timingPresetTextActive]}>
+                          {d}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Live Customer Preview */}
+            <View style={styles.timingPreviewCard}>
+              <Text style={styles.timingPreviewHeader}>PREVIEW: WHAT BUYERS SEE</Text>
+              <View style={styles.timingPreviewBanner}>
+                {tempIs24Hours ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={[styles.greenPulseDot, { backgroundColor: '#047857' }]} />
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#047857', marginLeft: 6 }}>
+                      ⚡ Open 24 Hours (Always Open)
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={[styles.greenPulseDot, { backgroundColor: '#047857' }]} />
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#047857', marginLeft: 6 }}>
+                      🟢 Open Now • Closes {tempCloseTime} ({tempOperatingDays})
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
+
+            {/* Save Schedule Button */}
+            <TouchableOpacity
+              style={[styles.primaryActionBtn, { marginTop: 16, backgroundColor: COLORS.emeraldPrimary }]}
+              onPress={() => handleSaveStoreTiming()}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryActionBtnText}>
+                💾 Save & Apply Shop Timing Schedule ➔
+              </Text>
             </TouchableOpacity>
           </ScrollView>
         </SafeAreaView>
@@ -9172,6 +9994,324 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+
+  // --- Auth & Account Center Styles ---
+  authHeroCard: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(217, 169, 78, 0.3)',
+  },
+  authHeroBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(217, 169, 78, 0.2)',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginBottom: 8,
+  },
+  authHeroBadgeText: {
+    color: COLORS.goldLight,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  authHeroTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  authHeroSub: {
+    color: '#D1D5DB',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  authActiveUserBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  authActiveUserAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  authActiveUserLabel: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: COLORS.emeraldPrimary,
+    letterSpacing: 0.8,
+  },
+  authActiveUserName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  authActiveUserRole: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+    marginTop: 1,
+  },
+  authTabsWrap: {
+    flexDirection: 'row',
+    backgroundColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+  },
+  authTabBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  authTabBtnActive: {
+    backgroundColor: '#FFFFFF',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  authTabBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  authTabBtnTextActive: {
+    color: COLORS.emeraldDeep,
+    fontWeight: '800',
+  },
+  authSectionBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  authSectionTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    marginBottom: 4,
+  },
+  authSectionSub: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    lineHeight: 17,
+    marginBottom: 16,
+  },
+  quickDemoDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 18,
+  },
+  quickDemoLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E5E7EB',
+  },
+  quickDemoDividerText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#9CA3AF',
+    letterSpacing: 1,
+    marginHorizontal: 10,
+  },
+  quickDemoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  quickDemoBtnIcon: {
+    fontSize: 22,
+  },
+  quickDemoBtnTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  quickDemoBtnSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+
+  // --- Shop Timing & Operating Hours Styles ---
+  timingStoreBanner: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  timingStoreName: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  timingStoreSub: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  timingLivePillRow: {
+    marginTop: 4,
+  },
+  timing24Card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+  },
+  timing24CardActive: {
+    borderColor: COLORS.emeraldPrimary,
+    backgroundColor: '#F0FDF4',
+  },
+  timing24Title: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  timing24Sub: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  timing24BadgeRow: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#DCFCE7',
+  },
+  timing24BadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  switchToggleBase: {
+    width: 52,
+    height: 30,
+    borderRadius: 15,
+    padding: 3,
+    justifyContent: 'center',
+  },
+  switchToggleOn: {
+    backgroundColor: COLORS.emeraldPrimary,
+  },
+  switchToggleOff: {
+    backgroundColor: '#D1D5DB',
+  },
+  switchToggleThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  switchThumbOn: {
+    alignSelf: 'flex-end',
+  },
+  switchThumbOff: {
+    alignSelf: 'flex-start',
+  },
+  customTimingBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  customTimingSectionHeader: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    marginBottom: 4,
+  },
+  customTimingSectionSub: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+    lineHeight: 16,
+    marginBottom: 14,
+  },
+  timingFieldGroup: {
+    marginBottom: 16,
+  },
+  timingPresetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  timingPresetPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 4,
+  },
+  timingPresetPillActive: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderColor: COLORS.emeraldDeep,
+  },
+  timingPresetText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  timingPresetTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  timingPreviewCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  timingPreviewHeader: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#6B7280',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  timingPreviewBanner: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
 });
 

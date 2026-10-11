@@ -99,6 +99,33 @@ export function subscribeToStores(callback) {
   };
 }
 
+export async function updateDatabaseStore(storeId, updates) {
+  try {
+    const dbUpdates = {};
+    if (updates.isOpen !== undefined) dbUpdates.is_open = updates.isOpen;
+    if (updates.is_open !== undefined) dbUpdates.is_open = updates.is_open;
+    if (updates.name !== undefined) dbUpdates.name = updates.name;
+    if (updates.category !== undefined) dbUpdates.category = updates.category;
+    if (updates.address !== undefined) dbUpdates.address = updates.address;
+    if (updates.district !== undefined) dbUpdates.district = updates.district;
+    if (updates.deliveryFee !== undefined) dbUpdates.delivery_fee = Number(updates.deliveryFee);
+    if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
+
+    const { data, error } = await supabase
+      .from('stores')
+      .update(dbUpdates)
+      .eq('id', storeId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Failed to update store in Supabase:', err);
+    return null;
+  }
+}
+
 // 3. Store Inventory
 export async function getStoreInventory(storeId) {
   try {
