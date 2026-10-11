@@ -743,7 +743,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥤",
     "suggestedPrice": 350,
     "priceRange": "₦250–₦500",
-    "description": "Coca-Cola Original Coca-Cola 300–350 ml PET bottle. Carbonated soft drinks."
+    "description": "Coca-Cola Original Coca-Cola 300–350 ml PET bottle. Carbonated soft drinks.",
+    "imageUrl": "/products/coca-cola-original-300-350-ml-pet-bottle.jpg"
   },
   {
     "id": "bev-cocacola-2",
@@ -766,7 +767,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥤",
     "suggestedPrice": 500,
     "priceRange": "₦350–₦650",
-    "description": "Coca-Cola Original Coca-Cola 60 cl PET bottle. Carbonated soft drinks."
+    "description": "Coca-Cola Original Coca-Cola 60 cl PET bottle. Carbonated soft drinks.",
+    "imageUrl": "/products/coca-cola-original-60-cl-pet-bottle.png"
   },
   {
     "id": "bev-cocacola-4",
@@ -849,7 +851,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥤",
     "suggestedPrice": 350,
     "priceRange": "₦230–₦500",
-    "description": "Fanta Fanta Orange 35 cl PET bottle. Carbonated soft drinks."
+    "description": "Fanta Fanta Orange 35 cl PET bottle. Carbonated soft drinks.",
+    "imageUrl": "/products/fanta-orange-35-cl-pet-bottle.png"
   },
   {
     "id": "bev-fanta-11",
@@ -920,7 +923,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥤",
     "suggestedPrice": 450,
     "priceRange": "₦300–₦600",
-    "description": "Sprite Sprite Lemon-Lime 50 cl PET bottle. Carbonated soft drinks."
+    "description": "Sprite Sprite Lemon-Lime 50 cl PET bottle. Carbonated soft drinks.",
+    "imageUrl": "/products/sprite-lemon-lime-50-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-sprite-17",
@@ -931,7 +935,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥤",
     "suggestedPrice": 800,
     "priceRange": "₦600–₦1,100",
-    "description": "Sprite Sprite Lemon-Lime 1 L PET bottle. Carbonated soft drinks."
+    "description": "Sprite Sprite Lemon-Lime 1 L PET bottle. Carbonated soft drinks.",
+    "imageUrl": "/products/sprite-lemon-lime-1-l-pet-bottle.png"
   },
   {
     "id": "bev-sprite-18",
@@ -1003,7 +1008,7 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "suggestedPrice": 500,
     "priceRange": "₦350–₦700",
     "description": "7Up 7Up Lemon-Lime 33 cl Can. Carbonated soft drinks.",
-    "imageUrl": "/products/7up-lemon-lime-33-cl-can.webp"
+    "imageUrl": "/products/7up-lemon-lime-33-cl-can.jpg"
   },
   {
     "id": "bev-7up-24",
@@ -1086,7 +1091,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥤",
     "suggestedPrice": 250,
     "priceRange": "₦180–₦350",
-    "description": "Bigi Bigi Orange 35 cl PET bottle. Carbonated soft drinks."
+    "description": "Bigi Bigi Orange 35 cl PET bottle. Carbonated soft drinks.",
+    "imageUrl": "/products/bigi-orange-35-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-bigi-31",
@@ -1097,7 +1103,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥤",
     "suggestedPrice": 250,
     "priceRange": "₦180–₦350",
-    "description": "Bigi Bigi Apple 35 cl PET bottle. Carbonated soft drinks."
+    "description": "Bigi Bigi Apple 35 cl PET bottle. Carbonated soft drinks.",
+    "imageUrl": "/products/bigi-apple-35-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-bigi-32",
@@ -1108,7 +1115,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥤",
     "suggestedPrice": 250,
     "priceRange": "₦180–₦350",
-    "description": "Bigi Bigi Chapman 35 cl PET bottle. Carbonated soft drinks."
+    "description": "Bigi Bigi Chapman 35 cl PET bottle. Carbonated soft drinks.",
+    "imageUrl": "/products/bigi-chapman-35-cl-pet-bottle.webp"
   },
   {
     "id": "bev-bigi-33",
@@ -1283,7 +1291,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "💧",
     "suggestedPrice": 250,
     "priceRange": "₦150–₦350",
-    "description": "CWAY Table water 50 cl PET bottle. Bottled & table water."
+    "description": "CWAY Table water 50 cl PET bottle. Bottled & table water.",
+    "imageUrl": "/products/cway-table-water-50-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-cway-48",
@@ -1294,7 +1303,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "💧",
     "suggestedPrice": 300,
     "priceRange": "₦180–₦400",
-    "description": "CWAY Table water 75 cl PET bottle. Bottled & table water."
+    "description": "CWAY Table water 75 cl PET bottle. Bottled & table water.",
+    "imageUrl": "/products/cway-table-water-75-cl-pet-bottle.png"
   },
   {
     "id": "bev-cway-49",
@@ -1410,7 +1420,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥫",
     "suggestedPrice": 650,
     "priceRange": "₦450–₦850",
-    "description": "Amstel Malta Original malt drink 33 cl Bottle. Malt drinks."
+    "description": "Amstel Malta Original malt drink 33 cl Bottle. Malt drinks.",
+    "imageUrl": "/products/amstel-malta-classic-33-cl-bottle.jpg"
   },
   {
     "id": "bev-maltaguinness-59",
@@ -1515,7 +1526,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "⚡",
     "suggestedPrice": 750,
     "priceRange": "₦500–₦1,000",
-    "description": "Predator Energy drink 50 cl PET bottle. Energy & functional drinks."
+    "description": "Predator Energy drink 50 cl PET bottle. Energy & functional drinks.",
+    "imageUrl": "/products/predator-energy-drink-50-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-powerhorse-68",
@@ -1538,7 +1550,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "⚡",
     "suggestedPrice": 1800,
     "priceRange": "₦1,200–₦2,500",
-    "description": "Power Horse Energy drink 50 cl Can. Energy & functional drinks."
+    "description": "Power Horse Energy drink 50 cl Can. Energy & functional drinks.",
+    "imageUrl": "/products/power-horse-energy-drink-50-cl-can.jpg"
   },
   {
     "id": "bev-redbull-70",
@@ -1597,7 +1610,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "⚡",
     "suggestedPrice": 1000,
     "priceRange": "₦700–₦1,400",
-    "description": "Lucozade Energy / glucose drink 500 ml PET bottle. Energy & functional drinks."
+    "description": "Lucozade Energy / glucose drink 500 ml PET bottle. Energy & functional drinks.",
+    "imageUrl": "/products/lucozade-energy-boost-500-ml-pet-bottle.jpg"
   },
   {
     "id": "bev-predator-75",
@@ -1608,7 +1622,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "⚡",
     "suggestedPrice": 600,
     "priceRange": "₦400–₦800",
-    "description": "Predator Malt Smash / energy variant 40 cl PET bottle. Energy & functional drinks."
+    "description": "Predator Malt Smash / energy variant 40 cl PET bottle. Energy & functional drinks.",
+    "imageUrl": "/products/predator-malt-smash-energy-variant-40-cl-pet-bottle.jpg"
   },
   {
     "id": "bev-chivita-76",
@@ -1667,7 +1682,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 2800,
     "priceRange": "₦2,000–₦3,500",
-    "description": "Chivita 100% Apple juice 1 L Carton. Juices & fruit drinks."
+    "description": "Chivita 100% Apple juice 1 L Carton. Juices & fruit drinks.",
+    "imageUrl": "/products/chivita-100-apple-juice-1-l-carton.jpg"
   },
   {
     "id": "bev-chivita-81",
@@ -1748,7 +1764,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 1800,
     "priceRange": "₦1,200–₦2,500",
-    "description": "Chi Exotic 1 L Carton. Juices & fruit drinks."
+    "description": "Chi Exotic 1 L Carton. Juices & fruit drinks.",
+    "imageUrl": "/products/chi-exotic-1-l-carton.png"
   },
   {
     "id": "bev-hollandia-88",
@@ -1826,7 +1843,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 1000,
     "priceRange": "₦700–₦1,300",
-    "description": "CWAY Peach fruit drink 500 ml Bottle. Juices & fruit drinks."
+    "description": "CWAY Peach fruit drink 500 ml Bottle. Juices & fruit drinks.",
+    "imageUrl": "/products/cway-peach-fruit-drink-500-ml-bottle.png"
   },
   {
     "id": "bev-fross-95",
@@ -1837,7 +1855,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🧃",
     "suggestedPrice": 500,
     "priceRange": "₦300–₦700",
-    "description": "Fross Vitamin C fruit drink 250 ml Bottle. Juices & fruit drinks."
+    "description": "Fross Vitamin C fruit drink 250 ml Bottle. Juices & fruit drinks.",
+    "imageUrl": "/products/fross-vitamin-c-fruit-drink-250-ml-bottle.png"
   },
   {
     "id": "bev-lacasera-96",
@@ -1906,7 +1925,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥛",
     "suggestedPrice": 150,
     "priceRange": "₦80–₦250",
-    "description": "Loya Milk powder 20 g Sachet. Dairy, soy & hot beverage drinks."
+    "description": "Loya Milk powder 20 g Sachet. Dairy, soy & hot beverage drinks.",
+    "imageUrl": "/products/loya-milk-powder-20-g-sachet.jpg"
   },
   {
     "id": "bev-loya-102",
@@ -1987,7 +2007,8 @@ export const NIGERIAN_GROCERIES_CATALOG = [
     "icon": "🥛",
     "suggestedPrice": 5500,
     "priceRange": "₦4,000–₦7,500",
-    "description": "Bournvita Malted chocolate beverage 500 g Pouch / tin. Dairy, soy & hot beverage drinks."
+    "description": "Bournvita Malted chocolate beverage 500 g Pouch / tin. Dairy, soy & hot beverage drinks.",
+    "imageUrl": "/products/bournvita-malted-chocolate-beverage-500-g-pouch-tin.jpg"
   },
   {
     "id": "bev-nescaf-109",
