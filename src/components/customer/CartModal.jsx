@@ -2,6 +2,7 @@ import React from 'react';
 import { usePlatform } from '../../context/PlatformContext';
 import { formatNaira, calculateOrderTotals } from '../../utils/feeCalculator';
 import { ShoppingBag, Trash2, Plus, Minus, ArrowRight, X, AlertCircle } from 'lucide-react';
+import ProductMedia from '../common/ProductMedia';
 
 export default function CartModal({ isOpen, onClose, onOpenCheckout }) {
   const { cart, updateCartQuantity, removeFromCart, clearCart, config, vendors } = usePlatform();
@@ -146,7 +147,23 @@ export default function CartModal({ isOpen, onClose, onOpenCheckout }) {
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ fontSize: '1.6rem' }}>{item.product.imageUrl || '🛒'}</span>
+                    <div
+                      style={{
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '8px',
+                        background: '#FFFFFF',
+                        border: '1px solid #E2E8F0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        overflow: 'hidden',
+                        padding: '2px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <ProductMedia src={item.product.imageUrl} alt={item.product.name} size={38} />
+                    </div>
                     <div>
                       <h5 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0F172A', lineHeight: 1.2 }}>
                         {item.product.name}

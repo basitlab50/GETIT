@@ -2,6 +2,7 @@ import React from 'react';
 import { usePlatform } from '../../context/PlatformContext';
 import { formatNaira } from '../../utils/feeCalculator';
 import { Star, MapPin, Clock, Plus, Store, Check, ArrowRight } from 'lucide-react';
+import ProductMedia from '../common/ProductMedia';
 
 export default function ProductSearchCompare({ searchQuery, onSelectShop }) {
   const { products, vendors, addToCart, cart } = usePlatform();
@@ -64,17 +65,20 @@ export default function ProductSearchCompare({ searchQuery, onSelectShop }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '0.85rem' }}>
                   <div
                     style={{
-                      width: '44px',
-                      height: '44px',
-                      background: '#F1F5F9',
+                      width: '46px',
+                      height: '46px',
+                      background: '#FFFFFF',
+                      border: '1px solid #E2E8F0',
                       borderRadius: '12px',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      fontSize: '1.5rem',
+                      overflow: 'hidden',
+                      padding: '2px',
+                      flexShrink: 0,
                     }}
                   >
-                    {variants[0].imageUrl || '🛒'}
+                    <ProductMedia src={variants[0].imageUrl} alt={productTitle} size={42} />
                   </div>
                   <div>
                     <h4 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#0F172A', lineHeight: 1.2 }}>

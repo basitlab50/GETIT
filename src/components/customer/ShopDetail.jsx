@@ -3,6 +3,7 @@ import { usePlatform } from '../../context/PlatformContext';
 import { formatNaira } from '../../utils/feeCalculator';
 import { CATEGORIES } from '../../data/mockData';
 import { ArrowLeft, Star, MapPin, Clock, Phone, Plus, Minus, ShoppingBag } from 'lucide-react';
+import ProductMedia from '../common/ProductMedia';
 
 export default function ShopDetail({ vendorId, onBack, onOpenCart }) {
   const { vendors, products, addToCart, cart } = usePlatform();
@@ -165,17 +166,20 @@ export default function ShopDetail({ vendorId, onBack, onOpenCart }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div
                   style={{
-                    width: '46px',
-                    height: '46px',
+                    width: '48px',
+                    height: '48px',
                     borderRadius: '10px',
-                    background: '#F8FAFC',
+                    background: '#FFFFFF',
+                    border: '1px solid #E2E8F0',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontSize: '1.6rem',
+                    overflow: 'hidden',
+                    padding: '2px',
+                    flexShrink: 0,
                   }}
                 >
-                  {prod.imageUrl || '🛒'}
+                  <ProductMedia src={prod.imageUrl} alt={prod.name} size={44} />
                 </div>
                 <div>
                   <h4 style={{ fontSize: '0.88rem', fontWeight: 800, color: '#0F172A', lineHeight: 1.25 }}>

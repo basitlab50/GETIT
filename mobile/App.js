@@ -1672,6 +1672,7 @@ export default function App() {
       name: item.name,
       price: finalPrice,
       icon: item.icon,
+      imageUrl: item.imageUrl || null,
       category: item.category,
       outOfStock: false,
     };

@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Search
 } from 'lucide-react';
+import ProductMedia from '../common/ProductMedia';
 
 export default function VendorPortal() {
   const {
@@ -611,8 +612,22 @@ export default function VendorPortal() {
                 {vendorProducts.map((prod) => (
                   <tr key={prod.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                     <td style={{ padding: '12px 16px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '1.3rem' }}>{prod.imageUrl}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div
+                          style={{
+                            width: '40px',
+                            height: '40px',
+                            background: '#1E293B',
+                            borderRadius: '8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            overflow: 'hidden',
+                            flexShrink: 0,
+                          }}
+                        >
+                          <ProductMedia src={prod.imageUrl} alt={prod.name} size={36} />
+                        </div>
                         <div>
                           <span style={{ fontWeight: 800, color: '#FFFFFF', display: 'block' }}>{prod.name}</span>
                           <span style={{ fontSize: '0.7rem', color: '#64748B' }}>{prod.brand}</span>
