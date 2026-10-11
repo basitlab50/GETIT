@@ -3413,11 +3413,13 @@ export default function App() {
 
                 {/* Store Details Section Below Box */}
                 <View style={styles.storeDetailsContainer}>
-                  <View style={styles.storeMainRow}>
-                    <View style={{ flex: 1, paddingRight: 8 }}>
-                      <Text style={styles.storeTitle}>{store.name}</Text>
-                      <Text style={styles.storeCategoryLine}>{store.categoryLabel}</Text>
-                    </View>
+                  {/* Line 1: Shop name takes one line */}
+                  <Text style={styles.storeTitle} numberOfLines={1} ellipsizeMode="tail">
+                    {store.name}
+                  </Text>
+
+                  {/* Line 2: Open hours & category take the second line */}
+                  <View style={styles.storeTimingRow}>
                     {(() => {
                       const badge = getStoreTimingBadge(store);
                       return (
@@ -3429,6 +3431,9 @@ export default function App() {
                         </View>
                       );
                     })()}
+                    <Text style={styles.storeCategoryLine} numberOfLines={1} ellipsizeMode="tail">
+                      • {store.categoryLabel}
+                    </Text>
                   </View>
 
                   <Text style={styles.storeDescription} numberOfLines={2}>
@@ -5543,7 +5548,7 @@ export default function App() {
                       >
                         <Text style={{ fontSize: 18, marginRight: 10 }}>🏬</Text>
                         <View style={{ flex: 1 }}>
-                          <Text style={[styles.branchName, isSelected && styles.branchNameActive]}>
+                          <Text style={[styles.branchName, isSelected && styles.branchNameActive]} numberOfLines={1} ellipsizeMode="tail">
                             {st.name}
                           </Text>
                           <Text style={styles.branchSub}>{st.categoryLabel}</Text>
@@ -7393,24 +7398,26 @@ const styles = StyleSheet.create({
   storeDetailsContainer: {
     padding: 16,
   },
-  storeMainRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
   storeTitle: {
     fontSize: 16.5,
     fontWeight: '800',
     color: COLORS.textDark,
     fontFamily: 'serif',
     letterSpacing: 0.2,
+    marginBottom: 6,
+  },
+  storeTimingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    flexWrap: 'nowrap',
   },
   storeCategoryLine: {
     fontSize: 11.5,
     color: COLORS.roseGold,
     fontWeight: '600',
-    marginTop: 2,
+    marginLeft: 6,
+    flexShrink: 1,
   },
   storeOpenPill: {
     flexDirection: 'row',
