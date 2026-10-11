@@ -955,6 +955,19 @@ export default function App() {
   const [isCreatingStore, setIsCreatingStore] = useState(false);
 
   // --- USER AUTH & PROFILES (BUYER & SELLER) ---
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authScreenRole, setAuthScreenRole] = useState('buyer'); // 'buyer' | 'seller'
+  const [authScreenMode, setAuthScreenMode] = useState('signin'); // 'signin' | 'signup'
+  const [authLoginInput, setAuthLoginInput] = useState('');
+  const [authLoginPassword, setAuthLoginPassword] = useState('');
+  const [authSignupFullName, setAuthSignupFullName] = useState('');
+  const [authSignupEmail, setAuthSignupEmail] = useState('');
+  const [authSignupPhone, setAuthSignupPhone] = useState('');
+  const [authSignupAddress, setAuthSignupAddress] = useState('Maitama District, Abuja');
+  const [authSignupBusinessName, setAuthSignupBusinessName] = useState('');
+  const [authSignupPassword, setAuthSignupPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
   const [currentUser, setCurrentUser] = useState({
     id: 'user-client-01',
     role: 'buyer', // 'buyer' | 'seller'
@@ -1300,6 +1313,7 @@ export default function App() {
         if (storedUser) {
           const parsed = JSON.parse(storedUser);
           setCurrentUser(parsed);
+          setIsLoggedIn(true);
           if (parsed.role === 'seller') {
             setAppMode('merchant');
             if (parsed.storeId) setMerchantStoreId(parsed.storeId);
@@ -2172,10 +2186,12 @@ export default function App() {
     };
     setCurrentUser(buyerObj);
     setAppMode('customer');
+    setIsLoggedIn(true);
     setAuthModalVisible(false);
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(buyerObj));
     } catch (e) {}
+    Alert.alert('🛍️ Buyer Account Active', 'Switched to Amina Bello (Demo Buyer).');
   };
 
   const handleSwitchToDemoSeller = async () => {
@@ -2192,10 +2208,174 @@ export default function App() {
     setCurrentUser(sellerObj);
     setMerchantStoreId('s1');
     setAppMode('merchant');
+    setIsLoggedIn(true);
     setAuthModalVisible(false);
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(sellerObj));
     } catch (e) {}
+    Alert.alert('🏪 Merchant Account Active', 'Switched to Emeka Okafor — The Gourmet Emporium.');
+  };
+
+  // --- DEDICATED LOGIN / SIGN UP SCREEN HANDLERS ---
+  const handleAuthBuyerSignIn = async () => {
+    if (!authLoginInput.trim()) {
+      Alert.alert('Login Required', 'Please enter your email address or phone number.');
+      return;
+    }
+    const input = authLoginInput.trim();
+    let name = 'Valued Shopper';
+    if (input.includes('@')) {
+      const part = input.split('@')[0];
+      name = part.charAt(0).toUpperCase() + part.slice(1);
+    }
+    const buyerObj = {
+      id: `user-buyer-${Date.now()}`,
+      role: 'buyer',
+      fullName: name,
+      email: input.includes('@') ? input : 'shopper@getit.ng',
+      phone: input.includes('@') ? '+234 803 294 1194' : input,
+      address: 'Plot 14 Gana Street, Maitama, Abuja',
+    };
+    setCurrentUser(buyerObj);
+    setAppMode('customer');
+    setIsLoggedIn(true);
+    try {
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(buyerObj));
+    } catch (e) {}
+    Alert.alert('🎉 Welcome Back!', `Signed in successfully as ${buyerObj.fullName}. Enjoy shopping on GETIT!`);
+  };
+
+  const handleAuthBuyerSignUp = async () => {
+    if (!authSignupFullName.trim()) {
+      Alert.alert('Full Name Required', 'Please enter your full name to create an account.');
+      return;
+    }
+    const newBuyer = {
+      id: `user-buyer-${Date.now()}`,
+      role: 'buyer',
+      fullName: authSignupFullName.trim(),
+      email: authSignupEmail.trim() || `${authSignupFullName.toLowerCase().replace(/\s+/g, '')}@getit.ng`,
+      phone: authSignupPhone.trim() || '+234 803 294 1194',
+      address: authSignupAddress.trim() || 'Maitama District, Abuja',
+    };
+    setCurrentUser(newBuyer);
+    setAppMode('customer');
+    setIsLoggedIn(true);
+    try {
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(newBuyer));
+    } catch (e) {}
+    Alert.alert('🎉 Welcome to GETIT!', `Account created! Welcome, ${newBuyer.fullName}. Start shopping now!`);
+  };
+
+  const handleAuthSellerSignIn = async () => {
+    if (!authLoginInput.trim()) {
+      Alert.alert('Store Email Required', 'Please enter your registered store email or official phone number.');
+      return;
+    }
+    const sellerObj = {
+      id: 'demo-seller-01',
+      role: 'seller',
+      fullName: 'Emeka Okafor',
+      email: authLoginInput.includes('@') ? authLoginInput.trim() : 'emeka@freshmart.ng',
+      phone: authLoginInput.includes('@') ? '+234 803 111 2233' : authLoginInput.trim(),
+      address: 'Adetokunbo Ademola Crescent, Wuse 2, Abuja',
+      businessName: 'The Gourmet Emporium',
+      storeId: 's1',
+    };
+    setCurrentUser(sellerObj);
+    setMerchantStoreId('s1');
+    setAppMode('merchant');
+    setIsLoggedIn(true);
+    try {
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(sellerObj));
+    } catch (e) {}
+    Alert.alert('🏪 Merchant Hub Live!', `Welcome back! Logged into ${sellerObj.businessName}. Your store is ready.`);
+  };
+
+  const handleAuthSellerSignUp = async () => {
+    if (!authSignupBusinessName.trim() || !authSignupFullName.trim()) {
+      Alert.alert('Details Required', 'Please enter your Store / Business Name and Owner Name.');
+      return;
+    }
+    const storeId = `store-${Date.now()}`;
+    const newSeller = {
+      id: `user-seller-${Date.now()}`,
+      role: 'seller',
+      fullName: authSignupFullName.trim(),
+      email: authSignupEmail.trim() || `${authSignupFullName.toLowerCase().replace(/\s+/g, '')}@merchant.getit.ng`,
+      phone: authSignupPhone.trim() || '+234 800 111 2233',
+      address: authSignupAddress.trim() || 'Abuja, Nigeria',
+      businessName: authSignupBusinessName.trim(),
+      storeId: storeId,
+    };
+
+    const newStoreObj = {
+      id: storeId,
+      name: newSeller.businessName,
+      category: 'gourmet',
+      categoryLabel: 'Gourmet Groceries & Provisions',
+      rating: 5.0,
+      reviewCount: 'New',
+      distance: '0.8 km',
+      deliveryTime: '15-25 min',
+      deliveryFee: '₦1,200',
+      freeDeliveryThreshold: 25000,
+      tag: 'NEW MERCHANT',
+      badgeColor: COLORS.emeraldPrimary,
+      address: newSeller.address || 'Abuja, Nigeria',
+      district: 'Maitama, Abuja',
+      latitude: 9.0882,
+      longitude: 7.4933,
+      phone: newSeller.phone,
+      image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+      description: `${newSeller.businessName} — partner store live on GETIT Abuja.`,
+      products: [],
+      isOpen: true,
+      is_open: true,
+    };
+
+    setStoresList((prev) => [newStoreObj, ...prev]);
+    setMerchantStoreId(storeId);
+    setCurrentUser(newSeller);
+    setAppMode('merchant');
+    setIsLoggedIn(true);
+
+    try {
+      await AsyncStorage.setItem('getit_current_user', JSON.stringify(newSeller));
+    } catch (e) {}
+
+    createDatabaseStore({
+      id: storeId,
+      name: newSeller.businessName,
+      category: 'Gourmet & Groceries',
+      address: newSeller.address,
+      district: 'Maitama, Abuja',
+      city: 'Abuja',
+      latitude: 9.0882,
+      longitude: 7.4933,
+      phone: newSeller.phone,
+      deliveryFee: 1200,
+      isOpen: true,
+    }).catch(console.warn);
+
+    Alert.alert('🎉 Store Live on GETIT!', `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" is now active on GETIT.`);
+  };
+
+  const handleAuthGuestBrowse = () => {
+    setIsLoggedIn(true);
+    setAppMode('customer');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await AsyncStorage.removeItem('getit_current_user');
+    } catch (e) {}
+    setIsLoggedIn(false);
+    setAuthScreenRole('buyer');
+    setAuthScreenMode('signin');
+    setAuthLoginInput('');
+    setAuthLoginPassword('');
+    Alert.alert('Logged Out', 'You have been signed out. Sign in or create an account to continue.');
   };
 
   // --- STORE LIVE OPERATING STATUS & TIMING HANDLERS ---
@@ -2429,6 +2609,482 @@ export default function App() {
         )
     ),
   ];
+
+  // --- DEDICATED LOGIN / SIGN UP SCREEN (BUYER & MERCHANT) ---
+  if (!isLoggedIn) {
+    return (
+      <SafeAreaView style={styles.authPageSafeArea}>
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+        <ScrollView
+          style={styles.authPageScroll}
+          contentContainerStyle={styles.authPageScrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Top Brand Header */}
+          <View style={styles.authPageBrandSection}>
+            <View style={styles.authPageLogoCircle}>
+              <Image
+                source={LOGO_TRANSPARENT}
+                style={styles.authPageLogoImg}
+                resizeMode="contain"
+              />
+            </View>
+            <Text style={styles.authPageBrandTitle}>GETIT</Text>
+            <View style={styles.authPageBrandPill}>
+              <Text style={styles.authPageBrandPillText}>ABUJA'S PREMIER CONCIERGE & MARKETPLACE</Text>
+            </View>
+            <Text style={styles.authPageBrandTagline}>
+              Fresh Groceries • Fine Foods • Provisions • Express Delivery
+            </Text>
+          </View>
+
+          {/* MAIN CONTAINER: BUYER PORTAL (Default) */}
+          {authScreenRole === 'buyer' ? (
+            <View style={styles.authPageCard}>
+              <View style={styles.authPageCardHeader}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={styles.authPageCardTitle}>🛍️ Shopper & Buyer Portal</Text>
+                  <Text style={styles.authPageCardSub}>
+                    {authScreenMode === 'signin'
+                      ? 'Sign in to access your orders and fast checkout.'
+                      : 'Create your account to start ordering across Abuja.'}
+                  </Text>
+                </View>
+                <View style={styles.buyerBadgePill}>
+                  <Text style={styles.buyerBadgeText}>BUYER</Text>
+                </View>
+              </View>
+
+              {/* Segmented Switcher: Sign In vs Sign Up */}
+              <View style={styles.authTabsWrap}>
+                <TouchableOpacity
+                  style={[styles.authTabBtn, authScreenMode === 'signin' && styles.authTabBtnActive]}
+                  onPress={() => setAuthScreenMode('signin')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.authTabBtnText, authScreenMode === 'signin' && styles.authTabBtnTextActive]}>
+                    Sign In
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.authTabBtn, authScreenMode === 'signup' && styles.authTabBtnActive]}
+                  onPress={() => setAuthScreenMode('signup')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.authTabBtnText, authScreenMode === 'signup' && styles.authTabBtnTextActive]}>
+                    Create Account
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Form Fields: Sign In */}
+              {authScreenMode === 'signin' ? (
+                <View>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>EMAIL OR PHONE NUMBER</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. amina@gmail.com or 08032941194"
+                      placeholderTextColor="#94A3B8"
+                      value={authLoginInput}
+                      onChangeText={setAuthLoginInput}
+                      autoCapitalize="none"
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={styles.formLabel}>PASSWORD</Text>
+                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                        <Text style={{ fontSize: 11, color: COLORS.emeraldPrimary, fontWeight: '700' }}>
+                          {showPassword ? 'Hide' : 'Show'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="Enter your account password"
+                      placeholderTextColor="#94A3B8"
+                      secureTextEntry={!showPassword}
+                      value={authLoginPassword}
+                      onChangeText={setAuthLoginPassword}
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, { marginTop: 8 }]}
+                    onPress={handleAuthBuyerSignIn}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.primaryActionBtnText}>🛍️ Sign In as Buyer ➔</Text>
+                  </TouchableOpacity>
+
+                  {/* One-Tap Demo Buyer Login */}
+                  <View style={styles.quickDemoDivider}>
+                    <View style={styles.quickDemoLine} />
+                    <Text style={styles.quickDemoDividerText}>OR INSTANT DEMO</Text>
+                    <View style={styles.quickDemoLine} />
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.quickDemoBtn}
+                    onPress={handleSwitchToDemoBuyer}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.quickDemoBtnIcon}>⚡</Text>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.quickDemoBtnTitle}>One-Tap Sign In: Amina Bello (Buyer)</Text>
+                      <Text style={styles.quickDemoBtnSub}>Plot 14 Gana St, Maitama • Instant shopping session</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                /* Form Fields: Buyer Sign Up */
+                <View>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>FULL NAME *</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. Fatima Bello"
+                      placeholderTextColor="#94A3B8"
+                      value={authSignupFullName}
+                      onChangeText={setAuthSignupFullName}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>EMAIL ADDRESS</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. fatima.bello@example.ng"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      value={authSignupEmail}
+                      onChangeText={setAuthSignupEmail}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>PHONE NUMBER (WHATSAPP/CALLS) *</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. +234 802 345 6789"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="phone-pad"
+                      value={authSignupPhone}
+                      onChangeText={setAuthSignupPhone}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>DELIVERY ADDRESS (ABUJA)</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. Plot 14 Gana Street, Maitama"
+                      placeholderTextColor="#94A3B8"
+                      value={authSignupAddress}
+                      onChangeText={setAuthSignupAddress}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={styles.formLabel}>CREATE PASSWORD</Text>
+                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                        <Text style={{ fontSize: 11, color: COLORS.emeraldPrimary, fontWeight: '700' }}>
+                          {showPassword ? 'Hide' : 'Show'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="Create a secure password"
+                      placeholderTextColor="#94A3B8"
+                      secureTextEntry={!showPassword}
+                      value={authSignupPassword}
+                      onChangeText={setAuthSignupPassword}
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, { marginTop: 8 }]}
+                    onPress={handleAuthBuyerSignUp}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.primaryActionBtnText}>
+                      🛍️ Create Buyer Account & Start Shopping ➔
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Guest / Browse First Option */}
+              <TouchableOpacity
+                style={styles.authGuestLinkBtn}
+                onPress={handleAuthGuestBrowse}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.authGuestLinkText}>
+                  Explore & Browse Stores as Guest ➔
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            /* MERCHANT PORTAL CONTAINER */
+            <View style={styles.authPageCard}>
+              <View style={styles.authPageCardHeader}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={styles.authPageCardTitle}>🏪 Merchant & Shop Owner Hub</Text>
+                  <Text style={styles.authPageCardSub}>
+                    {authScreenMode === 'signin'
+                      ? 'Log in to manage orders, catalog stock & 24h schedule.'
+                      : 'Register your store and launch on GETIT marketplace.'}
+                  </Text>
+                </View>
+                <View style={styles.merchantBadgePill}>
+                  <Text style={styles.merchantBadgeText}>MERCHANT</Text>
+                </View>
+              </View>
+
+              {/* Segmented Switcher: Sign In vs Sign Up */}
+              <View style={styles.authTabsWrap}>
+                <TouchableOpacity
+                  style={[styles.authTabBtn, authScreenMode === 'signin' && styles.authTabBtnActive]}
+                  onPress={() => setAuthScreenMode('signin')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.authTabBtnText, authScreenMode === 'signin' && styles.authTabBtnTextActive]}>
+                    Merchant Sign In
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.authTabBtn, authScreenMode === 'signup' && styles.authTabBtnActive]}
+                  onPress={() => setAuthScreenMode('signup')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.authTabBtnText, authScreenMode === 'signup' && styles.authTabBtnTextActive]}>
+                    Register New Shop
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Form Fields: Merchant Sign In */}
+              {authScreenMode === 'signin' ? (
+                <View>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>REGISTERED BUSINESS EMAIL OR PHONE</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. emeka@freshmart.ng or 08031112233"
+                      placeholderTextColor="#94A3B8"
+                      value={authLoginInput}
+                      onChangeText={setAuthLoginInput}
+                      autoCapitalize="none"
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={styles.formLabel}>PASSWORD</Text>
+                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                        <Text style={{ fontSize: 11, color: COLORS.emeraldPrimary, fontWeight: '700' }}>
+                          {showPassword ? 'Hide' : 'Show'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="Enter merchant password"
+                      placeholderTextColor="#94A3B8"
+                      secureTextEntry={!showPassword}
+                      value={authLoginPassword}
+                      onChangeText={setAuthLoginPassword}
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, { marginTop: 8, backgroundColor: COLORS.goldPrimary }]}
+                    onPress={handleAuthSellerSignIn}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.primaryActionBtnText, { color: '#000000', fontWeight: '800' }]}>
+                      🏪 Log In to Merchant Portal ➔
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* One-Tap Demo Merchant Login */}
+                  <View style={styles.quickDemoDivider}>
+                    <View style={styles.quickDemoLine} />
+                    <Text style={styles.quickDemoDividerText}>OR INSTANT DEMO</Text>
+                    <View style={styles.quickDemoLine} />
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.quickDemoBtn}
+                    onPress={handleSwitchToDemoSeller}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.quickDemoBtnIcon}>🏪</Text>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.quickDemoBtnTitle}>One-Tap Sign In: The Gourmet Emporium</Text>
+                      <Text style={styles.quickDemoBtnSub}>Emeka Okafor • Full merchant dashboard access</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                /* Form Fields: Merchant Register */
+                <View>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>STORE / BUSINESS NAME *</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. Daily Fresh Organics"
+                      placeholderTextColor="#94A3B8"
+                      value={authSignupBusinessName}
+                      onChangeText={setAuthSignupBusinessName}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>OWNER / MANAGER FULL NAME *</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. Chinedu Eze"
+                      placeholderTextColor="#94A3B8"
+                      value={authSignupFullName}
+                      onChangeText={setAuthSignupFullName}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>BUSINESS EMAIL</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. chinedu@freshdaily.ng"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      value={authSignupEmail}
+                      onChangeText={setAuthSignupEmail}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>OFFICIAL PHONE / WHATSAPP *</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. +234 803 555 7788"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="phone-pad"
+                      value={authSignupPhone}
+                      onChangeText={setAuthSignupPhone}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>SHOP PHYSICAL ADDRESS IN ABUJA *</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g. Adetokunbo Ademola Crescent, Wuse 2"
+                      placeholderTextColor="#94A3B8"
+                      value={authSignupAddress}
+                      onChangeText={setAuthSignupAddress}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={styles.formLabel}>CREATE PASSWORD</Text>
+                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                        <Text style={{ fontSize: 11, color: COLORS.emeraldPrimary, fontWeight: '700' }}>
+                          {showPassword ? 'Hide' : 'Show'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="Create a merchant password"
+                      placeholderTextColor="#94A3B8"
+                      secureTextEntry={!showPassword}
+                      value={authSignupPassword}
+                      onChangeText={setAuthSignupPassword}
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, { marginTop: 8, backgroundColor: COLORS.goldPrimary }]}
+                    onPress={handleAuthSellerSignUp}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.primaryActionBtnText, { color: '#000000', fontWeight: '800' }]}>
+                      🚀 Register Store & Launch Live on GETIT ➔
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* DEDICATED PROMINENT CALLOUT BELOW */}
+          {authScreenRole === 'buyer' ? (
+            <View style={styles.authMerchantPromoCallout}>
+              <View style={styles.authPromoIconWrap}>
+                <Text style={{ fontSize: 26 }}>🏪</Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.authPromoTitle}>Are you a Merchant or Shop Owner?</Text>
+                <Text style={styles.authPromoSub}>
+                  List your store, sell groceries & provisions, manage live orders, and set your 24/7 hours schedule on GETIT.
+                </Text>
+                <TouchableOpacity
+                  style={styles.authPromoActionBtn}
+                  onPress={() => {
+                    setAuthScreenRole('seller');
+                    setAuthScreenMode('signin');
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.authPromoActionBtnText}>
+                    🏪 Log In or Sign Up as Shop Owner ➔
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.authBuyerPromoCallout}>
+              <View style={styles.authPromoIconWrap}>
+                <Text style={{ fontSize: 26 }}>🛍️</Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.authPromoTitle}>Looking to Buy Groceries?</Text>
+                <Text style={styles.authPromoSub}>
+                  Switch to the Shopper / Buyer portal to order fresh provisions, food, and drinks delivered anywhere in Abuja.
+                </Text>
+                <TouchableOpacity
+                  style={styles.authBuyerPromoActionBtn}
+                  onPress={() => {
+                    setAuthScreenRole('buyer');
+                    setAuthScreenMode('signin');
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.authBuyerPromoActionBtnText}>
+                    🛍️ Return to Buyer Sign In / Sign Up ➔
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -2901,6 +3557,16 @@ export default function App() {
             >
               <Text style={[styles.primaryActionBtnText, { fontSize: 13 }]}>
                 👤 Create / Switch Account ➔
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.primaryActionBtn, { marginTop: 8, paddingVertical: 8, paddingHorizontal: 20, backgroundColor: '#FEF2F2', borderColor: '#FCA5A5', borderWidth: 1 }]}
+              onPress={handleLogout}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#DC2626', fontSize: 12.5, fontWeight: '700' }}>
+                🚪 Log Out & Return to Login Screen
               </Text>
             </TouchableOpacity>
           </View>
@@ -4181,6 +4847,14 @@ export default function App() {
                   activeOpacity={0.8}
                 >
                   <Text style={styles.exitMerchantBtnText}>👤 Customer</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.exitMerchantBtn, { backgroundColor: '#FEF2F2', borderColor: '#FCA5A5', borderWidth: 1 }]}
+                  onPress={handleLogout}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.exitMerchantBtnText, { color: '#DC2626' }]}>🚪 Exit</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -10312,6 +10986,209 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+  },
+
+  // --- Dedicated Login / Sign Up Page Styles ---
+  authPageSafeArea: {
+    flex: 1,
+    backgroundColor: COLORS.emeraldDeep,
+  },
+  authPageScroll: {
+    flex: 1,
+    backgroundColor: COLORS.beigeBg,
+  },
+  authPageScrollContent: {
+    padding: 20,
+    paddingTop: 36,
+    paddingBottom: 60,
+  },
+  authPageBrandSection: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  authPageLogoCircle: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: COLORS.emeraldDeep,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    borderWidth: 2.5,
+    borderColor: COLORS.goldPrimary,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  authPageLogoImg: {
+    width: 48,
+    height: 48,
+  },
+  authPageBrandTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: COLORS.emeraldDeep,
+    letterSpacing: 3,
+  },
+  authPageBrandPill: {
+    backgroundColor: COLORS.emeraldSurface,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(4, 120, 87, 0.25)',
+  },
+  authPageBrandPillText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+    letterSpacing: 0.8,
+  },
+  authPageBrandTagline: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 8,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  authPageCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 3,
+    marginBottom: 20,
+  },
+  authPageCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  authPageCardTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  authPageCardSub: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+    marginTop: 3,
+    lineHeight: 16,
+  },
+  buyerBadgePill: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  buyerBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#047857',
+    letterSpacing: 0.5,
+  },
+  merchantBadgePill: {
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  merchantBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#B45309',
+    letterSpacing: 0.5,
+  },
+  authGuestLinkBtn: {
+    marginTop: 16,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  authGuestLinkText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: COLORS.emeraldDeep,
+    textDecorationLine: 'underline',
+  },
+  authMerchantPromoCallout: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1.5,
+    borderColor: COLORS.emeraldPrimary,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  authBuyerPromoCallout: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1.5,
+    borderColor: COLORS.goldPrimary,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  authPromoIconWrap: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  authPromoTitle: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  authPromoSub: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  authPromoActionBtn: {
+    marginTop: 12,
+    backgroundColor: COLORS.emeraldDeep,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignSelf: 'flex-start',
+  },
+  authPromoActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  authBuyerPromoActionBtn: {
+    marginTop: 12,
+    backgroundColor: COLORS.goldPrimary,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignSelf: 'flex-start',
+  },
+  authBuyerPromoActionBtnText: {
+    color: '#000000',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
 });
 
