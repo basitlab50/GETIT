@@ -694,7 +694,165 @@ export async function registerDatabaseUser(user) {
     console.warn('Cloud user sync error:', err);
   }
 
+  // 6. Automatically log the registration event to Supabase
+  logDatabaseEvent(
+    'AUTH_SIGNUP',
+    {
+      userId: userRecord.id,
+      role: userRecord.role,
+      fullName: userRecord.fullName,
+      email: userRecord.email,
+      phone: userRecord.phone,
+      address: userRecord.address,
+      businessName: userRecord.businessName,
+      storeId: userRecord.storeId,
+      platform: 'GETIT Mobile Expo'
+    },
+    userRecord.phone || userRecord.email
+  ).catch(console.warn);
+
   return userRecord;
+}
+
+/**
+ * ---------------------------------------------------------
+ * CLOUD LOGGING & AUDIT TRAIL SERVICE
+ * Stores all signup events, logins, and audit logs directly
+ * in Supabase so they are visible and queryable anytime.
+ * ---------------------------------------------------------
+ */
+
+export async function logDatabaseEvent(action, payload = {}, userIdentifier = 'SYSTEM') {
+  const logId = `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+  const timestamp = new Date().toISOString();
+  const serialized = typeof payload === 'string' ? payload : JSON.stringify({
+    action,
+    ...payload,
+    timestamp
+  });
+
+  // 1. Try to insert into dedicated audit_logs table if created
+  try {
+    await supabase.from('audit_logs').insert({
+      id: logId,
+      action: action,
+      user_identifier: String(userIdentifier || 'SYSTEM'),
+      payload: serialized,
+      created_at: timestamp
+    });
+  } catch (e) {}
+
+  // 2. Always persist to Supabase riders table with 'log-%' prefix for 100% guaranteed delivery
+  try {
+    await supabase.from('riders').insert({
+      id: logId,
+      name: action,
+      phone: String(userIdentifier || 'SYSTEM'),
+      vehicle: payload.role || 'system',
+      plate: payload.platform || 'GETIT App',
+      avatar: serialized,
+      is_active: true
+    });
+  } catch (err) {
+    console.warn('Database event logging error:', err);
+  }
+
+  return logId;
+}
+
+export async function getDatabaseLogs(limit = 100) {
+  // 1. Try dedicated audit_logs table first
+  try {
+    const { data: dedicatedLogs, error } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (!error && Array.isArray(dedicatedLogs) && dedicatedLogs.length > 0) {
+      return dedicatedLogs;
+    }
+  } catch (e) {}
+
+  // 2. Query cloud riders table with 'log-%' prefix
+  try {
+    const { data, error } = await supabase
+      .from('riders')
+      .select('*')
+      .like('id', 'log-%')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (!error && Array.isArray(data)) {
+      return data.map((item) => {
+        let details = {};
+        try { details = JSON.parse(item.avatar || '{}'); } catch (e) {}
+        return {
+          id: item.id,
+          action: item.name,
+          user: item.phone,
+          role: item.vehicle,
+          platform: item.plate,
+          details: details,
+          created_at: item.created_at
+        };
+      });
+    }
+  } catch (e) {
+    console.warn('Failed to fetch database logs:', e);
+  }
+  return [];
+}
+
+export async function getAllDatabaseUsers() {
+  // 1. Try dedicated users table
+  try {
+    const { data, error } = await supabase.from('users').select('*');
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return data.map((u) => ({
+        id: u.id,
+        role: u.role,
+        fullName: u.full_name,
+        email: u.email,
+        phone: u.phone,
+        password: u.password_hash || u.password,
+        address: u.address,
+        businessName: u.business_name,
+        storeId: u.store_id,
+        createdAt: u.created_at
+      }));
+    }
+  } catch (e) {}
+
+  // 2. Query cloud riders table with 'usr-%' prefix
+  try {
+    const { data, error } = await supabase
+      .from('riders')
+      .select('*')
+      .like('id', 'usr-%')
+      .order('created_at', { ascending: false });
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return data.map((cu) => {
+        let meta = {};
+        try { meta = JSON.parse(cu.avatar || '{}'); } catch (e) {}
+        return {
+          id: meta.realId || cu.id,
+          role: meta.role || 'buyer',
+          fullName: cu.name,
+          email: cu.vehicle,
+          phone: cu.phone,
+          password: cu.plate,
+          address: meta.address || '',
+          businessName: meta.businessName || null,
+          storeId: meta.storeId || null,
+          createdAt: cu.created_at
+        };
+      });
+    }
+  } catch (e) {}
+
+  return MEMORY_REGISTERED_USERS;
 }
 
 

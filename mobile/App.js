@@ -39,6 +39,7 @@ import {
   registerDatabaseUser,
   seedDefaultDatabaseUsers,
   DEFAULT_DATABASE_USERS,
+  logDatabaseEvent,
 } from './services/supabaseService';
 import { getProductImageSource } from './assets/productImages';
 
@@ -2280,6 +2281,7 @@ export default function App() {
     // 1. Strict Database Verification
     const existingUser = await findDatabaseUser(input);
     if (!existingUser) {
+      logDatabaseEvent('AUTH_ACCOUNT_NOT_FOUND', { role: 'buyer', input, platform: 'GETIT Mobile Expo' }, input).catch(() => {});
       Alert.alert(
         'Account Not Found',
         `No account matching "${input}" was found in our database.\n\nPlease ensure you entered the exact phone number (e.g. 0803...) or email you registered with, or click "Create Account" above to register.`
@@ -2289,12 +2291,23 @@ export default function App() {
 
     // 2. Password Verification
     if (existingUser.password && pass !== existingUser.password) {
+      logDatabaseEvent('AUTH_INCORRECT_PASSWORD', { role: 'buyer', userId: existingUser.id, name: existingUser.fullName, platform: 'GETIT Mobile Expo' }, input).catch(() => {});
       Alert.alert(
         'Incorrect Password',
         'The password entered does not match our database records. Please verify your password and try again.'
       );
       return;
     }
+
+    // Log successful sign in
+    logDatabaseEvent('AUTH_SIGNIN_SUCCESS', {
+      role: existingUser.role,
+      userId: existingUser.id,
+      name: existingUser.fullName,
+      email: existingUser.email,
+      phone: existingUser.phone,
+      platform: 'GETIT Mobile Expo'
+    }, input).catch(() => {});
 
     // 3. Routing
     if (existingUser.role === 'seller') {
@@ -2392,6 +2405,7 @@ export default function App() {
     // 1. Strict Database Verification
     const existingSeller = await findDatabaseUser(input);
     if (!existingSeller) {
+      logDatabaseEvent('AUTH_ACCOUNT_NOT_FOUND', { role: 'seller', input, platform: 'GETIT Mobile Expo' }, input).catch(() => {});
       Alert.alert(
         'Merchant Account Not Found',
         `No store owner account matching "${input}" was found in our database.\n\nPlease check your email or phone number, or click "Register Store" above to register.`
@@ -2401,12 +2415,24 @@ export default function App() {
 
     // 2. Password Verification
     if (existingSeller.password && pass !== existingSeller.password) {
+      logDatabaseEvent('AUTH_INCORRECT_PASSWORD', { role: 'seller', userId: existingSeller.id, businessName: existingSeller.businessName, platform: 'GETIT Mobile Expo' }, input).catch(() => {});
       Alert.alert(
         'Incorrect Password',
         'The merchant password entered does not match our database records. Please verify and try again.'
       );
       return;
     }
+
+    // Log successful merchant sign in
+    logDatabaseEvent('AUTH_SIGNIN_SUCCESS', {
+      role: existingSeller.role,
+      userId: existingSeller.id,
+      storeId: existingSeller.storeId,
+      businessName: existingSeller.businessName,
+      name: existingSeller.fullName,
+      phone: existingSeller.phone,
+      platform: 'GETIT Mobile Expo'
+    }, input).catch(() => {});
 
     // 3. Routing
     if (existingSeller.role === 'buyer') {
@@ -2549,6 +2575,14 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    if (currentUser) {
+      logDatabaseEvent('AUTH_SIGNOUT', {
+        userId: currentUser.id,
+        name: currentUser.fullName,
+        role: currentUser.role,
+        platform: 'GETIT Mobile Expo'
+      }, currentUser.phone || currentUser.email || 'USER').catch(() => {});
+    }
     try {
       await AsyncStorage.removeItem('getit_current_user');
     } catch (e) {}

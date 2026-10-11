@@ -182,3 +182,83 @@ export function subscribeToOrders(callback) {
     supabase.removeChannel(channel);
   };
 }
+
+// 5. Cloud Audit Logging
+export async function logDatabaseEvent(action, payload = {}, userIdentifier = 'SYSTEM') {
+  const logId = `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+  const timestamp = new Date().toISOString();
+  const serialized = typeof payload === 'string' ? payload : JSON.stringify({
+    action,
+    ...payload,
+    timestamp
+  });
+
+  // 1. Try to insert into dedicated audit_logs table
+  try {
+    await supabase.from('audit_logs').insert({
+      id: logId,
+      action: action,
+      user_identifier: String(userIdentifier || 'SYSTEM'),
+      payload: serialized,
+      created_at: timestamp
+    });
+  } catch (e) {}
+
+  // 2. Always persist to Supabase riders table with 'log-%' prefix
+  try {
+    await supabase.from('riders').insert({
+      id: logId,
+      name: action,
+      phone: String(userIdentifier || 'SYSTEM'),
+      vehicle: payload.role || 'system',
+      plate: payload.platform || 'GETIT Web',
+      avatar: serialized,
+      is_active: true
+    });
+  } catch (err) {
+    console.warn('Database event logging error:', err);
+  }
+
+  return logId;
+}
+
+export async function getDatabaseLogs(limit = 100) {
+  try {
+    const { data: dedicatedLogs, error } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (!error && Array.isArray(dedicatedLogs) && dedicatedLogs.length > 0) {
+      return dedicatedLogs;
+    }
+  } catch (e) {}
+
+  try {
+    const { data, error } = await supabase
+      .from('riders')
+      .select('*')
+      .like('id', 'log-%')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (!error && Array.isArray(data)) {
+      return data.map((item) => {
+        let details = {};
+        try { details = JSON.parse(item.avatar || '{}'); } catch (e) {}
+        return {
+          id: item.id,
+          action: item.name,
+          user: item.phone,
+          role: item.vehicle,
+          platform: item.plate,
+          details: details,
+          created_at: item.created_at
+        };
+      });
+    }
+  } catch (e) {}
+  return [];
+}
+
