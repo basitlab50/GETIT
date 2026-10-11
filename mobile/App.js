@@ -2434,21 +2434,29 @@ export default function App() {
       platform: 'GETIT Mobile Expo'
     }, input).catch(() => {});
 
-    // 3. Routing
-    if (existingSeller.role === 'buyer') {
-      Alert.alert(
-        'Shopper Account Detected',
-        `Welcome ${existingSeller.fullName}! This account is registered as a Shopper. We are directing you to your shopping experience.`
-      );
-      setCurrentUser(existingSeller);
-      setAppMode('customer');
-      setIsLoggedIn(true);
-      setAuthLoginInput(existingSeller.phone || existingSeller.email || input);
-      setAuthLoginPassword(pass);
-      try {
-        await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingSeller));
-      } catch (e) {}
-      return;
+    // 3. Routing: Direct directly to Merchant Hub
+    if (existingSeller.role === 'buyer' || !existingSeller.storeId) {
+      const storeId = existingSeller.storeId || `store-${Date.now()}`;
+      const storeName = existingSeller.businessName || `${existingSeller.fullName}'s Store`;
+      existingSeller.role = 'seller';
+      existingSeller.storeId = storeId;
+      existingSeller.businessName = storeName;
+
+      // Update in Supabase and local database
+      registerDatabaseUser(existingSeller).catch(console.warn);
+      createDatabaseStore({
+        id: storeId,
+        name: storeName,
+        category: 'Gourmet & Groceries',
+        address: existingSeller.address || 'Abuja, Nigeria',
+        district: 'Maitama, Abuja',
+        city: 'Abuja',
+        latitude: 9.0882,
+        longitude: 7.4933,
+        phone: existingSeller.phone,
+        isOpen: true,
+        deliveryFee: 1200,
+      }).catch(console.warn);
     }
 
     setCurrentUser(existingSeller);
@@ -2462,7 +2470,7 @@ export default function App() {
     } catch (e) {}
     Alert.alert(
       '🏪 Merchant Hub Live!',
-      `Welcome back, ${existingSeller.fullName}! Logged into "${existingSeller.businessName || 'your store'}" from the database.`
+      `Welcome to your Merchant Hub, ${existingSeller.fullName}! Logged into "${existingSeller.businessName || 'your store'}" from the database.`
     );
   };
 
@@ -2487,27 +2495,28 @@ export default function App() {
       return;
     }
 
-    // 1. Check if user already exists in database
+    // 1. Check if store already exists for this phone or email
     const existing = (await findDatabaseUser(phone)) || (email ? await findDatabaseUser(email) : null);
-    if (existing) {
+    if (existing && existing.role === 'seller' && existing.storeId) {
       Alert.alert(
-        'Account Already Exists',
-        'A merchant account with this phone number or email is already registered in our database.\n\nPlease sign in with your password instead.'
+        'Store Already Exists',
+        `A store is already registered for this account under "${existing.businessName || 'your store'}".\n\nPlease sign in with your password to access your Merchant Hub.`
       );
       setAuthScreenMode('signin');
       setAuthLoginInput(phone || email);
       return;
     }
 
-    // 2. Generate Store & Register in Database
-    const storeId = `store-${Date.now()}`;
+    // 2. Generate Store & Register / Upgrade User in Database
+    const storeId = (existing && existing.storeId) ? existing.storeId : `store-${Date.now()}`;
     const newSeller = await registerDatabaseUser({
+      id: existing ? existing.id : undefined,
       role: 'seller',
       fullName: fullName,
       phone: phone,
-      email: email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@merchant.getit.ng`,
+      email: email || existing?.email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@merchant.getit.ng`,
       password: pass,
-      address: address || 'Nigeria',
+      address: address || existing?.address || 'Nigeria',
       businessName: businessName,
       storeId: storeId,
     });
