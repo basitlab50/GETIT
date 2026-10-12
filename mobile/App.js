@@ -592,6 +592,10 @@ const STORES_AROUND_ME = [
     tag: 'FEATURED LUXE',
     badgeColor: COLORS.roseGold,
     address: 'Plot 14 Gana Street, Maitama',
+    openTime: '08:00 AM',
+    closeTime: '10:00 PM',
+    is24Hours: false,
+    operatingDays: 'Mon - Sun (Daily)',
     image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
     description: 'Imported artisanal cheeses, prime truffles, charcuterie, and fine everyday provisions.',
     products: [
@@ -634,6 +638,10 @@ const STORES_AROUND_ME = [
     tag: 'FARM FRESH',
     badgeColor: COLORS.emeraldPrimary,
     address: 'Adetokunbo Ademola Crescent, Wuse 2',
+    openTime: '08:00 AM',
+    closeTime: '09:00 PM',
+    is24Hours: false,
+    operatingDays: 'Mon - Sun (Daily)',
     image: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=800&q=80',
     description: 'Hydroponic crisp greens, vine-ripened heritage tomatoes, and pristine organic berries.',
     products: [
@@ -661,6 +669,10 @@ const STORES_AROUND_ME = [
     tag: 'BAKED HOURLY',
     badgeColor: COLORS.champagneGold,
     address: '32 Aminu Kano Way, Wuse 2',
+    openTime: '07:00 AM',
+    closeTime: '08:00 PM',
+    is24Hours: false,
+    operatingDays: 'Mon - Sun (Daily)',
     image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80',
     description: 'Traditional slow-fermented sourdough loaves, flaky butter croissants, and fine brioche.',
     products: [
@@ -688,6 +700,10 @@ const STORES_AROUND_ME = [
     tag: 'VINTAGE SELECTION',
     badgeColor: COLORS.roseGoldDark,
     address: 'Yakubu Gowon Crescent, Asokoro',
+    openTime: '10:00 AM',
+    closeTime: '11:00 PM',
+    is24Hours: false,
+    operatingDays: 'Mon - Sun (Daily)',
     image: 'https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?auto=format&fit=crop&w=800&q=80',
     description: 'Curated reserve wines, European sparkling waters, and rare pantry spices.',
     products: [
@@ -714,6 +730,10 @@ const STORES_AROUND_ME = [
     tag: 'HERITAGE QUALITY',
     badgeColor: COLORS.emeraldPrimary,
     address: 'Utako Commercial District',
+    openTime: '07:30 AM',
+    closeTime: '08:30 PM',
+    is24Hours: false,
+    operatingDays: 'Mon - Sun (Daily)',
     image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?auto=format&fit=crop&w=800&q=80',
     description: 'Select Benue white yams, stone-free parboiled rice, pure cold-pressed palm oil, and fresh aromatics.',
     products: [
@@ -1095,12 +1115,12 @@ export default function App() {
   // --- STORE OPERATING SCHEDULE & TIMING STATE ---
   const [timingModalVisible, setTimingModalVisible] = useState(false);
   const [storeTiming, setStoreTiming] = useState({
-    is24Hours: true,
+    is24Hours: false,
     openTime: '08:00 AM',
     closeTime: '10:00 PM',
     operatingDays: 'Mon - Sun (Daily)',
   });
-  const [tempIs24Hours, setTempIs24Hours] = useState(true);
+  const [tempIs24Hours, setTempIs24Hours] = useState(false);
   const [tempOpenTime, setTempOpenTime] = useState('08:00 AM');
   const [tempCloseTime, setTempCloseTime] = useState('10:00 PM');
   const [tempOperatingDays, setTempOperatingDays] = useState('Mon - Sun (Daily)');
@@ -1440,7 +1460,11 @@ export default function App() {
 
         const storedTiming = await AsyncStorage.getItem('getit_store_timing');
         if (storedTiming) {
-          setStoreTiming(JSON.parse(storedTiming));
+          const parsedTiming = JSON.parse(storedTiming);
+          setStoreTiming(parsedTiming);
+          setStoresList((prev) =>
+            prev.map((s) => (s.id === merchantStoreId ? { ...s, ...parsedTiming } : s))
+          );
         }
 
         // Ensure default & registered accounts exist in database
@@ -2724,9 +2748,21 @@ export default function App() {
       operatingDays: tempOperatingDays,
     };
     setStoreTiming(timingToSave);
+
+    setStoresList((prev) =>
+      prev.map((s) => (s.id === currentMerchantStore?.id ? { ...s, ...timingToSave } : s))
+    );
+
+    if (selectedStore?.id === currentMerchantStore?.id) {
+      setSelectedStore((prev) => (prev ? { ...prev, ...timingToSave } : prev));
+    }
+
     setTimingModalVisible(false);
     try {
       await AsyncStorage.setItem('getit_store_timing', JSON.stringify(timingToSave));
+      if (currentMerchantStore?.id) {
+        await AsyncStorage.setItem(`getit_store_timing_${currentMerchantStore.id}`, JSON.stringify(timingToSave));
+      }
     } catch (e) {
       console.warn('AsyncStorage error:', e);
     }
@@ -2825,50 +2861,139 @@ export default function App() {
     Alert.alert('✅ Store Profile Updated', `Your store details for "${updatedObj.name}" were updated successfully.`);
   };
 
+  // Helper to parse time strings like "8:00 AM", "10:00 AM", "10:00 PM", "8am", "10am", "22:00" into minutes of day
+  function parseTimeToMinutes(timeStr) {
+    if (!timeStr) return null;
+    const clean = String(timeStr).trim().toUpperCase();
+    const match = clean.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i) ||
+                  clean.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i) ||
+                  clean.match(/(\d{1,2}):(\d{2})/);
+    if (!match) return null;
+
+    let hours = parseInt(match[1], 10);
+    const minutes = match[2] ? parseInt(match[2], 10) : 0;
+    const modifier = match[3] ? match[3].toUpperCase() : null;
+
+    if (modifier === 'PM' && hours < 12) {
+      hours += 12;
+    } else if (modifier === 'AM' && hours === 12) {
+      hours = 0;
+    }
+    return hours * 60 + minutes;
+  }
+
   function isStoreCurrentlyOpen(store) {
     if (!store) return false;
-    // Explicit closed flag check
+
+    // 1. Explicit manual pause or closed flag
     if (store.isOpen === false || store.is_open === false || store.status === 'closed' || store.isClosed === true) {
       return false;
     }
-    // If it's the current merchant store, check merchant live status and operating hours
-    if (store.id === merchantStoreId || store.id === currentMerchantStore?.id) {
-      if (storeOpenStatus === false) return false;
-      if (storeTiming?.is24Hours) return true;
 
-      const now = new Date();
-      const currentHour = now.getHours();
-      let openH = parseInt(storeTiming?.openTime || '8', 10);
-      if (storeTiming?.openTime?.includes('PM') && openH !== 12) openH += 12;
-      if (storeTiming?.openTime?.includes('AM') && openH === 12) openH = 0;
-
-      let closeH = parseInt(storeTiming?.closeTime || '22', 10);
-      if (storeTiming?.closeTime?.includes('PM') && closeH !== 12) closeH += 12;
-      if (storeTiming?.closeTime?.includes('AM') && closeH === 12) closeH = 0;
-
-      return currentHour >= openH && currentHour < closeH;
+    // 2. If it is the current merchant store and merchant has paused the live toggle
+    const isCurrentMerchant = store.id === merchantStoreId || store.id === currentMerchantStore?.id;
+    if (isCurrentMerchant && storeOpenStatus === false) {
+      return false;
     }
-    return true;
+
+    // 3. Resolve schedule for this store (works for ALL stores)
+    let is24H = false;
+    let openStr = '08:00 AM';
+    let closeStr = '10:00 PM';
+
+    if (isCurrentMerchant) {
+      is24H = Boolean(storeTiming?.is24Hours);
+      openStr = storeTiming?.openTime || store.openTime || '08:00 AM';
+      closeStr = storeTiming?.closeTime || store.closeTime || '10:00 PM';
+    } else {
+      is24H = Boolean(store.is24Hours || store.is_24_hours || store.timing?.is24Hours);
+      openStr = store.openTime || store.open_time || store.timing?.openTime || '08:00 AM';
+      closeStr = store.closeTime || store.close_time || store.timing?.closeTime || '10:00 PM';
+    }
+
+    if (is24H) {
+      return true;
+    }
+
+    const openM = parseTimeToMinutes(openStr);
+    const closeM = parseTimeToMinutes(closeStr);
+
+    if (openM === null || closeM === null) {
+      return true; // Fallback only if no parseable schedule
+    }
+
+    if (openM === closeM) {
+      return true; // Same open and close treated as 24-hour
+    }
+
+    // Current time in device minutes
+    const now = new Date();
+    const currentM = now.getHours() * 60 + now.getMinutes();
+
+    if (openM < closeM) {
+      // Normal daytime window (e.g. 8:00 AM to 10:00 AM = 480 to 600, or 8:00 AM to 10:00 PM = 480 to 1320)
+      return currentM >= openM && currentM < closeM;
+    } else {
+      // Overnight window (e.g. 8:00 PM to 2:00 AM = 1200 to 120)
+      return currentM >= openM || currentM < closeM;
+    }
   }
 
   function getStoreTimingBadge(store) {
-    const open = isStoreCurrentlyOpen(store);
-    if (!open) {
+    if (!store) {
       return {
-        label: '🔴 Closed • Not Accepting Orders',
+        label: '🔴 Closed',
         color: '#DC2626',
         bg: '#FEF2F2',
       };
     }
-    if (store.id === merchantStoreId && storeTiming?.is24Hours) {
+
+    const isCurrentMerchant = store.id === merchantStoreId || store.id === currentMerchantStore?.id;
+
+    // Check manual pause
+    if (store.isOpen === false || store.is_open === false || (isCurrentMerchant && storeOpenStatus === false)) {
+      return {
+        label: '⏸️ Paused • Not Accepting Orders',
+        color: '#DC2626',
+        bg: '#FEF2F2',
+      };
+    }
+
+    // Resolve schedule for this store
+    let is24H = false;
+    let openStr = '08:00 AM';
+    let closeStr = '10:00 PM';
+
+    if (isCurrentMerchant) {
+      is24H = Boolean(storeTiming?.is24Hours);
+      openStr = storeTiming?.openTime || store.openTime || '08:00 AM';
+      closeStr = storeTiming?.closeTime || store.closeTime || '10:00 PM';
+    } else {
+      is24H = Boolean(store.is24Hours || store.is_24_hours || store.timing?.is24Hours);
+      openStr = store.openTime || store.open_time || store.timing?.openTime || '08:00 AM';
+      closeStr = store.closeTime || store.close_time || store.timing?.closeTime || '10:00 PM';
+    }
+
+    if (is24H) {
       return {
         label: '⚡ Open 24 Hours',
         color: '#047857',
         bg: '#ECFDF5',
       };
     }
+
+    const open = isStoreCurrentlyOpen(store);
+
+    if (!open) {
+      return {
+        label: `🔴 Closed • Opens ${openStr}`,
+        color: '#DC2626',
+        bg: '#FEF2F2',
+      };
+    }
+
     return {
-      label: `🟢 Open Now • Closes ${storeTiming?.closeTime || '10:00 PM'}`,
+      label: `🟢 Open Now • Closes ${closeStr}`,
       color: '#047857',
       bg: '#ECFDF5',
     };
@@ -7678,7 +7803,7 @@ export default function App() {
                     placeholderTextColor="#94A3B8"
                   />
                   <View style={styles.timingPresetRow}>
-                    {['08:00 PM', '09:00 PM', '10:00 PM', '11:00 PM', '12:00 AM'].map((t) => (
+                    {['10:00 AM', '12:00 PM', '04:00 PM', '08:00 PM', '09:00 PM', '10:00 PM', '11:00 PM', '12:00 AM'].map((t) => (
                       <TouchableOpacity
                         key={t}
                         style={[styles.timingPresetPill, tempCloseTime === t && styles.timingPresetPillActive]}
@@ -7721,7 +7846,7 @@ export default function App() {
 
             {/* Live Customer Preview */}
             <View style={styles.timingPreviewCard}>
-              <Text style={styles.timingPreviewHeader}>PREVIEW: WHAT BUYERS SEE</Text>
+              <Text style={styles.timingPreviewHeader}>PREVIEW: WHAT BUYERS SEE RIGHT NOW</Text>
               <View style={styles.timingPreviewBanner}>
                 {tempIs24Hours ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -7730,14 +7855,33 @@ export default function App() {
                       ⚡ Open 24 Hours (Always Open)
                     </Text>
                   </View>
-                ) : (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={[styles.greenPulseDot, { backgroundColor: '#047857' }]} />
-                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#047857', marginLeft: 6 }}>
-                      🟢 Open Now • Closes {tempCloseTime} ({tempOperatingDays})
-                    </Text>
-                  </View>
-                )}
+                ) : (() => {
+                  const oM = parseTimeToMinutes(tempOpenTime);
+                  const cM = parseTimeToMinutes(tempCloseTime);
+                  const now = new Date();
+                  const curM = now.getHours() * 60 + now.getMinutes();
+                  const isNowOpen = oM !== null && cM !== null && (
+                    oM === cM ? true : oM < cM ? curM >= oM && curM < cM : curM >= oM || curM < cM
+                  );
+                  if (!isNowOpen) {
+                    return (
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <View style={[styles.greenPulseDot, { backgroundColor: '#DC2626' }]} />
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#DC2626', marginLeft: 6 }}>
+                          🔴 Closed Right Now • Opens {tempOpenTime} ({tempOperatingDays})
+                        </Text>
+                      </View>
+                    );
+                  }
+                  return (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={[styles.greenPulseDot, { backgroundColor: '#047857' }]} />
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#047857', marginLeft: 6 }}>
+                        🟢 Open Now • Closes {tempCloseTime} ({tempOperatingDays})
+                      </Text>
+                    </View>
+                  );
+                })()}
               </View>
             </View>
 
