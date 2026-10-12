@@ -593,6 +593,8 @@ const STORES_AROUND_ME = [
     tag: 'FEATURED LUXE',
     badgeColor: COLORS.roseGold,
     address: 'Plot 14 Gana Street, Maitama',
+    latitude: 9.0882,
+    longitude: 7.4933,
     openTime: '08:00 AM',
     closeTime: '10:00 PM',
     is24Hours: false,
@@ -639,6 +641,8 @@ const STORES_AROUND_ME = [
     tag: 'FARM FRESH',
     badgeColor: COLORS.emeraldPrimary,
     address: 'Adetokunbo Ademola Crescent, Wuse 2',
+    latitude: 9.0792,
+    longitude: 7.4721,
     openTime: '08:00 AM',
     closeTime: '09:00 PM',
     is24Hours: false,
@@ -670,6 +674,8 @@ const STORES_AROUND_ME = [
     tag: 'BAKED HOURLY',
     badgeColor: COLORS.champagneGold,
     address: '32 Aminu Kano Way, Wuse 2',
+    latitude: 9.0745,
+    longitude: 7.4768,
     openTime: '07:00 AM',
     closeTime: '08:00 PM',
     is24Hours: false,
@@ -701,6 +707,8 @@ const STORES_AROUND_ME = [
     tag: 'VINTAGE SELECTION',
     badgeColor: COLORS.roseGoldDark,
     address: 'Yakubu Gowon Crescent, Asokoro',
+    latitude: 9.0435,
+    longitude: 7.5218,
     openTime: '10:00 AM',
     closeTime: '11:00 PM',
     is24Hours: false,
@@ -731,6 +739,8 @@ const STORES_AROUND_ME = [
     tag: 'HERITAGE QUALITY',
     badgeColor: COLORS.emeraldPrimary,
     address: 'Utako Commercial District',
+    latitude: 9.0578,
+    longitude: 7.4412,
     openTime: '07:30 AM',
     closeTime: '08:30 PM',
     is24Hours: false,
@@ -1179,6 +1189,17 @@ export default function App() {
   const [editStoreDeliveryFee, setEditStoreDeliveryFee] = useState('1200');
   const [editStoreDescription, setEditStoreDescription] = useState('');
   const [editStoreImage, setEditStoreImage] = useState('');
+  const [editStoreLatitude, setEditStoreLatitude] = useState(9.0882);
+  const [editStoreLongitude, setEditStoreLongitude] = useState(7.4933);
+  const [storeMapModalVisible, setStoreMapModalVisible] = useState(false);
+  const [storeMapRegion, setStoreMapRegion] = useState({
+    latitude: 9.0882,
+    longitude: 7.4933,
+    latitudeDelta: 0.015,
+    longitudeDelta: 0.015,
+  });
+  const [storeDisplayMode, setStoreDisplayMode] = useState('list'); // 'list' | 'map'
+  const [selectedMapStore, setSelectedMapStore] = useState(null);
 
   // High performance memoized filtered suggested catalog
   const filteredSuggestedProducts = useMemo(() => {
@@ -3016,6 +3037,8 @@ export default function App() {
   };
 
   const handleOpenEditStoreDetailsModal = () => {
+    const lat = Number(currentMerchantStore?.latitude) || 9.0882;
+    const lng = Number(currentMerchantStore?.longitude) || 7.4933;
     setEditStoreName(currentMerchantStore?.name || '');
     setEditStoreAddress(currentMerchantStore?.address || '');
     setEditStoreCategory(currentMerchantStore?.categoryLabel || 'Gourmet Groceries & Deli');
@@ -3023,6 +3046,14 @@ export default function App() {
     setEditStoreDeliveryFee(String(currentMerchantStore?.deliveryFee || '1200').replace(/\D/g, ''));
     setEditStoreDescription(currentMerchantStore?.description || '');
     setEditStoreImage(currentMerchantStore?.image || '');
+    setEditStoreLatitude(lat);
+    setEditStoreLongitude(lng);
+    setStoreMapRegion({
+      latitude: lat,
+      longitude: lng,
+      latitudeDelta: 0.012,
+      longitudeDelta: 0.012,
+    });
     setEditStoreModalVisible(true);
   };
 
@@ -3041,6 +3072,27 @@ export default function App() {
     }
   };
 
+  const handleGetMerchantStoreLiveLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Location Permission', 'Please enable location permissions in settings so GETIT can pinpoint your storefront on the map.');
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      if (loc && loc.coords) {
+        const { latitude, longitude } = loc.coords;
+        setEditStoreLatitude(latitude);
+        setEditStoreLongitude(longitude);
+        setStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+        Alert.alert('🎯 Store Location Captured!', `Pin moved to your current GPS position: ${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E`);
+      }
+    } catch (err) {
+      console.warn('Error obtaining store GPS:', err);
+      Alert.alert('GPS Notice', 'Could not access device GPS. You can drag the pin on the map to place your store.');
+    }
+  };
+
   const handleSaveStoreDetails = () => {
     if (!editStoreName.trim()) {
       Alert.alert('Name Required', 'Please enter a name for your store.');
@@ -3048,6 +3100,8 @@ export default function App() {
     }
     const targetStoreId = currentMerchantStore?.id || merchantStoreId;
     const finalImage = editStoreImage?.trim() || currentMerchantStore?.image || '';
+    const finalLat = Number(editStoreLatitude) || 9.0882;
+    const finalLng = Number(editStoreLongitude) || 7.4933;
 
     const updatedObj = {
       name: editStoreName.trim(),
@@ -3056,6 +3110,8 @@ export default function App() {
       phone: editStorePhone.trim(),
       deliveryFee: currentMerchantStore?.deliveryFee || '₦1,200',
       description: editStoreDescription.trim() || `${editStoreName.trim()} — verified partner store live on GETIT.`,
+      latitude: finalLat,
+      longitude: finalLng,
       ...(finalImage ? { image: finalImage } : {}),
     };
 
@@ -3067,23 +3123,25 @@ export default function App() {
       setSelectedStore((prev) => (prev ? { ...prev, ...updatedObj } : prev));
     }
 
-    if (finalImage && targetStoreId) {
-      try {
-        AsyncStorage.setItem(`getit_store_image_${targetStoreId}`, finalImage);
-      } catch (e) {}
-    }
-
     if (targetStoreId) {
+      try {
+        if (finalImage) AsyncStorage.setItem(`getit_store_image_${targetStoreId}`, finalImage);
+        AsyncStorage.setItem(`getit_store_lat_${targetStoreId}`, String(finalLat));
+        AsyncStorage.setItem(`getit_store_lng_${targetStoreId}`, String(finalLng));
+      } catch (e) {}
+
       updateDatabaseStore(targetStoreId, {
         name: updatedObj.name,
         address: updatedObj.address,
         phone: updatedObj.phone,
+        latitude: finalLat,
+        longitude: finalLng,
         ...(finalImage ? { image: finalImage } : {}),
       }).catch(console.warn);
     }
 
     setEditStoreModalVisible(false);
-    Alert.alert('✅ Store Profile Updated', `Your store details for "${updatedObj.name}" were updated successfully.`);
+    Alert.alert('✅ Store Profile Updated', `Your store details and pinned map location for "${updatedObj.name}" were updated successfully.`);
   };
 
   // Helper to parse time strings like "8:00 AM", "10:00 AM", "10:00 PM", "8am", "10am", "22:00" into minutes of day
@@ -3332,16 +3390,57 @@ export default function App() {
     );
   };
 
-  // Filtered stores on homepage
-  const filteredStores = storesList.filter((store) => {
-    const matchesCategory = activeCategory === 'all' || store.category === activeCategory;
-    const matchesSearch =
-      !searchQuery ||
-      store.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      store.categoryLabel.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      store.description.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  // Precise geographical distance calculation between two coordinates (km)
+  function calculateDistanceKm(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return null;
+    const R = 6371; // Earth's radius in km
+    const dLat = ((Number(lat2) - Number(lat1)) * Math.PI) / 180;
+    const dLon = ((Number(lon2) - Number(lon1)) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((Number(lat1) * Math.PI) / 180) *
+        Math.cos((Number(lat2) * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  // Filtered stores on homepage with dynamic distance from buyer pin
+  const buyerActiveLat = pinnedLocation?.latitude || mapCoords?.latitude || 9.0882;
+  const buyerActiveLng = pinnedLocation?.longitude || mapCoords?.longitude || 7.4933;
+
+  const filteredStores = useMemo(() => {
+    return storesList
+      .filter((store) => {
+        const matchesCategory = activeCategory === 'all' || store.category === activeCategory;
+        const matchesSearch =
+          !searchQuery ||
+          store.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          store.categoryLabel.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          store.description.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesCategory && matchesSearch;
+      })
+      .map((store) => {
+        const storeLat = Number(store.latitude) || 9.0882;
+        const storeLng = Number(store.longitude) || 7.4933;
+        const distKm = calculateDistanceKm(buyerActiveLat, buyerActiveLng, storeLat, storeLng);
+        const dynamicDistance =
+          distKm !== null
+            ? distKm < 1
+              ? `${Math.round(distKm * 1000)} m`
+              : `${distKm.toFixed(1)} km`
+            : store.distance || '1.0 km';
+        return {
+          ...store,
+          latitude: storeLat,
+          longitude: storeLng,
+          distance: dynamicDistance,
+          distKm: distKm !== null ? distKm : 999,
+        };
+      })
+      .sort((a, b) => (a.distKm || 0) - (b.distKm || 0));
+  }, [storesList, activeCategory, searchQuery, buyerActiveLat, buyerActiveLng]);
 
   // Filtered products inside selected store
   const storeUniqueCategories = selectedStore
@@ -4072,143 +4171,260 @@ export default function App() {
                 Within {selectedLocation.split(',')[0]}
               </Text>
             </View>
-            <View style={styles.storeCountBadge}>
-              <Text style={styles.storeCountText}>{filteredStores.length} open now</Text>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {/* List / Map Switcher */}
+              <View style={styles.storeViewModeSwitcher}>
+                <TouchableOpacity
+                  style={[styles.storeViewModeBtn, storeDisplayMode === 'list' && styles.storeViewModeBtnActive]}
+                  onPress={() => setStoreDisplayMode('list')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.storeViewModeText, storeDisplayMode === 'list' && styles.storeViewModeTextActive]}>
+                    📋 List
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.storeViewModeBtn, storeDisplayMode === 'map' && styles.storeViewModeBtnActive]}
+                  onPress={() => setStoreDisplayMode('map')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.storeViewModeText, storeDisplayMode === 'map' && styles.storeViewModeTextActive]}>
+                    🗺️ Map
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.storeCountBadge}>
+                <Text style={styles.storeCountText}>{filteredStores.length} stores</Text>
+              </View>
             </View>
           </View>
 
-          {/* Store Box Containers */}
-          {filteredStores.map((store) => {
-            const isFav = favorites.includes(store.id);
-            const isStoreOpen = isStoreCurrentlyOpen(store);
-            return (
-              <TouchableOpacity
-                key={store.id}
-                style={styles.storeBoxCard}
-                onPress={() => openStoreModal(store)}
-                activeOpacity={0.92}
+          {/* Map View Mode */}
+          {storeDisplayMode === 'map' ? (
+            <View style={styles.buyerExploreMapCard}>
+              <MapView
+                style={styles.buyerExploreMapCanvas}
+                initialRegion={{
+                  latitude: buyerActiveLat,
+                  longitude: buyerActiveLng,
+                  latitudeDelta: 0.05,
+                  longitudeDelta: 0.05,
+                }}
+                showsUserLocation={true}
+                showsCompass={true}
               >
-                {/* Store Image with Overlays */}
-                <View style={styles.storeImageContainer}>
+                {/* Buyer Location Marker */}
+                <Marker
+                  coordinate={{ latitude: buyerActiveLat, longitude: buyerActiveLng }}
+                  title="Your Delivery Destination 📍"
+                  description={selectedLocation}
+                  pinColor="#DC2626"
+                />
+
+                {/* All Pinned Stores Around Buyer */}
+                {filteredStores.map((store) => {
+                  const isStoreOpen = isStoreCurrentlyOpen(store);
+                  const isSelected = selectedMapStore?.id === store.id;
+                  return (
+                    <Marker
+                      key={`store-pin-${store.id}-${store.latitude}-${store.longitude}`}
+                      coordinate={{
+                        latitude: Number(store.latitude) || 9.0882,
+                        longitude: Number(store.longitude) || 7.4933,
+                      }}
+                      onPress={() => setSelectedMapStore(store)}
+                      title={store.name}
+                      description={`${store.distance} • ${isStoreOpen ? '🟢 Open Now' : '🔒 Closed'}`}
+                      pinColor={isStoreOpen ? COLORS.emeraldPrimary : '#6B7280'}
+                    >
+                      <View style={[styles.customStoreMarkerPill, isSelected && styles.customStoreMarkerPillActive]}>
+                        <Text style={{ fontSize: 13, marginRight: 4 }}>🏪</Text>
+                        <Text style={[styles.customStoreMarkerText, isSelected && styles.customStoreMarkerTextActive]} numberOfLines={1}>
+                          {store.name.split(' ')[0]} • {store.distance}
+                        </Text>
+                      </View>
+                    </Marker>
+                  );
+                })}
+              </MapView>
+
+              {/* Top Map Helper Banner */}
+              <View style={styles.buyerMapBanner}>
+                <Text style={styles.buyerMapBannerText}>
+                  📍 Showing {filteredStores.length} verified stores near {selectedLocation.split(',')[0]}
+                </Text>
+              </View>
+
+              {/* Bottom Selected Store Callout Card */}
+              {selectedMapStore ? (
+                <View style={styles.buyerMapSelectedStoreCard}>
                   <Image
-                    source={{ uri: store.image }}
-                    style={styles.storeImage}
-                    resizeMode="cover"
+                    source={{ uri: selectedMapStore.image }}
+                    style={styles.buyerMapStoreThumb}
                   />
-                  {/* Subtle Top Gradient Veil */}
-                  <View style={styles.imageOverlayShadow} />
-
-                  {/* Closed Store Overlay Badge */}
-                  {!isStoreOpen && (
-                    <View style={styles.storeClosedOverlayBadge}>
-                      <Text style={styles.storeClosedOverlayBadgeText}>🔒 STORE CLOSED • BROWSING ONLY</Text>
-                    </View>
-                  )}
-
-                  {/* Left Floating Tag */}
-                  <View
-                    style={[
-                      styles.storeBadgeFloating,
-                      { backgroundColor: !isStoreOpen ? '#6B7280' : store.badgeColor || COLORS.emeraldPrimary },
-                    ]}
-                  >
-                    <Text style={styles.storeBadgeText}>{!isStoreOpen ? 'CLOSED' : store.tag}</Text>
-                  </View>
-
-                  {/* Right Favorite Heart */}
-                  <TouchableOpacity
-                    style={styles.favoriteButton}
-                    onPress={() => toggleFavorite(store.id)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={{ fontSize: 16 }}>{isFav ? '❤️' : '🤍'}</Text>
-                  </TouchableOpacity>
-
-                  {/* Bottom Overlay Info Pill */}
-                  <View style={styles.storeImageBottomBar}>
-                    <View style={styles.chipRow}>
-                      <View style={styles.infoGlassChip}>
-                        <Text style={styles.infoGlassChipText}>⏱ {store.deliveryTime}</Text>
-                      </View>
-                      <View style={[styles.infoGlassChip, { marginLeft: 6 }]}>
-                        <Text style={styles.infoGlassChipText}>📍 {store.distance}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.ratingChip}>
-                      <Text style={styles.ratingStar}>★</Text>
-                      <Text style={styles.ratingScore}>{store.rating}</Text>
-                      <Text style={styles.reviewCount}>({store.reviewCount})</Text>
-                    </View>
-                  </View>
-                </View>
-
-                {/* Store Details Section Below Box */}
-                <View style={styles.storeDetailsContainer}>
-                  {/* Line 1: Shop Name */}
-                  <Text style={styles.storeTitle} numberOfLines={1} ellipsizeMode="tail">
-                    {store.name}
-                  </Text>
-
-                  {/* Line 2: Category & Provisions Prefix (Always visible, never clipped) */}
-                  <View style={styles.storeCategoryRow}>
-                    <Text style={styles.storeCategoryTag} numberOfLines={1} ellipsizeMode="tail">
-                      🏷️ {store.categoryLabel || 'Gourmet & Provisions'}
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.buyerMapStoreTitle} numberOfLines={1}>
+                      {selectedMapStore.name}
+                    </Text>
+                    <Text style={styles.buyerMapStoreSub} numberOfLines={1}>
+                      🏷️ {selectedMapStore.categoryLabel} • 📍 {selectedMapStore.distance}
+                    </Text>
+                    <Text style={styles.buyerMapStoreHours}>
+                      {isStoreCurrentlyOpen(selectedMapStore) ? '🟢 Open Now' : '🔒 Closed'} • {selectedMapStore.deliveryTime}
                     </Text>
                   </View>
-
-                  {/* Line 3: Operating Hours / Live Timing Badge */}
-                  <View style={styles.storeTimingRow}>
-                    {(() => {
-                      const badge = getStoreTimingBadge(store);
-                      return (
-                        <View style={[styles.storeOpenPill, { backgroundColor: badge.bg, borderColor: badge.color, borderWidth: 1 }]}>
-                          <View style={[styles.greenPulseDot, { backgroundColor: badge.color }]} />
-                          <Text style={[styles.storeOpenText, { color: badge.color, fontWeight: '700' }]}>
-                            {badge.label}
-                          </Text>
-                        </View>
-                      );
-                    })()}
-                  </View>
-
-                  {/* Line 4: Store Provisions Description */}
-                  <Text style={styles.storeDescription} numberOfLines={2} ellipsizeMode="tail">
-                    {store.description}
-                  </Text>
-
-                  {/* Line 5: Delivery & Proximity Info Row */}
-                  <View style={styles.storeDeliveryRow}>
-                    <Text style={styles.deliveryFeeText}>🛵 Delivery: {store.deliveryFee}</Text>
-                    <Text style={styles.deliveryDot}>•</Text>
-                    <Text style={styles.minOrderText}>
-                      Free over {formatNaira(store.freeDeliveryThreshold)}
-                    </Text>
-                  </View>
-
-                  {/* Line 6: Full-Width Scalable Explore Store Button (Never disappears on mobile) */}
                   <TouchableOpacity
-                    style={[
-                      styles.viewStoreFullBtn,
-                      !isStoreOpen && styles.viewStoreFullBtnClosed,
-                    ]}
-                    onPress={() => openStoreModal(store)}
+                    style={styles.buyerMapEnterStoreBtn}
+                    onPress={() => openStoreModal(selectedMapStore)}
                     activeOpacity={0.85}
                   >
-                    <Text
-                      style={[
-                        styles.viewStoreFullBtnText,
-                        !isStoreOpen && styles.viewStoreFullBtnTextClosed,
-                      ]}
-                    >
-                      {isStoreOpen
-                        ? 'Explore Store & Provisions ➔'
-                        : 'Explore Provisions (Browsing Only) ➔'}
-                    </Text>
+                    <Text style={styles.buyerMapEnterStoreBtnText}>Shop ➔</Text>
                   </TouchableOpacity>
                 </View>
-              </TouchableOpacity>
-            );
-          })}
+              ) : (
+                <View style={styles.buyerMapTapHint}>
+                  <Text style={styles.buyerMapTapHintText}>
+                    👆 Tap any store pin on the map to preview provisions & enter store
+                  </Text>
+                </View>
+              )}
+            </View>
+          ) : (
+            /* Store Box Containers List */
+            filteredStores.map((store) => {
+              const isFav = favorites.includes(store.id);
+              const isStoreOpen = isStoreCurrentlyOpen(store);
+              return (
+                <TouchableOpacity
+                  key={store.id}
+                  style={styles.storeBoxCard}
+                  onPress={() => openStoreModal(store)}
+                  activeOpacity={0.92}
+                >
+                  {/* Store Image with Overlays */}
+                  <View style={styles.storeImageContainer}>
+                    <Image
+                      source={{ uri: store.image }}
+                      style={styles.storeImage}
+                      resizeMode="cover"
+                    />
+                    {/* Subtle Top Gradient Veil */}
+                    <View style={styles.imageOverlayShadow} />
+
+                    {/* Closed Store Overlay Badge */}
+                    {!isStoreOpen && (
+                      <View style={styles.storeClosedOverlayBadge}>
+                        <Text style={styles.storeClosedOverlayBadgeText}>🔒 STORE CLOSED • BROWSING ONLY</Text>
+                      </View>
+                    )}
+
+                    {/* Left Floating Tag */}
+                    <View
+                      style={[
+                        styles.storeBadgeFloating,
+                        { backgroundColor: !isStoreOpen ? '#6B7280' : store.badgeColor || COLORS.emeraldPrimary },
+                      ]}
+                    >
+                      <Text style={styles.storeBadgeText}>{!isStoreOpen ? 'CLOSED' : store.tag}</Text>
+                    </View>
+
+                    {/* Right Favorite Heart */}
+                    <TouchableOpacity
+                      style={styles.favoriteButton}
+                      onPress={() => toggleFavorite(store.id)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 16 }}>{isFav ? '❤️' : '🤍'}</Text>
+                    </TouchableOpacity>
+
+                    {/* Bottom Overlay Info Pill */}
+                    <View style={styles.storeImageBottomBar}>
+                      <View style={styles.chipRow}>
+                        <View style={styles.infoGlassChip}>
+                          <Text style={styles.infoGlassChipText}>⏱ {store.deliveryTime}</Text>
+                        </View>
+                        <View style={[styles.infoGlassChip, { marginLeft: 6 }]}>
+                          <Text style={styles.infoGlassChipText}>📍 {store.distance}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.ratingChip}>
+                        <Text style={styles.ratingStar}>★</Text>
+                        <Text style={styles.ratingScore}>{store.rating}</Text>
+                        <Text style={styles.reviewCount}>({store.reviewCount})</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Store Details Section Below Box */}
+                  <View style={styles.storeDetailsContainer}>
+                    {/* Line 1: Shop Name */}
+                    <Text style={styles.storeTitle} numberOfLines={1} ellipsizeMode="tail">
+                      {store.name}
+                    </Text>
+
+                    {/* Line 2: Category & Provisions Prefix (Always visible, never clipped) */}
+                    <View style={styles.storeCategoryRow}>
+                      <Text style={styles.storeCategoryTag} numberOfLines={1} ellipsizeMode="tail">
+                        🏷️ {store.categoryLabel || 'Gourmet & Provisions'}
+                      </Text>
+                    </View>
+
+                    {/* Line 3: Operating Hours / Live Timing Badge */}
+                    <View style={styles.storeTimingRow}>
+                      {(() => {
+                        const badge = getStoreTimingBadge(store);
+                        return (
+                          <View style={[styles.storeOpenPill, { backgroundColor: badge.bg, borderColor: badge.color, borderWidth: 1 }]}>
+                            <View style={[styles.greenPulseDot, { backgroundColor: badge.color }]} />
+                            <Text style={[styles.storeOpenText, { color: badge.color, fontWeight: '700' }]}>
+                              {badge.label}
+                            </Text>
+                          </View>
+                        );
+                      })()}
+                    </View>
+
+                    {/* Line 4: Store Provisions Description */}
+                    <Text style={styles.storeDescription} numberOfLines={2} ellipsizeMode="tail">
+                      {store.description}
+                    </Text>
+
+                    {/* Line 5: Delivery & Proximity Info Row */}
+                    <View style={styles.storeDeliveryRow}>
+                      <Text style={styles.deliveryFeeText}>🛵 Delivery: {store.deliveryFee}</Text>
+                      <Text style={styles.deliveryDot}>•</Text>
+                      <Text style={styles.minOrderText}>
+                        Free over {formatNaira(store.freeDeliveryThreshold)}
+                      </Text>
+                    </View>
+
+                    {/* Line 6: Full-Width Scalable Explore Store Button (Never disappears on mobile) */}
+                    <TouchableOpacity
+                      style={[
+                        styles.viewStoreFullBtn,
+                        !isStoreOpen && styles.viewStoreFullBtnClosed,
+                      ]}
+                      onPress={() => openStoreModal(store)}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[
+                          styles.viewStoreFullBtnText,
+                          !isStoreOpen && styles.viewStoreFullBtnTextClosed,
+                        ]}
+                      >
+                        {isStoreOpen
+                          ? 'Explore Store & Provisions ➔'
+                          : 'Explore Provisions (Browsing Only) ➔'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              );
+            })
+          )}
         </ScrollView>
       )}
 
@@ -8583,6 +8799,63 @@ export default function App() {
                 </View>
                 <Text style={styles.editProfileInputHint}>Used for order notifications and dispatch rider calls</Text>
               </View>
+
+              {/* Store GPS Map Location Box */}
+              <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
+                <Text style={styles.editProfileInputLabel}>STOREFRONT GPS PIN ON MAP *</Text>
+                <View style={styles.storeMiniMapContainer}>
+                  <MapView
+                    style={styles.storeMiniMap}
+                    region={{
+                      latitude: Number(editStoreLatitude) || 9.0882,
+                      longitude: Number(editStoreLongitude) || 7.4933,
+                      latitudeDelta: 0.008,
+                      longitudeDelta: 0.008,
+                    }}
+                    scrollEnabled={false}
+                    zoomEnabled={false}
+                  >
+                    <Marker
+                      coordinate={{
+                        latitude: Number(editStoreLatitude) || 9.0882,
+                        longitude: Number(editStoreLongitude) || 7.4933,
+                      }}
+                      title={editStoreName || 'Your Store'}
+                      description={editStoreAddress || 'Storefront Location'}
+                      pinColor={COLORS.emeraldPrimary}
+                    />
+                  </MapView>
+
+                  {/* Overlay Coordinates Pill */}
+                  <View style={styles.storeMiniMapBadge}>
+                    <Text style={styles.storeMiniMapBadgeText}>
+                      🎯 Pinned: {(Number(editStoreLatitude) || 9.0882).toFixed(4)}° N, {(Number(editStoreLongitude) || 7.4933).toFixed(4)}° E
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Map Pin Action Buttons Row */}
+                <View style={styles.storeMapActionRow}>
+                  <TouchableOpacity
+                    style={styles.storeMapOpenBtn}
+                    onPress={() => setStoreMapModalVisible(true)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.storeMapOpenBtnText}>📍 Pin Exact Location on Map ➔</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.storeMapGpsBtn}
+                    onPress={handleGetMerchantStoreLiveLocation}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.storeMapGpsBtnText}>🎯 Locate GPS</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.editProfileInputHint}>
+                  This pin ensures buyers in your neighborhood discover your shop on the map and receive accurate delivery estimates.
+                </Text>
+              </View>
             </View>
 
             {/* 5. CARD: ABOUT & SPECIALTY */}
@@ -8631,6 +8904,167 @@ export default function App() {
               🔒 Changes sync instantly across the Buyer app and GETIT merchant directory.
             </Text>
           </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* --- STORE MAP PINNING MODAL --- */}
+      <Modal
+        visible={storeMapModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setStoreMapModalVisible(false)}
+      >
+        <SafeAreaView style={styles.storeMapModalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+          {/* Header */}
+          <View style={styles.storeMapModalHeader}>
+            <TouchableOpacity
+              style={styles.storeMapModalCloseBtn}
+              onPress={() => setStoreMapModalVisible(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.storeMapModalCloseBtnText}>✕ Cancel</Text>
+            </TouchableOpacity>
+
+            <View style={{ alignItems: 'center' }}>
+              <Text style={styles.storeMapModalTitle}>Pin Storefront Location</Text>
+              <Text style={styles.storeMapModalSub}>Drag pin or tap map to place your shop</Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.storeMapModalConfirmHeaderBtn}
+              onPress={() => {
+                setStoreMapModalVisible(false);
+                Alert.alert('✅ Location Pinned!', 'Your storefront GPS coordinates have been set. Tap "Save" on the profile page to publish changes.');
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.storeMapModalConfirmHeaderText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Quick Landmark Jump Chips */}
+          <View style={styles.storeMapChipsContainer}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 14, gap: 8 }}
+            >
+              {[
+                { name: 'Maitama', lat: 9.0882, lng: 7.4933 },
+                { name: 'Wuse 2', lat: 9.0792, lng: 7.4721 },
+                { name: 'Asokoro', lat: 9.0435, lng: 7.5218 },
+                { name: 'Garki 2', lat: 9.0354, lng: 7.4891 },
+                { name: 'Jabi Lake', lat: 9.0684, lng: 7.4265 },
+                { name: 'Gwarinpa', lat: 9.1085, lng: 7.3912 },
+                { name: 'Utako', lat: 9.0578, lng: 7.4412 },
+                { name: 'Guzape', lat: 9.0221, lng: 7.5142 },
+                { name: 'Victoria Island', lat: 6.4281, lng: 3.4219 },
+                { name: 'Lekki Phase 1', lat: 6.4474, lng: 3.4735 },
+                { name: 'Ikoyi', lat: 6.4549, lng: 3.4352 },
+                { name: 'Ikeja GRA', lat: 6.5892, lng: 3.3582 },
+              ].map((loc) => (
+                <TouchableOpacity
+                  key={loc.name}
+                  style={styles.storeMapChip}
+                  onPress={() => {
+                    setEditStoreLatitude(loc.lat);
+                    setEditStoreLongitude(loc.lng);
+                    setStoreMapRegion({
+                      latitude: loc.lat,
+                      longitude: loc.lng,
+                      latitudeDelta: 0.012,
+                      longitudeDelta: 0.012,
+                    });
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.storeMapChipText}>📍 {loc.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Interactive Map View */}
+          <View style={{ flex: 1, position: 'relative' }}>
+            <MapView
+              style={{ width: '100%', height: '100%' }}
+              region={storeMapRegion}
+              onRegionChangeComplete={(r) => {
+                if (r) setStoreMapRegion(r);
+              }}
+              onPress={(e) => {
+                if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                  const { latitude, longitude } = e.nativeEvent.coordinate;
+                  setEditStoreLatitude(latitude);
+                  setEditStoreLongitude(longitude);
+                  setStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+                }
+              }}
+            >
+              {/* Draggable Store Pin */}
+              <Marker
+                coordinate={{
+                  latitude: Number(editStoreLatitude) || 9.0882,
+                  longitude: Number(editStoreLongitude) || 7.4933,
+                }}
+                draggable
+                onDragEnd={(e) => {
+                  if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                    const { latitude, longitude } = e.nativeEvent.coordinate;
+                    setEditStoreLatitude(latitude);
+                    setEditStoreLongitude(longitude);
+                    setStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+                  }
+                }}
+                title={editStoreName || 'Your Storefront'}
+                description="Drag to exact shop entrance"
+                pinColor={COLORS.emeraldPrimary}
+              />
+            </MapView>
+
+            {/* Floating Live Coordinates Banner */}
+            <View style={styles.storeMapFloatCoordsBanner}>
+              <Text style={styles.storeMapFloatCoordsText}>
+                🎯 Store Pin: {(Number(editStoreLatitude) || 9.0882).toFixed(5)}° N, {(Number(editStoreLongitude) || 7.4933).toFixed(5)}° E
+              </Text>
+            </View>
+
+            {/* GPS FAB Button */}
+            <TouchableOpacity
+              style={styles.storeMapFabGps}
+              onPress={handleGetMerchantStoreLiveLocation}
+              activeOpacity={0.85}
+            >
+              <Text style={{ fontSize: 22 }}>🎯</Text>
+            </TouchableOpacity>
+
+            {/* Bottom Confirm Bar */}
+            <View style={styles.storeMapBottomConfirmBar}>
+              <View style={{ marginBottom: 10 }}>
+                <Text style={styles.storeMapBottomPromptTitle}>
+                  🏪 {editStoreName || 'Store Location'}
+                </Text>
+                <Text style={styles.storeMapBottomPromptSub} numberOfLines={1}>
+                  {editStoreAddress || 'Near selected coordinates'}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.storeMapBottomConfirmBtn}
+                onPress={() => {
+                  setStoreMapModalVisible(false);
+                  Alert.alert('✅ Location Pinned!', 'Your storefront GPS coordinates have been set. Tap "Save" on the profile page to publish changes.');
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.storeMapBottomConfirmBtnText}>
+                  ✅ Confirm Pinned Store Location ➔
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
@@ -14404,6 +14838,355 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     marginTop: 12,
     marginBottom: 10,
+  },
+
+  // --- Buyer Map Explore & Store View Mode Switcher ---
+  storeViewModeSwitcher: {
+    flexDirection: 'row',
+    backgroundColor: '#EDE8DF',
+    borderRadius: 20,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  storeViewModeBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4.5,
+    borderRadius: 16,
+  },
+  storeViewModeBtnActive: {
+    backgroundColor: COLORS.emeraldDeep,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+  },
+  storeViewModeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+  },
+  storeViewModeTextActive: {
+    color: '#FFFFFF',
+  },
+  buyerExploreMapCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: COLORS.borderBeige,
+    marginHorizontal: 16,
+    marginTop: 10,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    position: 'relative',
+  },
+  buyerExploreMapCanvas: {
+    width: '100%',
+    height: 390,
+  },
+  buyerMapBanner: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    right: 12,
+    backgroundColor: 'rgba(6, 78, 59, 0.92)',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    alignItems: 'center',
+  },
+  buyerMapBannerText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  customStoreMarkerPill: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: COLORS.emeraldPrimary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    elevation: 3,
+  },
+  customStoreMarkerPillActive: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderColor: COLORS.emeraldLight,
+  },
+  customStoreMarkerText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  customStoreMarkerTextActive: {
+    color: '#FFFFFF',
+  },
+  buyerMapSelectedStoreCard: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    right: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    elevation: 4,
+  },
+  buyerMapStoreThumb: {
+    width: 50,
+    height: 50,
+    borderRadius: 10,
+  },
+  buyerMapStoreTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  buyerMapStoreSub: {
+    fontSize: 10.5,
+    color: COLORS.textMuted,
+    marginTop: 1,
+  },
+  buyerMapStoreHours: {
+    fontSize: 10,
+    color: COLORS.emeraldPrimary,
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  buyerMapEnterStoreBtn: {
+    backgroundColor: COLORS.emeraldPrimary,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  buyerMapEnterStoreBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  buyerMapTapHint: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    right: 12,
+    backgroundColor: 'rgba(25, 30, 36, 0.85)',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  buyerMapTapHintText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+
+  // --- Merchant Store Location Mini Map & Full Pin Picker Modal ---
+  storeMiniMapContainer: {
+    width: '100%',
+    height: 135,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    marginTop: 6,
+    position: 'relative',
+  },
+  storeMiniMap: {
+    width: '100%',
+    height: '100%',
+  },
+  storeMiniMapBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    backgroundColor: 'rgba(6, 78, 59, 0.92)',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  storeMiniMapBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  storeMapActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
+  storeMapOpenBtn: {
+    flex: 1,
+    backgroundColor: COLORS.emeraldSurface,
+    borderWidth: 1,
+    borderColor: COLORS.emeraldPrimary,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  storeMapOpenBtnText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+  },
+  storeMapGpsBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+  storeMapGpsBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  storeMapModalSafeArea: {
+    flex: 1,
+    backgroundColor: COLORS.beigeBg,
+  },
+  storeMapModalHeader: {
+    backgroundColor: COLORS.emeraldDeep,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  storeMapModalCloseBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  storeMapModalCloseBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  storeMapModalTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  storeMapModalSub: {
+    color: COLORS.emeraldSurface,
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  storeMapModalConfirmHeaderBtn: {
+    backgroundColor: COLORS.emeraldLight,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+  },
+  storeMapModalConfirmHeaderText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  storeMapChipsContainer: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  storeMapChip: {
+    backgroundColor: COLORS.beigeBg,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  storeMapChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  storeMapFloatCoordsBanner: {
+    position: 'absolute',
+    top: 12,
+    left: 14,
+    right: 64,
+    backgroundColor: 'rgba(6, 78, 59, 0.92)',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+  },
+  storeMapFloatCoordsText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+  storeMapFabGps: {
+    position: 'absolute',
+    top: 10,
+    right: 14,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  storeMapBottomConfirmBar: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    right: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+  },
+  storeMapBottomPromptTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  storeMapBottomPromptSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 1,
+  },
+  storeMapBottomConfirmBtn: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storeMapBottomConfirmBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
 });
 

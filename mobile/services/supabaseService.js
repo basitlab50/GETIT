@@ -314,6 +314,8 @@ export async function updateDatabaseStore(storeId, updates) {
     if (updates.district !== undefined) dbUpdates.district = updates.district;
     if (updates.deliveryFee !== undefined) dbUpdates.delivery_fee = Number(updates.deliveryFee);
     if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
+    if (updates.latitude !== undefined) dbUpdates.latitude = Number(updates.latitude);
+    if (updates.longitude !== undefined) dbUpdates.longitude = Number(updates.longitude);
 
     const { data, error } = await supabase
       .from('stores')
