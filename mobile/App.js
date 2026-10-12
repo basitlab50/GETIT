@@ -1127,11 +1127,45 @@ export default function App() {
   const [tempOperatingDays, setTempOperatingDays] = useState('Mon - Sun (Daily)');
 
   const openTimingModal = () => {
-    setTempIs24Hours(storeTiming.is24Hours);
-    setTempOpenTime(storeTiming.openTime);
-    setTempCloseTime(storeTiming.closeTime);
-    setTempOperatingDays(storeTiming.operatingDays);
+    const activeStore = storesList.find((s) => s.id === merchantStoreId) || currentMerchantStore || storesList[0];
+    const activeIs24 = activeStore?.is24Hours !== undefined ? activeStore.is24Hours : storeTiming.is24Hours;
+    const activeOpen = activeStore?.openTime || storeTiming.openTime || '08:00 AM';
+    const activeClose = activeStore?.closeTime || storeTiming.closeTime || '10:00 PM';
+    const activeDays = activeStore?.operatingDays || storeTiming.operatingDays || 'Mon - Sun (Daily)';
+
+    setTempIs24Hours(Boolean(activeIs24));
+    setTempOpenTime(activeOpen);
+    setTempCloseTime(activeClose);
+    setTempOperatingDays(activeDays);
     setTimingModalVisible(true);
+  };
+
+  const handleSelectMerchantBranch = async (storeId) => {
+    setMerchantStoreId(storeId);
+    const targetStore = storesList.find((s) => s.id === storeId);
+    if (targetStore) {
+      const is24 = Boolean(targetStore.is24Hours);
+      setStoreTiming({
+        is24Hours: is24,
+        openTime: targetStore.openTime || '08:00 AM',
+        closeTime: targetStore.closeTime || '10:00 PM',
+        operatingDays: targetStore.operatingDays || 'Mon - Sun (Daily)',
+      });
+      if (targetStore.isOpen !== undefined) {
+        setStoreOpenStatus(targetStore.isOpen);
+      }
+    }
+    try {
+      const savedTiming = await AsyncStorage.getItem(`getit_store_timing_${storeId}`);
+      if (savedTiming) {
+        const parsed = JSON.parse(savedTiming);
+        setStoreTiming(parsed);
+      }
+      const savedLive = await AsyncStorage.getItem(`getit_store_open_status_${storeId}`);
+      if (savedLive !== null) {
+        setStoreOpenStatus(savedLive === 'true');
+      }
+    } catch (e) {}
   };
 
   // --- STORE PROFILE & PHOTO MANAGEMENT STATE ---
@@ -1419,10 +1453,10 @@ export default function App() {
               address: existing.address || dbStore.address,
               phone: existing.phone || dbStore.phone,
               deliveryFee: existing.deliveryFee || dbStore.deliveryFee,
-              is24Hours: existing.is24Hours !== undefined ? existing.is24Hours : dbStore.is24Hours,
-              openTime: existing.openTime || dbStore.openTime,
-              closeTime: existing.closeTime || dbStore.closeTime,
-              operatingDays: existing.operatingDays || dbStore.operatingDays,
+              is24Hours: existing.is24Hours === true ? true : Boolean(dbStore.is24Hours),
+              openTime: existing.openTime || dbStore.openTime || '08:00 AM',
+              closeTime: existing.closeTime || dbStore.closeTime || '10:00 PM',
+              operatingDays: existing.operatingDays || dbStore.operatingDays || 'Mon - Sun (Daily)',
               isOpen: existing.isOpen !== undefined ? existing.isOpen : (dbStore.isOpen !== undefined ? dbStore.isOpen : true),
               image: existing.image || dbStore.image,
               products: existing.products && existing.products.length > 0 ? existing.products : dbStore.products,
@@ -1495,16 +1529,43 @@ export default function App() {
   useEffect(() => {
     async function loadStoredState() {
       try {
-        // 1. Restore local stores list
+        // 1. Restore local stores list & hydrate ALL stores with their saved schedules
+        let baseStores = STORES_AROUND_ME;
         const storedStores = await AsyncStorage.getItem('getit_stores_list');
         if (storedStores) {
           try {
             const parsedStores = JSON.parse(storedStores);
             if (Array.isArray(parsedStores) && parsedStores.length > 0) {
-              setStoresList(parsedStores);
+              baseStores = parsedStores;
             }
           } catch (e) {}
         }
+
+        // Hydrate timing, live status, and image for EVERY store in the list
+        const hydratedStores = await Promise.all(
+          baseStores.map(async (st) => {
+            let updated = { ...st };
+            try {
+              const timingJson = await AsyncStorage.getItem(`getit_store_timing_${st.id}`);
+              if (timingJson) {
+                const parsedT = JSON.parse(timingJson);
+                updated = { ...updated, ...parsedT };
+              }
+              const statusVal = await AsyncStorage.getItem(`getit_store_open_status_${st.id}`);
+              if (statusVal !== null) {
+                updated.isOpen = statusVal === 'true';
+                updated.is_open = statusVal === 'true';
+              }
+              const imgVal = await AsyncStorage.getItem(`getit_store_image_${st.id}`);
+              if (imgVal) {
+                updated.image = imgVal;
+              }
+            } catch (e) {}
+            return updated;
+          })
+        );
+        setStoresList(hydratedStores);
+        await AsyncStorage.setItem('getit_stores_list', JSON.stringify(hydratedStores));
 
         // 2. Restore active authenticated user
         let activeMerchantStoreId = 's1';
@@ -1522,38 +1583,18 @@ export default function App() {
           }
         }
 
-        // 3. Restore store operating schedule
-        const perStoreTiming = await AsyncStorage.getItem(`getit_store_timing_${activeMerchantStoreId}`);
-        const globalTiming = await AsyncStorage.getItem('getit_store_timing');
-        const timingJson = perStoreTiming || globalTiming;
-        if (timingJson) {
-          try {
-            const parsedTiming = JSON.parse(timingJson);
-            setStoreTiming(parsedTiming);
-            setStoresList((prev) =>
-              prev.map((s) => (s.id === activeMerchantStoreId ? { ...s, ...parsedTiming } : s))
-            );
-          } catch (e) {}
-        }
-
-        // 4. Restore store live open/paused status
-        const perStoreLive = await AsyncStorage.getItem(`getit_store_open_status_${activeMerchantStoreId}`);
-        const globalLive = await AsyncStorage.getItem('getit_store_open_status');
-        const liveVal = perStoreLive !== null ? perStoreLive : globalLive;
-        if (liveVal !== null) {
-          const isOpenBool = liveVal === 'true';
-          setStoreOpenStatus(isOpenBool);
-          setStoresList((prev) =>
-            prev.map((s) => (s.id === activeMerchantStoreId ? { ...s, isOpen: isOpenBool, is_open: isOpenBool } : s))
-          );
-        }
-
-        // 5. Restore store cover photo if customized
-        const savedCover = await AsyncStorage.getItem(`getit_store_image_${activeMerchantStoreId}`);
-        if (savedCover) {
-          setStoresList((prev) =>
-            prev.map((s) => (s.id === activeMerchantStoreId ? { ...s, image: savedCover } : s))
-          );
+        // 3. Restore active store's timing and live toggle state
+        const targetActiveStore = hydratedStores.find((s) => s.id === activeMerchantStoreId) || hydratedStores[0];
+        if (targetActiveStore) {
+          setStoreTiming({
+            is24Hours: Boolean(targetActiveStore.is24Hours),
+            openTime: targetActiveStore.openTime || '08:00 AM',
+            closeTime: targetActiveStore.closeTime || '10:00 PM',
+            operatingDays: targetActiveStore.operatingDays || 'Mon - Sun (Daily)',
+          });
+          if (targetActiveStore.isOpen !== undefined) {
+            setStoreOpenStatus(Boolean(targetActiveStore.isOpen));
+          }
         }
 
         // 6. Restore orders (from AsyncStorage + cloud Supabase sync)
@@ -1931,7 +1972,8 @@ export default function App() {
 
   // Open a store modal and reset in-store search
   const openStoreModal = (store) => {
-    setSelectedStore(store);
+    const fresh = storesList.find((s) => s.id === store.id) || store;
+    setSelectedStore(fresh);
     setStoreProductSearch('');
     setStoreProductCategory('All');
   };
@@ -3049,29 +3091,38 @@ export default function App() {
     }
 
     // 2. If it is the current merchant store and merchant has paused the live toggle
-    const isCurrentMerchant = store.id === merchantStoreId || store.id === currentMerchantStore?.id;
+    const isCurrentMerchant = Boolean(
+      merchantStoreId && (store.id === merchantStoreId || store.id === currentMerchantStore?.id)
+    );
     if (isCurrentMerchant && storeOpenStatus === false) {
       return false;
     }
 
-    // 3. Resolve schedule for this store (works for ALL stores)
-    let is24H = false;
-    let openStr = '08:00 AM';
-    let closeStr = '10:00 PM';
-
-    if (isCurrentMerchant) {
-      is24H = Boolean(storeTiming?.is24Hours);
-      openStr = storeTiming?.openTime || store.openTime || '08:00 AM';
-      closeStr = storeTiming?.closeTime || store.closeTime || '10:00 PM';
-    } else {
-      is24H = Boolean(store.is24Hours || store.is_24_hours || store.timing?.is24Hours);
-      openStr = store.openTime || store.open_time || store.timing?.openTime || '08:00 AM';
-      closeStr = store.closeTime || store.close_time || store.timing?.closeTime || '10:00 PM';
-    }
+    // 3. Resolve 24-hour status across store object and live state
+    const is24H = Boolean(
+      store.is24Hours === true ||
+      store.is_24_hours === true ||
+      store.timing?.is24Hours === true ||
+      (isCurrentMerchant && storeTiming?.is24Hours === true)
+    );
 
     if (is24H) {
       return true;
     }
+
+    let openStr =
+      (isCurrentMerchant && storeTiming?.openTime) ||
+      store.openTime ||
+      store.open_time ||
+      store.timing?.openTime ||
+      '08:00 AM';
+
+    let closeStr =
+      (isCurrentMerchant && storeTiming?.closeTime) ||
+      store.closeTime ||
+      store.close_time ||
+      store.timing?.closeTime ||
+      '10:00 PM';
 
     const openM = parseTimeToMinutes(openStr);
     const closeM = parseTimeToMinutes(closeStr);
@@ -3106,7 +3157,9 @@ export default function App() {
       };
     }
 
-    const isCurrentMerchant = store.id === merchantStoreId || store.id === currentMerchantStore?.id;
+    const isCurrentMerchant = Boolean(
+      merchantStoreId && (store.id === merchantStoreId || store.id === currentMerchantStore?.id)
+    );
 
     // Check manual pause
     if (store.isOpen === false || store.is_open === false || (isCurrentMerchant && storeOpenStatus === false)) {
@@ -3117,20 +3170,13 @@ export default function App() {
       };
     }
 
-    // Resolve schedule for this store
-    let is24H = false;
-    let openStr = '08:00 AM';
-    let closeStr = '10:00 PM';
-
-    if (isCurrentMerchant) {
-      is24H = Boolean(storeTiming?.is24Hours);
-      openStr = storeTiming?.openTime || store.openTime || '08:00 AM';
-      closeStr = storeTiming?.closeTime || store.closeTime || '10:00 PM';
-    } else {
-      is24H = Boolean(store.is24Hours || store.is_24_hours || store.timing?.is24Hours);
-      openStr = store.openTime || store.open_time || store.timing?.openTime || '08:00 AM';
-      closeStr = store.closeTime || store.close_time || store.timing?.closeTime || '10:00 PM';
-    }
+    // Resolve 24-hour status
+    const is24H = Boolean(
+      store.is24Hours === true ||
+      store.is_24_hours === true ||
+      store.timing?.is24Hours === true ||
+      (isCurrentMerchant && storeTiming?.is24Hours === true)
+    );
 
     if (is24H) {
       return {
@@ -3139,6 +3185,20 @@ export default function App() {
         bg: '#ECFDF5',
       };
     }
+
+    const openStr =
+      (isCurrentMerchant && storeTiming?.openTime) ||
+      store.openTime ||
+      store.open_time ||
+      store.timing?.openTime ||
+      '08:00 AM';
+
+    const closeStr =
+      (isCurrentMerchant && storeTiming?.closeTime) ||
+      store.closeTime ||
+      store.close_time ||
+      store.timing?.closeTime ||
+      '10:00 PM';
 
     const open = isStoreCurrentlyOpen(store);
 
@@ -4477,7 +4537,7 @@ export default function App() {
                           {badge.label}
                         </Text>
                       </View>
-                      {selectedStore.id === merchantStoreId && storeTiming.is24Hours && (
+                      {(selectedStore.is24Hours || (selectedStore.id === merchantStoreId && storeTiming.is24Hours)) && (
                         <View style={[styles.infoGlassChip, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0', borderWidth: 1, marginLeft: 8 }]}>
                           <Text style={{ fontSize: 11, color: '#047857', fontWeight: '700' }}>⚡ Always Open 24/7</Text>
                         </View>
@@ -6607,7 +6667,7 @@ export default function App() {
                       <TouchableOpacity
                         key={st.id}
                         style={[styles.branchItem, isSelected && styles.branchItemActive]}
-                        onPress={() => setMerchantStoreId(st.id)}
+                        onPress={() => handleSelectMerchantBranch(st.id)}
                         activeOpacity={0.85}
                       >
                         <Image
