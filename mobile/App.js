@@ -942,6 +942,261 @@ function parseInventoryText(text) {
   return products;
 }
 
+// --- LUXURY ANIMATED STOREFRONT DOOR (SHUTS WHEN STORE IS CLOSED) ---
+function AnimatedStoreDoor({ store, operatingDays, isOpenToday, openTime }) {
+  const doorAnim = useRef(new Animated.Value(0)).current;
+  const lockAnim = useRef(new Animated.Value(0)).current;
+  const signAnim = useRef(new Animated.Value(0)).current;
+  const knockAnim = useRef(new Animated.Value(0)).current;
+  const [knockCount, setKnockCount] = useState(0);
+  const [knockMessage, setKnockMessage] = useState(null);
+
+  const runCloseSequence = () => {
+    doorAnim.setValue(0);
+    lockAnim.setValue(0);
+    setKnockMessage(null);
+
+    Animated.spring(doorAnim, {
+      toValue: 1,
+      friction: 6,
+      tension: 35,
+      useNativeDriver: true,
+    }).start(() => {
+      Animated.spring(lockAnim, {
+        toValue: 1,
+        friction: 4,
+        tension: 70,
+        useNativeDriver: true,
+      }).start();
+    });
+  };
+
+  useEffect(() => {
+    runCloseSequence();
+
+    const swayLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(signAnim, {
+          toValue: 1,
+          duration: 1900,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(signAnim, {
+          toValue: -1,
+          duration: 1900,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    swayLoop.start();
+
+    return () => swayLoop.stop();
+  }, [store?.id]);
+
+  const handleKnock = () => {
+    Animated.sequence([
+      Animated.timing(knockAnim, { toValue: -6, duration: 50, useNativeDriver: true }),
+      Animated.timing(knockAnim, { toValue: 6, duration: 50, useNativeDriver: true }),
+      Animated.timing(knockAnim, { toValue: -4, duration: 50, useNativeDriver: true }),
+      Animated.timing(knockAnim, { toValue: 4, duration: 50, useNativeDriver: true }),
+      Animated.timing(knockAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
+    ]).start();
+
+    const nextCount = knockCount + 1;
+    setKnockCount(nextCount);
+
+    const msgs = [
+      `🚪 *Knock Knock* — Nobody is at the front counter! "${store?.name || 'Store'}" is closed today (${operatingDays || 'Schedule'}).`,
+      `🔒 *Clang!* The front deadbolt is locked shut. Doors will reopen during active operating hours!`,
+      `📦 Staff is off right now! You are welcome to browse all provisions in the catalog below.`,
+      `✨ Fresh luxury stock will be ready upon reopening! Feel free to browse and inspect pricing below.`,
+    ];
+    setKnockMessage(msgs[(nextCount - 1) % msgs.length]);
+  };
+
+  const leftDoorTranslate = doorAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-180, 0],
+  });
+
+  const rightDoorTranslate = doorAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [180, 0],
+  });
+
+  const signRotate = signAnim.interpolate({
+    inputRange: [-1, 1],
+    outputRange: ['-3.5deg', '3.5deg'],
+  });
+
+  const lockScale = lockAnim.interpolate({
+    inputRange: [0, 0.7, 1],
+    outputRange: [0, 1.25, 1],
+  });
+
+  return (
+    <Animated.View style={[styles.doorPortalContainer, { transform: [{ translateX: knockAnim }] }]}>
+      {/* Arch Facade Header */}
+      <View style={styles.doorPortalHeader}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+          <Text style={{ fontSize: 13, marginRight: 6 }}>🏛️</Text>
+          <Text style={styles.doorPortalHeaderTitle} numberOfLines={1}>
+            {(store?.name || 'STORE').toUpperCase()} • STOREFRONT ENTRANCE
+          </Text>
+        </View>
+        <View style={styles.doorPortalStatusPill}>
+          <Text style={styles.doorPortalStatusPillText}>CLOSED</Text>
+        </View>
+      </View>
+
+      {/* The 3D Entrance Stage */}
+      <View style={styles.doorStage}>
+        {/* Dimly lit luxury interior background */}
+        <View style={styles.doorInteriorBackdrop}>
+          <Text style={{ fontSize: 30, opacity: 0.16 }}>🍷 🧀 🥖 🍾 🥩 🍇</Text>
+          <Text style={styles.doorInteriorBackdropText}>STORE CLOSED TO CUSTOMERS</Text>
+        </View>
+
+        {/* Sliding Double Doors */}
+        <View style={styles.doorsWrap}>
+          {/* Left Door */}
+          <Animated.View
+            style={[
+              styles.doorPanel,
+              styles.doorPanelLeft,
+              { transform: [{ translateX: leftDoorTranslate }] },
+            ]}
+          >
+            <View style={styles.doorWindowRow}>
+              <View style={styles.doorWindowPane}>
+                <View style={styles.doorGlassHighlight} />
+              </View>
+              <View style={styles.doorWindowPane}>
+                <View style={styles.doorGlassHighlight} />
+              </View>
+            </View>
+            <View style={styles.doorWindowRow}>
+              <View style={styles.doorWindowPane}>
+                <View style={styles.doorGlassHighlight} />
+              </View>
+              <View style={styles.doorWindowPane}>
+                <View style={styles.doorGlassHighlight} />
+              </View>
+            </View>
+            <View style={styles.doorKickPlate}>
+              <Text style={{ fontSize: 9.5, color: '#D97706', opacity: 0.7, fontWeight: '800' }}>GETIT LUXE</Text>
+            </View>
+            {/* Long Gold Handle Left Door */}
+            <View style={styles.doorHandleLeft} />
+          </Animated.View>
+
+          {/* Right Door */}
+          <Animated.View
+            style={[
+              styles.doorPanel,
+              styles.doorPanelRight,
+              { transform: [{ translateX: rightDoorTranslate }] },
+            ]}
+          >
+            <View style={styles.doorWindowRow}>
+              <View style={styles.doorWindowPane}>
+                <View style={styles.doorGlassHighlight} />
+              </View>
+              <View style={styles.doorWindowPane}>
+                <View style={styles.doorGlassHighlight} />
+              </View>
+            </View>
+            <View style={styles.doorWindowRow}>
+              <View style={styles.doorWindowPane}>
+                <View style={styles.doorGlassHighlight} />
+              </View>
+              <View style={styles.doorWindowPane}>
+                <View style={styles.doorGlassHighlight} />
+              </View>
+            </View>
+            <View style={styles.doorKickPlate}>
+              <Text style={{ fontSize: 9.5, color: '#D97706', opacity: 0.7, fontWeight: '800' }}>GETIT LUXE</Text>
+            </View>
+            {/* Long Gold Handle Right Door */}
+            <View style={styles.doorHandleRight} />
+          </Animated.View>
+        </View>
+
+        {/* Hanging Wooden Sign (Swinging on Chains) */}
+        <Animated.View
+          style={[
+            styles.hangingSignWrapper,
+            { transform: [{ rotate: signRotate }] },
+          ]}
+        >
+          <View style={styles.hangingSignChainsRow}>
+            <Text style={{ color: '#D97706', fontSize: 12 }}>⛓️</Text>
+            <Text style={{ color: '#D97706', fontSize: 12 }}>⛓️</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.hangingSignBoard}
+            onPress={handleKnock}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.hangingSignTitle}>⛔ SORRY, WE'RE CLOSED</Text>
+            <Text style={styles.hangingSignSub} numberOfLines={1}>
+              {!isOpenToday ? `Operating Schedule: ${operatingDays}` : `Regular Hours: ${openTime || 'See Schedule'}`}
+            </Text>
+          </TouchableOpacity>
+        </Animated.View>
+
+        {/* Central Golden Deadbolt / Padlock Seal */}
+        <Animated.View
+          style={[
+            styles.doorCenterLock,
+            { transform: [{ scale: lockScale }] },
+          ]}
+        >
+          <View style={styles.doorCenterLockInner}>
+            <Text style={{ fontSize: 15 }}>🔒</Text>
+            <Text style={styles.doorCenterLockText}>LOCKED</Text>
+          </View>
+        </Animated.View>
+      </View>
+
+      {/* Interactive Knock Speech Toast */}
+      {knockMessage && (
+        <View style={styles.doorSpeechBubble}>
+          <Text style={styles.doorSpeechBubbleText}>{knockMessage}</Text>
+        </View>
+      )}
+
+      {/* Action Footer Bar */}
+      <View style={styles.doorFooterBar}>
+        <TouchableOpacity
+          style={styles.doorKnockActionBtn}
+          onPress={handleKnock}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.doorKnockActionBtnText}>🚪 Knock on Door</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.doorReplayActionBtn}
+          onPress={runCloseSequence}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.doorReplayActionBtnText}>Replay Close 🔄</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Friendly Customer Advice Box */}
+      <View style={styles.doorCustomerAdviceBox}>
+        <Text style={styles.doorCustomerAdviceText}>
+          🛒 <Text style={{ fontWeight: '800', color: '#F1F5F9' }}>Provisions Browsing Active:</Text> You can still browse products, prices, and catalog items below. Ordering and rider dispatch will resume during active operating hours.
+        </Text>
+      </View>
+    </Animated.View>
+  );
+}
+
 export default function App() {
   const [selectedLocation, setSelectedLocation] = useState('Plot 14 Gana Street, Maitama, Abuja');
   const [locationModalVisible, setLocationModalVisible] = useState(false);
@@ -5166,7 +5421,7 @@ export default function App() {
                   </View>
                 </View>
 
-                {/* Store Closed Notice Banner (Browsing Only Alert) */}
+                {/* Animated Storefront Door & Closed Status when Store is Closed */}
                 {!isStoreCurrentlyOpen(selectedStore) && (() => {
                   const isCurrentMerchant = Boolean(
                     merchantStoreId && (selectedStore.id === merchantStoreId || selectedStore.id === currentMerchantStore?.id)
@@ -5175,24 +5430,19 @@ export default function App() {
                     (isCurrentMerchant && storeTiming?.operatingDays) ||
                     selectedStore.operatingDays ||
                     'Mon - Sun (Daily)';
+                  const openTimeStr =
+                    (isCurrentMerchant && storeTiming?.openTime) ||
+                    selectedStore.openTime ||
+                    '08:00 AM';
                   const isOpenToday = isStoreOpenOnDay(daysStr, new Date());
 
                   return (
-                    <View style={styles.storeClosedNoticeBanner}>
-                      <View style={styles.storeClosedNoticeIconBox}>
-                        <Text style={styles.storeClosedNoticeIcon}>🔒</Text>
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.storeClosedNoticeTitle}>
-                          {!isOpenToday ? `Store Closed Today (${daysStr})` : 'Store Currently Closed'}
-                        </Text>
-                        <Text style={styles.storeClosedNoticeSub}>
-                          {!isOpenToday
-                            ? `${selectedStore.name} operates on "${daysStr}". Today is outside the store's operating schedule. Provisions are available to browse, but purchasing and ordering will resume on active operating days.`
-                            : `${selectedStore.name} is not accepting orders or bookings right now. Provisions in this catalog are available to browse, but purchasing and ordering are disabled until reopening.`}
-                        </Text>
-                      </View>
-                    </View>
+                    <AnimatedStoreDoor
+                      store={selectedStore}
+                      operatingDays={daysStr}
+                      isOpenToday={isOpenToday}
+                      openTime={openTimeStr}
+                    />
                   );
                 })()}
 
@@ -16209,6 +16459,285 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
+  },
+  // --- ANIMATED CLOSED STOREFRONT DOOR STYLES ---
+  doorPortalContainer: {
+    marginHorizontal: 16,
+    marginVertical: 12,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#0F172A',
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  doorPortalHeader: {
+    backgroundColor: '#090D16',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  doorPortalHeaderTitle: {
+    color: '#F59E0B',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  doorPortalStatusPill: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  doorPortalStatusPillText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  doorStage: {
+    height: 195,
+    backgroundColor: '#0B0F19',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  doorInteriorBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
+  },
+  doorInteriorBackdropText: {
+    color: '#475569',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    marginTop: 6,
+  },
+  doorsWrap: {
+    flexDirection: 'row',
+    width: '100%',
+    height: '100%',
+  },
+  doorPanel: {
+    width: '50%',
+    height: '100%',
+    backgroundColor: '#23150C',
+    padding: 8,
+    justifyContent: 'space-between',
+  },
+  doorPanelLeft: {
+    borderRightWidth: 2,
+    borderRightColor: '#5C331B',
+    borderLeftWidth: 1,
+    borderLeftColor: '#382012',
+  },
+  doorPanelRight: {
+    borderLeftWidth: 2,
+    borderLeftColor: '#5C331B',
+    borderRightWidth: 1,
+    borderRightColor: '#382012',
+  },
+  doorWindowRow: {
+    flexDirection: 'row',
+    gap: 6,
+    justifyContent: 'center',
+  },
+  doorWindowPane: {
+    flex: 1,
+    height: 44,
+    backgroundColor: 'rgba(245, 158, 11, 0.08)',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#4A2818',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  doorGlassHighlight: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 14,
+    height: '100%',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    transform: [{ skewX: '-20deg' }],
+  },
+  doorKickPlate: {
+    height: 28,
+    backgroundColor: '#170E08',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#422413',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  doorHandleLeft: {
+    position: 'absolute',
+    right: 6,
+    top: '44%',
+    width: 6,
+    height: 48,
+    backgroundColor: '#F59E0B',
+    borderRadius: 3,
+    borderWidth: 1,
+    borderColor: '#B45309',
+    elevation: 4,
+  },
+  doorHandleRight: {
+    position: 'absolute',
+    left: 6,
+    top: '44%',
+    width: 6,
+    height: 48,
+    backgroundColor: '#F59E0B',
+    borderRadius: 3,
+    borderWidth: 1,
+    borderColor: '#B45309',
+    elevation: 4,
+  },
+  hangingSignWrapper: {
+    position: 'absolute',
+    top: 8,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  hangingSignChainsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: 120,
+    marginBottom: -4,
+  },
+  hangingSignBoard: {
+    backgroundColor: '#1C1917',
+    borderWidth: 2,
+    borderColor: '#F59E0B',
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    elevation: 7,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.45,
+    shadowRadius: 5,
+  },
+  hangingSignTitle: {
+    color: '#FEF08A',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  hangingSignSub: {
+    color: '#E2E8F0',
+    fontSize: 10.5,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  doorCenterLock: {
+    position: 'absolute',
+    top: '44%',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 25,
+  },
+  doorCenterLockInner: {
+    backgroundColor: '#DC2626',
+    borderWidth: 2,
+    borderColor: '#F59E0B',
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.5,
+    shadowRadius: 5,
+  },
+  doorCenterLockText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    marginLeft: 5,
+  },
+  doorSpeechBubble: {
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#FDE68A',
+  },
+  doorSpeechBubbleText: {
+    color: '#92400E',
+    fontSize: 11.5,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  doorFooterBar: {
+    backgroundColor: '#0B0F19',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: '#1E293B',
+  },
+  doorKnockActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  doorKnockActionBtnText: {
+    color: '#F8FAFC',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  doorReplayActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  doorReplayActionBtnText: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  doorCustomerAdviceBox: {
+    backgroundColor: '#131D2E',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#1E293B',
+  },
+  doorCustomerAdviceText: {
+    color: '#94A3B8',
+    fontSize: 10.5,
+    lineHeight: 15,
   },
 });
 

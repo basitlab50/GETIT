@@ -115,10 +115,21 @@ Status:     All changes synced, verified, and pushed to origin/main
     feedback when switching operating days.
   - Synced database `isOpen` field upon merchant saving operating schedules.
 
+[10:52:00] Animated Storefront Door for Closed Stores
+  - Created `AnimatedStoreDoor` component in `mobile/App.js` with realistic double French doors
+    that smoothly slide and swing shut with spring physics when a store is closed.
+  - Added central golden deadbolt / padlock (`🔒 LOCKED`) that snaps shut with spring bounce when doors meet.
+  - Added authentic hanging wooden signboard (`⛔ SORRY, WE'RE CLOSED`) that gently sways with
+    continuous pendulum loop animation.
+  - Added interactive "🚪 Knock on Door" button with physical vibration shake and playful speech bubbles
+    informing buyers of operating schedule while reassuring them that catalog browsing is active.
+  - Added "Replay Close 🔄" button to let users replay the door close sequence anytime.
+
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
 --------------------------------------------------------------------------------
-- fix(store-timing): enforce operating days schedule so weekends-only stores are closed on weekdays
+- feat(store-closed): add luxury animated double storefront doors with swinging closed sign and interactive door knock
+- ab26bc3  fix(store-timing): enforce operating days schedule so weekends-only stores are closed on weekdays
 - 5490172  docs: add work summary and progress log for October 11, 2026
 - 49d313a  fix(basket): rename action button to Change Delivery / Pin Location on Map
 - 82fb48d  fix(basket): connect dashed route line from pinned delivery location to store instead of live phone location
