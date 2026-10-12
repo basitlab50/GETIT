@@ -103,9 +103,23 @@ Status:     All changes synced, verified, and pushed to origin/main
   - Supabase database migrations in supabase/create_users_and_logs_tables.sql
   - Automated distance calculation formula for courier dispatch
 
+[04:30:00] Fix Store Operating Days Evaluation (Weekends Only / Custom Schedules)
+  - Implemented `isStoreOpenOnDay` to evaluate store operating days against current device day.
+  - Connected day validation to `isStoreCurrentlyOpen(store)`: stores set to "Weekends Only"
+    are now accurately enforced as CLOSED on weekdays (Monday through Friday) across the entire
+    buyer interface (store cards, explore map, catalog products, booking modal, and checkout).
+  - Enhanced `getStoreTimingBadge` to display `🔴 Closed Today • <OperatingDays>` instead of
+    showing daily opening hours on closed days.
+  - Refined Store Profile banner to explain operating day schedule clearly to customers.
+  - Updated live customer preview card in the timing modal so merchants see immediate real-time
+    feedback when switching operating days.
+  - Synced database `isOpen` field upon merchant saving operating schedules.
+
 --------------------------------------------------------------------------------
-3. GIT COMMIT RECORD (OCTOBER 11, 2026)
+3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
 --------------------------------------------------------------------------------
+- fix(store-timing): enforce operating days schedule so weekends-only stores are closed on weekdays
+- 5490172  docs: add work summary and progress log for October 11, 2026
 - 49d313a  fix(basket): rename action button to Change Delivery / Pin Location on Map
 - 82fb48d  fix(basket): connect dashed route line from pinned delivery location to store instead of live phone location
 - 51cfc0f  feat(location): persist buyer location across restarts and add smart prompt when live GPS differs from delivery pin

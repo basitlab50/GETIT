@@ -3142,6 +3142,9 @@ export default function App() {
       await AsyncStorage.setItem('getit_store_timing', JSON.stringify(timingToSave));
       if (targetStoreId) {
         await AsyncStorage.setItem(`getit_store_timing_${targetStoreId}`, JSON.stringify(timingToSave));
+        const updatedStore = { ...(currentMerchantStore || {}), ...timingToSave };
+        const isNowOpen = isStoreCurrentlyOpen(updatedStore);
+        updateDatabaseStore(targetStoreId, { isOpen: isNowOpen }).catch(console.warn);
       }
     } catch (e) {
       console.warn('AsyncStorage error:', e);
@@ -3396,6 +3399,79 @@ export default function App() {
     return hours * 60 + minutes;
   }
 
+  // Day mapping and evaluator for operating days schedules (e.g. 'Weekends Only', 'Mon - Fri', 'Mon - Sat', 'Daily')
+  const DAY_MAP = {
+    sunday: 0, sun: 0,
+    monday: 1, mon: 1,
+    tuesday: 2, tue: 2, tues: 2,
+    wednesday: 3, wed: 3,
+    thursday: 4, thu: 4, thur: 4, thurs: 4,
+    friday: 5, fri: 5,
+    saturday: 6, sat: 6,
+  };
+
+  function isStoreOpenOnDay(operatingDaysStr, testDate = new Date()) {
+    if (!operatingDaysStr) return true;
+    const clean = String(operatingDaysStr).trim().toLowerCase();
+    if (
+      !clean ||
+      clean.includes('daily') ||
+      clean.includes('everyday') ||
+      clean.includes('every day') ||
+      clean.includes('mon - sun') ||
+      clean.includes('monday - sunday') ||
+      clean.includes('all days') ||
+      clean.includes('7 days') ||
+      clean.includes('24/7')
+    ) {
+      return true;
+    }
+
+    const currentDay = testDate.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
+
+    // Explicit 'weekends only' or 'weekends'
+    if (clean.includes('weekend')) {
+      return currentDay === 0 || currentDay === 6;
+    }
+
+    // Explicit 'weekdays only' or 'weekdays'
+    if (clean.includes('weekday')) {
+      return currentDay >= 1 && currentDay <= 5;
+    }
+
+    // Range pattern: 'Mon - Fri', 'Monday - Friday', 'Mon - Sat', 'Fri - Sun', 'Sat - Sun'
+    const rangeMatch = clean.match(/([a-z]+)\s*(?:-|–|—|to)\s*([a-z]+)/);
+    if (rangeMatch) {
+      const sStr = rangeMatch[1];
+      const eStr = rangeMatch[2];
+      const sDay = DAY_MAP[sStr];
+      const eDay = DAY_MAP[eStr];
+      if (sDay !== undefined && eDay !== undefined) {
+        if (sDay <= eDay) {
+          return currentDay >= sDay && currentDay <= eDay;
+        } else {
+          // Wraps over weekend, e.g. Fri - Sun (5 to 0) or Thu - Sun (4 to 0)
+          return currentDay >= sDay || currentDay <= eDay;
+        }
+      }
+    }
+
+    // Token matching for lists: 'Sat, Sun', 'Saturday & Sunday', 'Mon, Wed, Fri'
+    const tokens = clean.split(/[^a-z]+/);
+    const matchedDays = [];
+    for (const t of tokens) {
+      if (DAY_MAP[t] !== undefined) {
+        matchedDays.push(DAY_MAP[t]);
+      }
+    }
+
+    if (matchedDays.length > 0) {
+      return matchedDays.includes(currentDay);
+    }
+
+    return true;
+  }
+
   function isStoreCurrentlyOpen(store) {
     if (!store) return false;
 
@@ -3412,7 +3488,14 @@ export default function App() {
       return false;
     }
 
-    // 3. Resolve 24-hour status across store object and live state
+    // 3. Resolve operating schedule & days
+    const daysStr =
+      (isCurrentMerchant && storeTiming?.operatingDays) ||
+      store.operatingDays ||
+      store.operating_days ||
+      store.timing?.operatingDays ||
+      'Mon - Sun (Daily)';
+
     const is24H = Boolean(
       store.is24Hours === true ||
       store.is_24_hours === true ||
@@ -3420,8 +3503,13 @@ export default function App() {
       (isCurrentMerchant && storeTiming?.is24Hours === true)
     );
 
+    const now = new Date();
+    const currentM = now.getHours() * 60 + now.getMinutes();
+    const isOpenToday = isStoreOpenOnDay(daysStr, now);
+
+    // If 24 hours mode is enabled, it operates 24h ONLY on its configured operating days
     if (is24H) {
-      return true;
+      return isOpenToday;
     }
 
     let openStr =
@@ -3442,23 +3530,28 @@ export default function App() {
     const closeM = parseTimeToMinutes(closeStr);
 
     if (openM === null || closeM === null) {
-      return true; // Fallback only if no parseable schedule
+      return isOpenToday; // Fallback only if no parseable schedule
     }
 
     if (openM === closeM) {
-      return true; // Same open and close treated as 24-hour
+      return isOpenToday; // Same open and close treated as 24-hour on operating days
     }
 
-    // Current time in device minutes
-    const now = new Date();
-    const currentM = now.getHours() * 60 + now.getMinutes();
-
     if (openM < closeM) {
-      // Normal daytime window (e.g. 8:00 AM to 10:00 AM = 480 to 600, or 8:00 AM to 10:00 PM = 480 to 1320)
+      // Normal daytime window (e.g. 8:00 AM to 10:00 PM)
+      if (!isOpenToday) return false;
       return currentM >= openM && currentM < closeM;
     } else {
-      // Overnight window (e.g. 8:00 PM to 2:00 AM = 1200 to 120)
-      return currentM >= openM || currentM < closeM;
+      // Overnight window (e.g. 8:00 PM to 2:00 AM)
+      if (currentM >= openM) {
+        return isOpenToday;
+      } else if (currentM < closeM) {
+        // Early morning hours of overnight shift from previous day
+        const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        return isStoreOpenOnDay(daysStr, yesterday);
+      } else {
+        return false;
+      }
     }
   }
 
@@ -3492,7 +3585,24 @@ export default function App() {
       (isCurrentMerchant && storeTiming?.is24Hours === true)
     );
 
+    const daysStr =
+      (isCurrentMerchant && storeTiming?.operatingDays) ||
+      store.operatingDays ||
+      store.operating_days ||
+      store.timing?.operatingDays ||
+      'Mon - Sun (Daily)';
+
+    const now = new Date();
+    const isOpenToday = isStoreOpenOnDay(daysStr, now);
+
     if (is24H) {
+      if (!isOpenToday) {
+        return {
+          label: `🔴 Closed Today • ${daysStr}`,
+          color: '#DC2626',
+          bg: '#FEF2F2',
+        };
+      }
       return {
         label: '⚡ Open 24 Hours',
         color: '#047857',
@@ -3517,6 +3627,13 @@ export default function App() {
     const open = isStoreCurrentlyOpen(store);
 
     if (!open) {
+      if (!isOpenToday) {
+        return {
+          label: `🔴 Closed Today • ${daysStr}`,
+          color: '#DC2626',
+          bg: '#FEF2F2',
+        };
+      }
       return {
         label: `🔴 Closed • Opens ${openStr}`,
         color: '#DC2626',
@@ -5001,6 +5118,19 @@ export default function App() {
                 <Text style={styles.storeModalAddress}>📍 {selectedStore.address}</Text>
                 {(() => {
                   const badge = getStoreTimingBadge(selectedStore);
+                  const isCurrentMerchant = Boolean(
+                    merchantStoreId && (selectedStore.id === merchantStoreId || selectedStore.id === currentMerchantStore?.id)
+                  );
+                  const is24H = Boolean(
+                    selectedStore.is24Hours || (isCurrentMerchant && storeTiming.is24Hours)
+                  );
+                  const daysStr =
+                    (isCurrentMerchant && storeTiming?.operatingDays) ||
+                    selectedStore.operatingDays ||
+                    'Mon - Sun (Daily)';
+                  const isOpenToday = isStoreOpenOnDay(daysStr, new Date());
+                  const isNowOpen = isStoreCurrentlyOpen(selectedStore);
+
                   return (
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, flexWrap: 'wrap' }}>
                       <View style={[styles.storeOpenPill, { backgroundColor: badge.bg, borderColor: badge.color, borderWidth: 1 }]}>
@@ -5009,7 +5139,7 @@ export default function App() {
                           {badge.label}
                         </Text>
                       </View>
-                      {(selectedStore.is24Hours || (selectedStore.id === merchantStoreId && storeTiming.is24Hours)) && (
+                      {is24H && isNowOpen && isOpenToday && (
                         <View style={[styles.infoGlassChip, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0', borderWidth: 1, marginLeft: 8 }]}>
                           <Text style={{ fontSize: 11, color: '#047857', fontWeight: '700' }}>⚡ Always Open 24/7</Text>
                         </View>
@@ -5037,19 +5167,34 @@ export default function App() {
                 </View>
 
                 {/* Store Closed Notice Banner (Browsing Only Alert) */}
-                {!isStoreCurrentlyOpen(selectedStore) && (
-                  <View style={styles.storeClosedNoticeBanner}>
-                    <View style={styles.storeClosedNoticeIconBox}>
-                      <Text style={styles.storeClosedNoticeIcon}>🔒</Text>
+                {!isStoreCurrentlyOpen(selectedStore) && (() => {
+                  const isCurrentMerchant = Boolean(
+                    merchantStoreId && (selectedStore.id === merchantStoreId || selectedStore.id === currentMerchantStore?.id)
+                  );
+                  const daysStr =
+                    (isCurrentMerchant && storeTiming?.operatingDays) ||
+                    selectedStore.operatingDays ||
+                    'Mon - Sun (Daily)';
+                  const isOpenToday = isStoreOpenOnDay(daysStr, new Date());
+
+                  return (
+                    <View style={styles.storeClosedNoticeBanner}>
+                      <View style={styles.storeClosedNoticeIconBox}>
+                        <Text style={styles.storeClosedNoticeIcon}>🔒</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.storeClosedNoticeTitle}>
+                          {!isOpenToday ? `Store Closed Today (${daysStr})` : 'Store Currently Closed'}
+                        </Text>
+                        <Text style={styles.storeClosedNoticeSub}>
+                          {!isOpenToday
+                            ? `${selectedStore.name} operates on "${daysStr}". Today is outside the store's operating schedule. Provisions are available to browse, but purchasing and ordering will resume on active operating days.`
+                            : `${selectedStore.name} is not accepting orders or bookings right now. Provisions in this catalog are available to browse, but purchasing and ordering are disabled until reopening.`}
+                        </Text>
+                      </View>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.storeClosedNoticeTitle}>Store Currently Closed</Text>
-                      <Text style={styles.storeClosedNoticeSub}>
-                        {selectedStore.name} is not accepting orders or bookings right now. Provisions in this catalog are available to browse, but purchasing and ordering are disabled until reopening.
-                      </Text>
-                    </View>
-                  </View>
-                )}
+                  );
+                })()}
 
                 {/* --- IN-STORE PRODUCT SEARCH BAR --- */}
                 <View style={styles.storeSearchSection}>
@@ -8711,21 +8856,49 @@ export default function App() {
             <View style={styles.timingPreviewCard}>
               <Text style={styles.timingPreviewHeader}>PREVIEW: WHAT BUYERS SEE RIGHT NOW</Text>
               <View style={styles.timingPreviewBanner}>
-                {tempIs24Hours ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={[styles.greenPulseDot, { backgroundColor: '#047857' }]} />
-                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#047857', marginLeft: 6 }}>
-                      ⚡ Open 24 Hours (Always Open)
-                    </Text>
-                  </View>
-                ) : (() => {
-                  const oM = parseTimeToMinutes(tempOpenTime);
-                  const cM = parseTimeToMinutes(tempCloseTime);
+                {(() => {
                   const now = new Date();
                   const curM = now.getHours() * 60 + now.getMinutes();
+                  const isOpenToday = isStoreOpenOnDay(tempOperatingDays, now);
+
+                  if (tempIs24Hours) {
+                    if (!isOpenToday) {
+                      return (
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <View style={[styles.greenPulseDot, { backgroundColor: '#DC2626' }]} />
+                          <Text style={{ fontSize: 13, fontWeight: '800', color: '#DC2626', marginLeft: 6 }}>
+                            🔴 Closed Right Now • Closed Today ({tempOperatingDays})
+                          </Text>
+                        </View>
+                      );
+                    }
+                    return (
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <View style={[styles.greenPulseDot, { backgroundColor: '#047857' }]} />
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#047857', marginLeft: 6 }}>
+                          ⚡ Open 24 Hours Today (Always Open)
+                        </Text>
+                      </View>
+                    );
+                  }
+
+                  if (!isOpenToday) {
+                    return (
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <View style={[styles.greenPulseDot, { backgroundColor: '#DC2626' }]} />
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#DC2626', marginLeft: 6 }}>
+                          🔴 Closed Right Now • Closed Today ({tempOperatingDays})
+                        </Text>
+                      </View>
+                    );
+                  }
+
+                  const oM = parseTimeToMinutes(tempOpenTime);
+                  const cM = parseTimeToMinutes(tempCloseTime);
                   const isNowOpen = oM !== null && cM !== null && (
                     oM === cM ? true : oM < cM ? curM >= oM && curM < cM : curM >= oM || curM < cM
                   );
+
                   if (!isNowOpen) {
                     return (
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
