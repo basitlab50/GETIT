@@ -19,7 +19,7 @@ import {
   Easing,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
 import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
@@ -2075,6 +2075,68 @@ export default function App() {
   const deliveryFee = cart.length > 0 ? (selectedDeliveryTier === 'bolt' ? 1200 : 2500) : 0;
   const conciergeFee = Math.round(cartSubtotal * 0.04);
   const cartTotal = cartSubtotal + deliveryFee + conciergeFee;
+
+  // Active store fulfillment details for the basket map
+  const activeCartStore = useMemo(() => {
+    if (!cart || cart.length === 0) return selectedStore || currentMerchantStore || storesList[0];
+    const match = storesList.find(
+      (s) => (cart[0]?.storeId && s.id === cart[0].storeId) || (cart[0]?.storeName && s.name === cart[0].storeName)
+    );
+    return match || selectedStore || currentMerchantStore || storesList[0];
+  }, [cart, storesList, selectedStore, currentMerchantStore]);
+
+  const activeCartStoreLat = Number(activeCartStore?.latitude) || 9.0882;
+  const activeCartStoreLng = Number(activeCartStore?.longitude) || 7.4933;
+
+  const activeBuyerLat = Number(userLiveCoords?.latitude || pinnedLocation?.latitude || mapCoords.latitude) || 9.0882;
+  const activeBuyerLng = Number(userLiveCoords?.longitude || pinnedLocation?.longitude || mapCoords.longitude) || 7.4933;
+
+  const cartDistanceKm = useMemo(() => {
+    return calculateDistanceKm(activeBuyerLat, activeBuyerLng, activeCartStoreLat, activeCartStoreLng);
+  }, [activeBuyerLat, activeBuyerLng, activeCartStoreLat, activeCartStoreLng]);
+
+  const cartEstDeliveryMins = useMemo(() => {
+    if (cartDistanceKm === null) return '15-20 min';
+    const mins = Math.max(10, Math.round(cartDistanceKm * 4.5 + 8));
+    return `${mins}-${mins + 5} min`;
+  }, [cartDistanceKm]);
+
+  // When cart is opened: auto-fetch live GPS for buyer blue dot and fit camera to frame both pins
+  useEffect(() => {
+    if (cartModalVisible) {
+      (async () => {
+        try {
+          const { status } = await Location.getForegroundPermissionsAsync();
+          if (status === 'granted') {
+            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            if (loc && loc.coords) {
+              setUserLiveCoords({
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+              });
+            }
+          }
+        } catch (e) {}
+      })();
+
+      setTimeout(() => {
+        try {
+          if (cartMapRef.current && activeCartStoreLat && activeBuyerLat) {
+            cartMapRef.current.fitToCoordinates(
+              [
+                { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
+                { latitude: activeBuyerLat, longitude: activeBuyerLng },
+              ],
+              {
+                edgePadding: { top: 45, right: 45, bottom: 45, left: 45 },
+                animated: true,
+              }
+            );
+          }
+        } catch (e) {}
+      }, 350);
+    }
+  }, [cartModalVisible, activeCartStoreLat, activeCartStoreLng, activeBuyerLat, activeBuyerLng]);
 
   const handleCheckout = () => {
     if (cart.length === 0) return;
@@ -5395,11 +5457,11 @@ export default function App() {
                     <MapView
                       ref={cartMapRef}
                       style={styles.cartMapCanvas}
-                      region={{
-                        latitude: pinnedLocation?.latitude || mapCoords.latitude,
-                        longitude: pinnedLocation?.longitude || mapCoords.longitude,
-                        latitudeDelta: 0.0035,
-                        longitudeDelta: 0.0035,
+                      initialRegion={{
+                        latitude: (activeBuyerLat + activeCartStoreLat) / 2,
+                        longitude: (activeBuyerLng + activeCartStoreLng) / 2,
+                        latitudeDelta: Math.max(0.015, Math.abs(activeBuyerLat - activeCartStoreLat) * 1.8),
+                        longitudeDelta: Math.max(0.015, Math.abs(activeBuyerLng - activeCartStoreLng) * 1.8),
                       }}
                       showsUserLocation={true}
                       showsCompass={false}
@@ -5407,35 +5469,117 @@ export default function App() {
                       zoomEnabled={true}
                       pitchEnabled={false}
                       rotateEnabled={false}
-                      onPress={openLocationPickerFromCart}
                     >
+                      {/* 1. Store Pinned Location Marker */}
                       <Marker
-                        key={`cart-pin-${(pinnedLocation?.latitude || mapCoords.latitude).toFixed(6)}-${(pinnedLocation?.longitude || mapCoords.longitude).toFixed(6)}`}
+                        coordinate={{
+                          latitude: activeCartStoreLat,
+                          longitude: activeCartStoreLng,
+                        }}
+                        title={`🏪 ${activeCartStore?.name || 'Shop'}`}
+                        description={activeCartStore?.address || 'Dispatches from here'}
+                        anchor={{ x: 0.5, y: 1.0 }}
+                      >
+                        <View style={styles.cartMapStoreMarkerPill}>
+                          <Text style={{ fontSize: 13, marginRight: 4 }}>🏪</Text>
+                          <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
+                            {activeCartStore?.name || 'Shop'}
+                          </Text>
+                        </View>
+                      </Marker>
+
+                      {/* 2. Buyer Delivery Destination Pin */}
+                      <Marker
                         coordinate={{
                           latitude: pinnedLocation?.latitude || mapCoords.latitude,
                           longitude: pinnedLocation?.longitude || mapCoords.longitude,
                         }}
-                        title={pinnedLocation?.name || "Delivery Destination"}
-                        description={pinnedLocation?.landmark || "Rider dropoff coordinates"}
-                        pinColor={COLORS.emeraldPrimary}
+                        title="📍 Delivery Destination"
+                        description={pinnedLocation?.name || 'Rider dropoff location'}
+                        pinColor="#EF4444"
+                      />
+
+                      {/* 3. Buyer Live Phone GPS Location (Blue Dot Beacon) */}
+                      {userLiveCoords && (
+                        <Marker
+                          coordinate={userLiveCoords}
+                          title="🔵 Your Current Live Location"
+                          description="Live satellite GPS position of your phone"
+                          anchor={{ x: 0.5, y: 0.5 }}
+                        >
+                          <View style={styles.liveBeaconOuter}>
+                            <View style={styles.liveBeaconInner} />
+                          </View>
+                        </Marker>
+                      )}
+
+                      {/* 4. Dashed Route Line between Store and Buyer */}
+                      <Polyline
+                        coordinates={[
+                          { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
+                          { latitude: activeBuyerLat, longitude: activeBuyerLng },
+                        ]}
+                        strokeColor={COLORS.emeraldPrimary}
+                        strokeWidth={3}
+                        lineDashPattern={[6, 4]}
                       />
                     </MapView>
 
-                    {/* GPS Coordinates Badge on Map */}
-                    <View style={styles.cartMapGpsBadge}>
-                      <Text style={styles.cartMapGpsBadgeText}>
-                        🎯 {(pinnedLocation?.latitude || mapCoords.latitude).toFixed(4)}° N,{' '}
-                        {(pinnedLocation?.longitude || mapCoords.longitude).toFixed(4)}° E
-                      </Text>
+                    {/* Proximity & Distance Header Overlay */}
+                    <View style={styles.cartMapDistanceBanner}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 6 }}>
+                        <Text style={{ fontSize: 14 }}>🚀</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.cartMapDistanceTitle} numberOfLines={1}>
+                            {cartDistanceKm !== null
+                              ? `${cartDistanceKm < 1 ? Math.round(cartDistanceKm * 1000) + ' m' : cartDistanceKm.toFixed(1) + ' km'} away from ${activeCartStore?.name || 'Shop'}`
+                              : `Fulfilling from ${activeCartStore?.name || 'Shop'}`}
+                          </Text>
+                          <Text style={styles.cartMapDistanceSub} numberOfLines={1}>
+                            🏪 Shop Pin ➔ 🔵 Your Live Location (~{cartEstDeliveryMins})
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.cartMapDistanceBadge}>
+                        <Text style={styles.cartMapDistanceBadgeText}>
+                          {cartDistanceKm !== null ? `${cartDistanceKm.toFixed(1)} km` : 'Near'}
+                        </Text>
+                      </View>
                     </View>
 
-                    {/* Tap to Adjust Overlay Pill */}
+                    {/* Map Legend Overlay on Bottom-Left */}
+                    <View style={styles.cartMapLegendBar}>
+                      <View style={styles.cartMapLegendItem}>
+                        <View style={[styles.cartMapLegendDot, { backgroundColor: '#2563EB' }]} />
+                        <Text style={styles.cartMapLegendText}>🔵 You (Live GPS)</Text>
+                      </View>
+                      <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 9 }}>┈┈</Text>
+                      <View style={styles.cartMapLegendItem}>
+                        <View style={[styles.cartMapLegendDot, { backgroundColor: COLORS.emeraldPrimary }]} />
+                        <Text style={styles.cartMapLegendText}>🏪 {activeCartStore?.name || 'Shop'}</Text>
+                      </View>
+                    </View>
+
+                    {/* Fit View Button on Bottom-Right */}
                     <TouchableOpacity
-                      style={styles.cartMapTapOverlay}
-                      onPress={openLocationPickerFromCart}
-                      activeOpacity={0.85}
+                      style={styles.cartMapFitBtn}
+                      onPress={() => {
+                        if (cartMapRef.current && activeCartStoreLat && activeBuyerLat) {
+                          cartMapRef.current.fitToCoordinates(
+                            [
+                              { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
+                              { latitude: activeBuyerLat, longitude: activeBuyerLng },
+                            ],
+                            {
+                              edgePadding: { top: 45, right: 45, bottom: 45, left: 45 },
+                              animated: true,
+                            }
+                          );
+                        }
+                      }}
+                      activeOpacity={0.8}
                     >
-                      <Text style={styles.cartMapTapOverlayText}>🔍 Tap Map to Adjust or Search</Text>
+                      <Text style={styles.cartMapFitBtnText}>🧭 Fit View</Text>
                     </TouchableOpacity>
                   </View>
 
@@ -10679,8 +10823,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   cartMapContainer: {
-    height: 165,
-    borderRadius: 14,
+    height: 220,
+    borderRadius: 16,
     overflow: 'hidden',
     position: 'relative',
     borderWidth: 1,
@@ -10690,6 +10834,116 @@ const styles = StyleSheet.create({
   cartMapCanvas: {
     width: '100%',
     height: '100%',
+  },
+  cartMapStoreMarkerPill: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: COLORS.emeraldPrimary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+  },
+  cartMapStoreMarkerText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    maxWidth: 110,
+  },
+  cartMapDistanceBanner: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    right: 8,
+    backgroundColor: 'rgba(6, 78, 59, 0.94)',
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 3,
+  },
+  cartMapDistanceTitle: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  cartMapDistanceSub: {
+    color: COLORS.emeraldSurface,
+    fontSize: 9.5,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  cartMapDistanceBadge: {
+    backgroundColor: COLORS.emeraldLight,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginLeft: 6,
+  },
+  cartMapDistanceBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  cartMapLegendBar: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cartMapLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  cartMapLegendDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  cartMapLegendText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  cartMapFitBtn: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 14,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+  },
+  cartMapFitBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
   },
   cartMapGpsBadge: {
     position: 'absolute',
