@@ -1178,6 +1178,7 @@ export default function App() {
   const [editStorePhone, setEditStorePhone] = useState('');
   const [editStoreDeliveryFee, setEditStoreDeliveryFee] = useState('1200');
   const [editStoreDescription, setEditStoreDescription] = useState('');
+  const [editStoreImage, setEditStoreImage] = useState('');
 
   // High performance memoized filtered suggested catalog
   const filteredSuggestedProducts = useMemo(() => {
@@ -3021,7 +3022,23 @@ export default function App() {
     setEditStorePhone(currentMerchantStore?.phone || '');
     setEditStoreDeliveryFee(String(currentMerchantStore?.deliveryFee || '1200').replace(/\D/g, ''));
     setEditStoreDescription(currentMerchantStore?.description || '');
+    setEditStoreImage(currentMerchantStore?.image || '');
     setEditStoreModalVisible(true);
+  };
+
+  const handlePickEditStoreImage = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/*'],
+        copyToCacheDirectory: true,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        setEditStoreImage(res.assets[0].uri);
+      }
+    } catch (err) {
+      console.warn('Error picking image:', err);
+      Alert.alert('Upload Notice', 'Could not access the selected photo from your device.');
+    }
   };
 
   const handleSaveStoreDetails = () => {
@@ -3030,6 +3047,7 @@ export default function App() {
       return;
     }
     const targetStoreId = currentMerchantStore?.id || merchantStoreId;
+    const finalImage = editStoreImage?.trim() || currentMerchantStore?.image || '';
 
     const updatedObj = {
       name: editStoreName.trim(),
@@ -3038,6 +3056,7 @@ export default function App() {
       phone: editStorePhone.trim(),
       deliveryFee: `₦${Number(editStoreDeliveryFee || 1200).toLocaleString()}`,
       description: editStoreDescription.trim() || `${editStoreName.trim()} — verified partner store live on GETIT.`,
+      ...(finalImage ? { image: finalImage } : {}),
     };
 
     updateAndPersistStores((prev) =>
@@ -3048,12 +3067,19 @@ export default function App() {
       setSelectedStore((prev) => (prev ? { ...prev, ...updatedObj } : prev));
     }
 
+    if (finalImage && targetStoreId) {
+      try {
+        AsyncStorage.setItem(`getit_store_image_${targetStoreId}`, finalImage);
+      } catch (e) {}
+    }
+
     if (targetStoreId) {
       updateDatabaseStore(targetStoreId, {
         name: updatedObj.name,
         address: updatedObj.address,
         phone: updatedObj.phone,
         deliveryFee: Number(editStoreDeliveryFee || 1200),
+        ...(finalImage ? { image: finalImage } : {}),
       }).catch(console.warn);
     }
 
@@ -8259,127 +8285,410 @@ export default function App() {
         transparent={false}
         onRequestClose={() => setEditStoreModalVisible(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
+        <SafeAreaView style={styles.editProfileSafeArea}>
           <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
 
-          <View style={styles.modalHeader}>
+          {/* Sticky Luxury Header */}
+          <View style={styles.editProfileHeader}>
             <TouchableOpacity
-              style={styles.modalBackBtn}
+              style={styles.editProfileCloseBtn}
               onPress={() => setEditStoreModalVisible(false)}
+              activeOpacity={0.7}
             >
-              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+              <Text style={styles.editProfileCloseBtnText}>✕ Close</Text>
             </TouchableOpacity>
-            <Text style={styles.modalHeaderTitle}>Edit Store Profile</Text>
-            <View style={{ width: 60 }} />
+
+            <View style={styles.editProfileHeaderCenter}>
+              <Text style={styles.editProfileHeaderTitle}>🏪 Store Profile</Text>
+              <Text style={styles.editProfileHeaderSub}>Live Storefront Settings</Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.editProfileHeaderSaveBtn}
+              onPress={handleSaveStoreDetails}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.editProfileHeaderSaveBtnText}>💾 Save</Text>
+            </TouchableOpacity>
           </View>
 
           <ScrollView
-            style={styles.modalContent}
-            contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
+            style={styles.editProfileScrollView}
+            contentContainerStyle={styles.editProfileScrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.modalSectionHeading}>Basic Store Identity</Text>
-
-            {/* Store Name */}
-            <View style={styles.formFieldGroup}>
-              <Text style={styles.formLabel}>STORE / BUSINESS NAME *</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editStoreName}
-                onChangeText={setEditStoreName}
-                placeholder="e.g. Fresh Mart Maitama"
-                placeholderTextColor="#94A3B8"
-              />
+            {/* 1. LIVE STORE CARD PREVIEW */}
+            <View style={styles.editProfileSectionHeader}>
+              <Text style={styles.editProfileSectionTitle}>👁️ Live Customer Preview</Text>
+              <Text style={styles.editProfileSectionSub}>Real-time preview of how your shop appears to buyers</Text>
             </View>
 
-            {/* Store Category */}
-            <View style={styles.formFieldGroup}>
-              <Text style={styles.formLabel}>PRIMARY CATEGORY *</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editStoreCategory}
-                onChangeText={setEditStoreCategory}
-                placeholder="e.g. Gourmet Groceries & Deli"
-                placeholderTextColor="#94A3B8"
-              />
-              {/* Category Quick Pills */}
-              <View style={styles.quickCategoryPillsRow}>
-                {['Gourmet & Groceries', 'Supermarket', 'Fruits & Organics', 'Pharmacy & Health', 'Artisan Bakery', 'Cellar & Drinks'].map((cat) => (
-                  <TouchableOpacity
-                    key={cat}
-                    style={[styles.quickCatPill, editStoreCategory === cat && styles.quickCatPillActive]}
-                    onPress={() => setEditStoreCategory(cat)}
-                  >
-                    <Text style={[styles.quickCatPillText, editStoreCategory === cat && styles.quickCatPillTextActive]}>
-                      {cat}
+            <View style={styles.editProfilePreviewCard}>
+              <View style={styles.editProfilePreviewImageWrap}>
+                <Image
+                  source={{
+                    uri:
+                      editStoreImage ||
+                      currentMerchantStore?.image ||
+                      'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=1200&q=80',
+                  }}
+                  style={styles.editProfilePreviewImage}
+                  resizeMode="cover"
+                />
+                <View style={styles.editProfilePreviewGradientOverlay} />
+
+                {/* Badges on preview image */}
+                <View style={styles.editProfilePreviewBadgesRow}>
+                  <View style={styles.editProfilePreviewBadge}>
+                    <Text style={styles.editProfilePreviewBadgeText}>✨ VERIFIED PARTNER</Text>
+                  </View>
+                  <View style={[styles.editProfilePreviewBadge, { backgroundColor: 'rgba(16, 185, 129, 0.9)' }]}>
+                    <Text style={styles.editProfilePreviewBadgeText}>● OPEN NOW</Text>
+                  </View>
+                </View>
+
+                {/* Quick overlay change photo button */}
+                <TouchableOpacity
+                  style={styles.editProfilePreviewChangePhotoBtn}
+                  onPress={handlePickEditStoreImage}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.editProfilePreviewChangePhotoText}>📷 Change Cover</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.editProfilePreviewDetails}>
+                <Text style={styles.editProfilePreviewStoreName} numberOfLines={1}>
+                  {editStoreName || 'Your Store Name'}
+                </Text>
+                <View style={styles.editProfilePreviewMetaRow}>
+                  <View style={styles.editProfilePreviewCategoryTag}>
+                    <Text style={styles.editProfilePreviewCategoryText} numberOfLines={1}>
+                      🏷️ {editStoreCategory || 'Gourmet Groceries'}
                     </Text>
-                  </TouchableOpacity>
-                ))}
+                  </View>
+                  <View style={styles.editProfilePreviewFeeTag}>
+                    <Text style={styles.editProfilePreviewFeeText}>
+                      🚚 ₦{Number(editStoreDeliveryFee || 1200).toLocaleString()} Delivery
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.editProfilePreviewAddress} numberOfLines={1}>
+                  📍 {editStoreAddress || 'Add your store address'}
+                </Text>
               </View>
             </View>
 
-            {/* Store Address */}
-            <View style={styles.formFieldGroup}>
-              <Text style={styles.formLabel}>STORE LOCATION / ADDRESS *</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editStoreAddress}
-                onChangeText={setEditStoreAddress}
-                placeholder="e.g. Plot 14 Gana Street, Maitama, Abuja"
-                placeholderTextColor="#94A3B8"
-              />
+            {/* 2. CARD: STORE IDENTITY */}
+            <View style={styles.editProfileCard}>
+              <View style={styles.editProfileCardHeader}>
+                <View style={styles.editProfileCardIconBox}>
+                  <Text style={{ fontSize: 18 }}>🏪</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.editProfileCardTitle}>Store Identity & Branding</Text>
+                  <Text style={styles.editProfileCardSubtitle}>Your business name and grocery category</Text>
+                </View>
+              </View>
+
+              {/* Store Name Input */}
+              <View style={styles.editProfileInputGroup}>
+                <Text style={styles.editProfileInputLabel}>STORE / BUSINESS NAME *</Text>
+                <View style={styles.editProfileInputWrap}>
+                  <Text style={styles.editProfileInputLeadingIcon}>🏪</Text>
+                  <TextInput
+                    style={styles.editProfileInput}
+                    value={editStoreName}
+                    onChangeText={setEditStoreName}
+                    placeholder="e.g. Fresh Mart Maitama"
+                    placeholderTextColor="#94A3B8"
+                  />
+                  {editStoreName.length > 0 && (
+                    <TouchableOpacity onPress={() => setEditStoreName('')} style={styles.editProfileClearBtn}>
+                      <Text style={{ color: '#94A3B8', fontSize: 14 }}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Text style={styles.editProfileInputHint}>Appears prominently at the top of customer search results</Text>
+              </View>
+
+              {/* Store Category Input */}
+              <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
+                <Text style={styles.editProfileInputLabel}>PRIMARY CATEGORY *</Text>
+                <View style={styles.editProfileInputWrap}>
+                  <Text style={styles.editProfileInputLeadingIcon}>🏷️</Text>
+                  <TextInput
+                    style={styles.editProfileInput}
+                    value={editStoreCategory}
+                    onChangeText={setEditStoreCategory}
+                    placeholder="e.g. Gourmet Groceries & Deli"
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
+
+                {/* Quick Category Chips */}
+                <Text style={[styles.editProfileInputHint, { marginTop: 8, marginBottom: 6, fontWeight: '700' }]}>
+                  ⚡ Tap to choose a popular category:
+                </Text>
+                <View style={styles.editProfileChipsWrap}>
+                  {[
+                    { label: 'Gourmet Groceries & Deli', icon: '🛒' },
+                    { label: 'Farm-to-Table & Produce', icon: '🥦' },
+                    { label: 'French Bakery & Pastries', icon: '🥐' },
+                    { label: 'Sommelier & Luxury Pantry', icon: '🍾' },
+                    { label: 'Supermarket & Provisions', icon: '🏪' },
+                    { label: 'Pharmacy & Health', icon: '💊' },
+                    { label: 'Premium Nigerian Staples', icon: '🥩' },
+                    { label: 'Artisan Cafe & Treats', icon: '☕' },
+                  ].map((cat) => {
+                    const isSelected = editStoreCategory === cat.label;
+                    return (
+                      <TouchableOpacity
+                        key={cat.label}
+                        style={[styles.editProfileChip, isSelected && styles.editProfileChipSelected]}
+                        onPress={() => setEditStoreCategory(cat.label)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.editProfileChipIcon}>{cat.icon}</Text>
+                        <Text style={[styles.editProfileChipText, isSelected && styles.editProfileChipTextSelected]}>
+                          {cat.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
             </View>
 
-            {/* Official Phone */}
-            <View style={styles.formFieldGroup}>
-              <Text style={styles.formLabel}>OFFICIAL PHONE / WHATSAPP NUMBER *</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editStorePhone}
-                onChangeText={setEditStorePhone}
-                placeholder="e.g. 0803 123 4567"
-                placeholderTextColor="#94A3B8"
-                keyboardType="phone-pad"
-              />
+            {/* 3. CARD: STOREFRONT COVER PHOTO */}
+            <View style={styles.editProfileCard}>
+              <View style={styles.editProfileCardHeader}>
+                <View style={styles.editProfileCardIconBox}>
+                  <Text style={{ fontSize: 18 }}>📸</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.editProfileCardTitle}>Storefront Banner & Photo</Text>
+                  <Text style={styles.editProfileCardSubtitle}>High-res photo to represent your storefront</Text>
+                </View>
+              </View>
+
+              {/* Upload Action Button */}
+              <TouchableOpacity
+                style={styles.editProfileUploadBtn}
+                onPress={handlePickEditStoreImage}
+                activeOpacity={0.85}
+              >
+                <View style={styles.editProfileUploadBtnIconBox}>
+                  <Text style={{ fontSize: 20 }}>📁</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.editProfileUploadBtnTitle}>Upload Photo from Device</Text>
+                  <Text style={styles.editProfileUploadBtnSubtitle}>Choose any image or logo from your photo gallery</Text>
+                </View>
+                <Text style={styles.editProfileUploadBtnArrow}>➔</Text>
+              </TouchableOpacity>
+
+              {/* Luxury Preset Swatches */}
+              <Text style={[styles.editProfileInputHint, { marginTop: 14, marginBottom: 8, fontWeight: '700' }]}>
+                ✨ Or select a curated luxury storefront:
+              </Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 10, paddingVertical: 4 }}
+              >
+                {STORE_COVER_PRESETS.map((preset) => {
+                  const isCur = (editStoreImage || currentMerchantStore?.image) === preset.url;
+                  return (
+                    <TouchableOpacity
+                      key={preset.id}
+                      style={[styles.editProfilePresetThumbCard, isCur && styles.editProfilePresetThumbCardActive]}
+                      onPress={() => setEditStoreImage(preset.url)}
+                      activeOpacity={0.85}
+                    >
+                      <Image source={{ uri: preset.url }} style={styles.editProfilePresetThumbImg} />
+                      <View style={styles.editProfilePresetThumbFooter}>
+                        <Text style={{ fontSize: 11 }}>{preset.icon}</Text>
+                        <Text style={styles.editProfilePresetThumbTitle} numberOfLines={1}>
+                          {preset.title}
+                        </Text>
+                      </View>
+                      {isCur && (
+                        <View style={styles.editProfilePresetCheckBadge}>
+                          <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>✓</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* URL input */}
+              <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
+                <Text style={styles.editProfileInputLabel}>OR PASTE PHOTO URL</Text>
+                <View style={styles.editProfileInputWrap}>
+                  <Text style={styles.editProfileInputLeadingIcon}>🔗</Text>
+                  <TextInput
+                    style={styles.editProfileInput}
+                    value={editStoreImage}
+                    onChangeText={setEditStoreImage}
+                    placeholder="https://images.unsplash.com/..."
+                    placeholderTextColor="#94A3B8"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+              </View>
             </View>
 
-            {/* Delivery Fee */}
-            <View style={styles.formFieldGroup}>
-              <Text style={styles.formLabel}>DEFAULT DELIVERY FEE (₦)</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editStoreDeliveryFee}
-                onChangeText={setEditStoreDeliveryFee}
-                placeholder="e.g. 1200"
-                placeholderTextColor="#94A3B8"
-                keyboardType="numeric"
-              />
+            {/* 4. CARD: LOCATION & CONTACT */}
+            <View style={styles.editProfileCard}>
+              <View style={styles.editProfileCardHeader}>
+                <View style={styles.editProfileCardIconBox}>
+                  <Text style={{ fontSize: 18 }}>📍</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.editProfileCardTitle}>Location & Customer Contact</Text>
+                  <Text style={styles.editProfileCardSubtitle}>Pickup address and merchant support phone</Text>
+                </View>
+              </View>
+
+              {/* Address */}
+              <View style={styles.editProfileInputGroup}>
+                <Text style={styles.editProfileInputLabel}>PHYSICAL ADDRESS / LANDMARK *</Text>
+                <View style={styles.editProfileInputWrap}>
+                  <Text style={styles.editProfileInputLeadingIcon}>📍</Text>
+                  <TextInput
+                    style={styles.editProfileInput}
+                    value={editStoreAddress}
+                    onChangeText={setEditStoreAddress}
+                    placeholder="e.g. Plot 14 Gana Street, Maitama, Abuja"
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
+                <Text style={styles.editProfileInputHint}>Riders and shoppers navigate here for pickup orders</Text>
+              </View>
+
+              {/* Phone */}
+              <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
+                <Text style={styles.editProfileInputLabel}>OFFICIAL PHONE / WHATSAPP NUMBER *</Text>
+                <View style={styles.editProfileInputWrap}>
+                  <Text style={styles.editProfileInputLeadingIcon}>📞</Text>
+                  <TextInput
+                    style={styles.editProfileInput}
+                    value={editStorePhone}
+                    onChangeText={setEditStorePhone}
+                    placeholder="e.g. +234 803 123 4567"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="phone-pad"
+                  />
+                </View>
+                <Text style={styles.editProfileInputHint}>Used for order notifications and dispatch rider calls</Text>
+              </View>
             </View>
 
-            {/* Description */}
-            <View style={styles.formFieldGroup}>
-              <Text style={styles.formLabel}>STORE DESCRIPTION & SPECIALTY</Text>
-              <TextInput
-                style={[styles.formInput, { height: 75, textAlignVertical: 'top', paddingTop: 10 }]}
-                value={editStoreDescription}
-                onChangeText={setEditStoreDescription}
-                placeholder="Brief summary of your provisions, fresh imports, or pharmacy catalog..."
-                placeholderTextColor="#94A3B8"
-                multiline
-              />
+            {/* 5. CARD: DELIVERY LOGISTICS & FEE */}
+            <View style={styles.editProfileCard}>
+              <View style={styles.editProfileCardHeader}>
+                <View style={styles.editProfileCardIconBox}>
+                  <Text style={{ fontSize: 18 }}>🚚</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.editProfileCardTitle}>Delivery Logistics & Pricing</Text>
+                  <Text style={styles.editProfileCardSubtitle}>Default delivery charge applied to orders</Text>
+                </View>
+              </View>
+
+              <View style={styles.editProfileInputGroup}>
+                <Text style={styles.editProfileInputLabel}>DEFAULT DELIVERY FEE (₦) *</Text>
+                <View style={styles.editProfileInputWrap}>
+                  <Text style={[styles.editProfileInputLeadingIcon, { fontWeight: '800', color: COLORS.emeraldPrimary }]}>₦</Text>
+                  <TextInput
+                    style={styles.editProfileInput}
+                    value={editStoreDeliveryFee}
+                    onChangeText={(val) => setEditStoreDeliveryFee(val.replace(/\D/g, ''))}
+                    placeholder="1200"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                {/* Quick Fee Presets */}
+                <Text style={[styles.editProfileInputHint, { marginTop: 8, marginBottom: 6, fontWeight: '700' }]}>
+                  ⚡ Quick preset amounts:
+                </Text>
+                <View style={styles.editProfileChipsWrap}>
+                  {[
+                    { fee: '500', label: '₦500 (Nearby)' },
+                    { fee: '1000', label: '₦1,000 (Standard)' },
+                    { fee: '1200', label: '₦1,200 (Recommended)' },
+                    { fee: '1500', label: '₦1,500 (Express)' },
+                    { fee: '2000', label: '₦2,000 (City-Wide)' },
+                  ].map((p) => {
+                    const isSelected = String(editStoreDeliveryFee) === p.fee;
+                    return (
+                      <TouchableOpacity
+                        key={p.fee}
+                        style={[styles.editProfileChip, isSelected && styles.editProfileChipSelected]}
+                        onPress={() => setEditStoreDeliveryFee(p.fee)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.editProfileChipText, isSelected && styles.editProfileChipTextSelected]}>
+                          {p.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
             </View>
 
-            {/* Save Button */}
+            {/* 6. CARD: ABOUT & SPECIALTY */}
+            <View style={styles.editProfileCard}>
+              <View style={styles.editProfileCardHeader}>
+                <View style={styles.editProfileCardIconBox}>
+                  <Text style={{ fontSize: 18 }}>📝</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.editProfileCardTitle}>Store Bio & Specialty</Text>
+                  <Text style={styles.editProfileCardSubtitle}>Tell buyers about fresh arrivals, imports & specialty</Text>
+                </View>
+              </View>
+
+              <View style={styles.editProfileInputGroup}>
+                <Text style={styles.editProfileInputLabel}>STORE DESCRIPTION</Text>
+                <View style={[styles.editProfileInputWrap, { alignItems: 'flex-start', paddingTop: 10 }]}>
+                  <Text style={[styles.editProfileInputLeadingIcon, { marginTop: 2 }]}>✍️</Text>
+                  <TextInput
+                    style={[styles.editProfileInput, { height: 90, textAlignVertical: 'top' }]}
+                    value={editStoreDescription}
+                    onChangeText={setEditStoreDescription}
+                    placeholder="Describe your store (e.g. Daily fresh organic produce, imported European cheese, fine wines, and same-day doorstep dispatch)..."
+                    placeholderTextColor="#94A3B8"
+                    multiline
+                  />
+                </View>
+                <Text style={styles.editProfileInputHint}>
+                  A friendly, welcoming bio helps build shopper confidence and increases orders.
+                </Text>
+              </View>
+            </View>
+
+            {/* Bottom Save Action Button */}
             <TouchableOpacity
-              style={[styles.primaryActionBtn, { marginTop: 18, backgroundColor: COLORS.emeraldPrimary }]}
+              style={styles.editProfilePrimarySaveBtn}
               onPress={handleSaveStoreDetails}
               activeOpacity={0.85}
             >
-              <Text style={styles.primaryActionBtnText}>
-                💾 Save Store Details & Update Profile ➔
+              <Text style={styles.editProfilePrimarySaveBtnText}>
+                ✨ Save & Publish Store Profile ➔
               </Text>
             </TouchableOpacity>
+
+            <Text style={styles.editProfileFooterNote}>
+              🔒 Changes sync instantly across the Buyer app and GETIT merchant directory.
+            </Text>
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -13731,6 +14040,429 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#92400E',
     marginLeft: 6,
+  },
+
+  // --- Form Fallback Styles ---
+  formFieldGroup: {
+    marginBottom: 16,
+  },
+  formLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.textMuted,
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  formInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 13,
+    color: COLORS.textDark,
+  },
+
+  // --- Friendly Edit Store Profile Styles ---
+  editProfileSafeArea: {
+    flex: 1,
+    backgroundColor: COLORS.beigeBg,
+  },
+  editProfileHeader: {
+    backgroundColor: COLORS.emeraldDeep,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  editProfileCloseBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  editProfileCloseBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  editProfileHeaderCenter: {
+    alignItems: 'center',
+  },
+  editProfileHeaderTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  editProfileHeaderSub: {
+    color: COLORS.emeraldSurface,
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  editProfileHeaderSaveBtn: {
+    backgroundColor: COLORS.emeraldLight,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  editProfileHeaderSaveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  editProfileScrollView: {
+    flex: 1,
+    backgroundColor: COLORS.beigeBg,
+  },
+  editProfileScrollContent: {
+    padding: 16,
+    paddingBottom: 60,
+  },
+  editProfileSectionHeader: {
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  editProfileSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+    letterSpacing: 0.2,
+  },
+  editProfileSectionSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  editProfilePreviewCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    marginBottom: 16,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+  },
+  editProfilePreviewImageWrap: {
+    position: 'relative',
+    width: '100%',
+    height: 140,
+    backgroundColor: '#1E293B',
+  },
+  editProfilePreviewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  editProfilePreviewGradientOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+  },
+  editProfilePreviewBadgesRow: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    flexDirection: 'row',
+    gap: 6,
+  },
+  editProfilePreviewBadge: {
+    backgroundColor: 'rgba(6, 78, 59, 0.92)',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+  },
+  editProfilePreviewBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9.5,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  editProfilePreviewChangePhotoBtn: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    backgroundColor: 'rgba(25, 30, 36, 0.85)',
+    paddingHorizontal: 11,
+    paddingVertical: 5.5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  editProfilePreviewChangePhotoText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  editProfilePreviewDetails: {
+    padding: 13,
+  },
+  editProfilePreviewStoreName: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: COLORS.textDark,
+    marginBottom: 4,
+  },
+  editProfilePreviewMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 6,
+  },
+  editProfilePreviewCategoryTag: {
+    backgroundColor: COLORS.emeraldSurface,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  editProfilePreviewCategoryText: {
+    color: COLORS.emeraldDeep,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  editProfilePreviewFeeTag: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  editProfilePreviewFeeText: {
+    color: '#92400E',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  editProfilePreviewAddress: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+  },
+  editProfileCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    marginBottom: 14,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+  },
+  editProfileCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  editProfileCardIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: COLORS.emeraldSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editProfileCardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  editProfileCardSubtitle: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 1,
+  },
+  editProfileInputGroup: {
+    marginBottom: 2,
+  },
+  editProfileInputLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.textMuted,
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  editProfileInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.beigeBg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    paddingHorizontal: 12,
+    minHeight: 46,
+  },
+  editProfileInputLeadingIcon: {
+    fontSize: 15,
+    marginRight: 8,
+  },
+  editProfileInput: {
+    flex: 1,
+    fontSize: 13,
+    color: COLORS.textDark,
+    paddingVertical: 10,
+  },
+  editProfileClearBtn: {
+    padding: 4,
+  },
+  editProfileInputHint: {
+    fontSize: 10.5,
+    color: COLORS.textMuted,
+    marginTop: 5,
+  },
+  editProfileChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  editProfileChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.beigeBg,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  editProfileChipSelected: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderColor: COLORS.emeraldDeep,
+  },
+  editProfileChipIcon: {
+    fontSize: 12,
+    marginRight: 5,
+  },
+  editProfileChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  editProfileChipTextSelected: {
+    color: '#FFFFFF',
+  },
+  editProfileUploadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.emeraldSurface,
+    borderWidth: 1,
+    borderColor: COLORS.emeraldPrimary,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  editProfileUploadBtnIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editProfileUploadBtnTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+  },
+  editProfileUploadBtnSubtitle: {
+    fontSize: 10.5,
+    color: COLORS.textMuted,
+    marginTop: 1,
+  },
+  editProfileUploadBtnArrow: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+    marginLeft: 8,
+  },
+  editProfilePresetThumbCard: {
+    width: 115,
+    height: 88,
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: COLORS.borderBeige,
+    position: 'relative',
+    backgroundColor: '#FFFFFF',
+  },
+  editProfilePresetThumbCardActive: {
+    borderColor: COLORS.emeraldPrimary,
+    borderWidth: 2.5,
+  },
+  editProfilePresetThumbImg: {
+    width: '100%',
+    height: 56,
+  },
+  editProfilePresetThumbFooter: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 6,
+    paddingVertical: 3.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  editProfilePresetThumbTitle: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    flex: 1,
+  },
+  editProfilePresetCheckBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: COLORS.emeraldPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editProfilePrimarySaveBtn: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    elevation: 3,
+    shadowColor: COLORS.emeraldDeep,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  editProfilePrimarySaveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14.5,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  editProfileFooterNote: {
+    textAlign: 'center',
+    fontSize: 10.5,
+    color: COLORS.textMuted,
+    marginTop: 12,
+    marginBottom: 10,
   },
 });
 
