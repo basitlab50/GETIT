@@ -530,6 +530,52 @@ const CATEGORIES = [
   { id: 'heritage', name: 'Local Specialties', icon: '🌾' },
 ];
 
+// --- Curated Luxury Store Cover Photo Presets ---
+const STORE_COVER_PRESETS = [
+  {
+    id: 'cover-gourmet',
+    title: 'Gourmet Supermarket',
+    category: 'Gourmet Groceries & Deli',
+    url: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=1200&q=80',
+    icon: '🛒',
+  },
+  {
+    id: 'cover-organic',
+    title: 'Fresh Organic Mart',
+    category: 'Fruits & Organics',
+    url: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=80',
+    icon: '🌿',
+  },
+  {
+    id: 'cover-boutique',
+    title: 'Modern Luxury Mart',
+    category: 'Provisions & Essentials',
+    url: 'https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=1200&q=80',
+    icon: '✨',
+  },
+  {
+    id: 'cover-pharmacy',
+    title: 'Pharmacy & Wellness',
+    category: 'Medicines & Health',
+    url: 'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?auto=format&fit=crop&w=1200&q=80',
+    icon: '💊',
+  },
+  {
+    id: 'cover-bakery',
+    title: 'Artisan Bakery & Deli',
+    category: 'Breads & Pastries',
+    url: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=1200&q=80',
+    icon: '🥐',
+  },
+  {
+    id: 'cover-cellar',
+    title: 'Cellar & Fine Drinks',
+    category: 'Wines & Beverages',
+    url: 'https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?auto=format&fit=crop&w=1200&q=80',
+    icon: '🍾',
+  },
+];
+
 // --- Featured Stores Around Me ---
 const STORES_AROUND_ME = [
   {
@@ -1066,6 +1112,17 @@ export default function App() {
     setTempOperatingDays(storeTiming.operatingDays);
     setTimingModalVisible(true);
   };
+
+  // --- STORE PROFILE & PHOTO MANAGEMENT STATE ---
+  const [storeImageModalVisible, setStoreImageModalVisible] = useState(false);
+  const [customStoreImageUrl, setCustomStoreImageUrl] = useState('');
+  const [editStoreModalVisible, setEditStoreModalVisible] = useState(false);
+  const [editStoreName, setEditStoreName] = useState('');
+  const [editStoreAddress, setEditStoreAddress] = useState('');
+  const [editStoreCategory, setEditStoreCategory] = useState('');
+  const [editStorePhone, setEditStorePhone] = useState('');
+  const [editStoreDeliveryFee, setEditStoreDeliveryFee] = useState('1200');
+  const [editStoreDescription, setEditStoreDescription] = useState('');
 
   // High performance memoized filtered suggested catalog
   const filteredSuggestedProducts = useMemo(() => {
@@ -2633,6 +2690,93 @@ export default function App() {
         ? `${currentMerchantStore?.name} is now running 24 HOURS (Always Open)! Customers can order around the clock.`
         : `Operating schedule updated: ${timingToSave.openTime} – ${timingToSave.closeTime} (${timingToSave.operatingDays}).`
     );
+  };
+
+  // --- STORE PROFILE & COVER PHOTO HANDLERS ---
+  const handleOpenStoreImageModal = () => {
+    setCustomStoreImageUrl(currentMerchantStore?.image || '');
+    setStoreImageModalVisible(true);
+  };
+
+  const handleApplyStoreImage = (newUri) => {
+    if (!newUri || !currentMerchantStore?.id) return;
+    const cleanUri = String(newUri).trim();
+    if (!cleanUri) return;
+
+    setStoresList((prev) =>
+      prev.map((s) => (s.id === currentMerchantStore.id ? { ...s, image: cleanUri } : s))
+    );
+    if (selectedStore?.id === currentMerchantStore.id) {
+      setSelectedStore((prev) => (prev ? { ...prev, image: cleanUri } : prev));
+    }
+
+    try {
+      AsyncStorage.setItem(`getit_store_image_${currentMerchantStore.id}`, cleanUri);
+    } catch (e) {}
+
+    updateDatabaseStore(currentMerchantStore.id, { image: cleanUri }).catch(console.warn);
+
+    setStoreImageModalVisible(false);
+    Alert.alert('🎉 Cover Photo Updated!', `Store image for "${currentMerchantStore.name}" updated successfully!`);
+  };
+
+  const handlePickStoreImageFromGallery = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/*'],
+        copyToCacheDirectory: true,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        handleApplyStoreImage(res.assets[0].uri);
+      }
+    } catch (err) {
+      console.warn('Error picking image:', err);
+      Alert.alert('Upload Notice', 'Could not access the selected photo from your device.');
+    }
+  };
+
+  const handleOpenEditStoreDetailsModal = () => {
+    setEditStoreName(currentMerchantStore?.name || '');
+    setEditStoreAddress(currentMerchantStore?.address || '');
+    setEditStoreCategory(currentMerchantStore?.categoryLabel || 'Gourmet Groceries & Deli');
+    setEditStorePhone(currentMerchantStore?.phone || '');
+    setEditStoreDeliveryFee(String(currentMerchantStore?.deliveryFee || '1200').replace(/\D/g, ''));
+    setEditStoreDescription(currentMerchantStore?.description || '');
+    setEditStoreModalVisible(true);
+  };
+
+  const handleSaveStoreDetails = () => {
+    if (!editStoreName.trim()) {
+      Alert.alert('Name Required', 'Please enter a name for your store.');
+      return;
+    }
+
+    const updatedObj = {
+      name: editStoreName.trim(),
+      address: editStoreAddress.trim() || 'Nigeria',
+      categoryLabel: editStoreCategory.trim() || 'Gourmet Groceries & Deli',
+      phone: editStorePhone.trim(),
+      deliveryFee: `₦${Number(editStoreDeliveryFee || 1200).toLocaleString()}`,
+      description: editStoreDescription.trim() || `${editStoreName.trim()} — verified partner store live on GETIT.`,
+    };
+
+    setStoresList((prev) =>
+      prev.map((s) => (s.id === currentMerchantStore.id ? { ...s, ...updatedObj } : s))
+    );
+
+    if (selectedStore?.id === currentMerchantStore.id) {
+      setSelectedStore((prev) => (prev ? { ...prev, ...updatedObj } : prev));
+    }
+
+    updateDatabaseStore(currentMerchantStore.id, {
+      name: updatedObj.name,
+      address: updatedObj.address,
+      phone: updatedObj.phone,
+      deliveryFee: Number(editStoreDeliveryFee || 1200),
+    }).catch(console.warn);
+
+    setEditStoreModalVisible(false);
+    Alert.alert('✅ Store Profile Updated', `Your store details for "${updatedObj.name}" were updated successfully.`);
   };
 
   const isStoreCurrentlyOpen = (store) => {
@@ -5737,85 +5881,285 @@ export default function App() {
             {merchantTab === 'store' && (
               <ScrollView
                 style={styles.merchantMainScroll}
-                contentContainerStyle={{ padding: 16, paddingBottom: 110 }}
+                contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+                showsVerticalScrollIndicator={false}
               >
-                <Text style={styles.merchantViewTitle}>Store Profile & Management</Text>
-                <Text style={styles.merchantViewSub}>Manage partner details and switch store branch</Text>
+                {/* Friendly Header Row */}
+                <View style={styles.storeProfileHeaderRow}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={styles.merchantViewTitle}>Store Profile & Identity</Text>
+                    <Text style={styles.merchantViewSub}>
+                      Manage how customers across Nigeria see and order from your store
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.storePreviewPillBtn}
+                    onPress={() => setSelectedStore(currentMerchantStore)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.storePreviewPillText}>👀 View as Buyer</Text>
+                  </TouchableOpacity>
+                </View>
 
-                <View style={styles.storeProfileCard}>
-                  <Image
-                    source={{ uri: currentMerchantStore?.image }}
-                    style={styles.storeProfileBanner}
-                  />
-                  <View style={styles.storeProfileBody}>
-                    <Text style={styles.storeProfileName}>{currentMerchantStore?.name}</Text>
-                    <Text style={styles.storeProfileCategory}>{currentMerchantStore?.categoryLabel}</Text>
-                    <Text style={styles.storeProfileAddress}>📍 {currentMerchantStore?.address}</Text>
+                {/* --- HERO STORE SHOWCASE CARD --- */}
+                <View style={styles.heroStoreShowcaseCard}>
+                  {/* Banner with Cover Image & Floating Actions */}
+                  <View style={styles.heroStoreBannerWrap}>
+                    <Image
+                      source={{ uri: currentMerchantStore?.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=1200&q=80' }}
+                      style={styles.heroStoreBannerImg}
+                      resizeMode="cover"
+                    />
+                    <View style={styles.heroStoreBannerScrim} />
 
-                    <View style={styles.storeProfileRow}>
-                      <Text style={styles.storeProfileLbl}>Live Shop Status:</Text>
+                    {/* Change Cover Photo Floating Action Pill */}
+                    <TouchableOpacity
+                      style={styles.changeCoverBtnFloating}
+                      onPress={handleOpenStoreImageModal}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.changeCoverBtnIcon}>📸</Text>
+                      <Text style={styles.changeCoverBtnText}>Change Photo</Text>
+                    </TouchableOpacity>
+
+                    {/* Live Operating Status Floating Badge */}
+                    <View style={styles.heroStoreLiveBadgeFloat}>
+                      <View style={[styles.pulseDotSmall, { backgroundColor: storeOpenStatus ? '#10B981' : '#F59E0B' }]} />
+                      <Text style={styles.heroStoreLiveBadgeText}>
+                        {storeOpenStatus ? '🟢 LIVE ON GETIT' : '⏸ PAUSED (OFFLINE)'}
+                      </Text>
+                    </View>
+
+                    {/* Floating Store Brand Avatar */}
+                    <TouchableOpacity
+                      style={styles.floatingStoreAvatar}
+                      onPress={handleOpenStoreImageModal}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.floatingStoreAvatarInitials}>
+                        {(currentMerchantStore?.name || 'S')
+                          .split(' ')
+                          .map((w) => w[0])
+                          .slice(0, 2)
+                          .join('')
+                          .toUpperCase()}
+                      </Text>
+                      <View style={styles.avatarCameraBadge}>
+                        <Text style={{ fontSize: 9 }}>📷</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Store Identity Content */}
+                  <View style={styles.heroStoreBody}>
+                    <View style={styles.heroStoreTitleRow}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                          <Text style={styles.heroStoreName} numberOfLines={2}>
+                            {currentMerchantStore?.name}
+                          </Text>
+                          <View style={styles.verifiedPartnerBadge}>
+                            <Text style={styles.verifiedPartnerText}>✓ VERIFIED</Text>
+                          </View>
+                        </View>
+
+                        <View style={styles.heroStoreMetaRow}>
+                          <View style={styles.heroCategoryPill}>
+                            <Text style={styles.heroCategoryText}>
+                              {currentMerchantStore?.categoryLabel || 'Gourmet Groceries & Deli'}
+                            </Text>
+                          </View>
+                          <Text style={styles.heroStoreRatingText}>
+                            ★ {currentMerchantStore?.rating || '5.0'} ({currentMerchantStore?.reviewCount || '100+'} reviews)
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Edit Store Info Button */}
                       <TouchableOpacity
-                        style={[
-                          styles.storeStatusToggle,
-                          storeOpenStatus ? styles.statusOpen : styles.statusPaused,
-                          { paddingVertical: 4, paddingHorizontal: 10 }
-                        ]}
-                        onPress={handleToggleStoreLive}
-                        activeOpacity={0.8}
+                        style={styles.editStoreInfoBtn}
+                        onPress={handleOpenEditStoreDetailsModal}
+                        activeOpacity={0.85}
                       >
-                        <Text style={[styles.storeStatusToggleText, { fontSize: 11 }]}>
-                          {storeOpenStatus ? '🟢 LIVE & OPEN' : '🔴 PAUSED / OFFLINE'}
-                        </Text>
+                        <Text style={styles.editStoreInfoBtnText}>✏️ Edit Details</Text>
                       </TouchableOpacity>
                     </View>
 
-                    <View style={styles.storeProfileRow}>
-                      <Text style={styles.storeProfileLbl}>Operating Hours:</Text>
-                      <Text style={[styles.storeProfileVal, { fontWeight: '800', color: COLORS.emeraldDeep }]}>
-                        {storeTiming.is24Hours
-                          ? '⚡ 24 Hours (Always Open)'
-                          : `${storeTiming.openTime} – ${storeTiming.closeTime}`}
+                    {/* Address & Store Phone */}
+                    <View style={styles.heroStoreLocationBox}>
+                      <Text style={styles.heroStoreLocationText} numberOfLines={2}>
+                        📍 {currentMerchantStore?.address || 'Nigeria'}
                       </Text>
+                      {currentMerchantStore?.phone ? (
+                        <Text style={styles.heroStorePhoneText}>
+                          📞 Official Order Line: {currentMerchantStore?.phone}
+                        </Text>
+                      ) : null}
                     </View>
 
-                    <View style={styles.storeProfileRow}>
-                      <Text style={styles.storeProfileLbl}>Operating Days:</Text>
-                      <Text style={styles.storeProfileVal}>{storeTiming.operatingDays}</Text>
-                    </View>
-
-                    <View style={styles.storeProfileRow}>
-                      <Text style={styles.storeProfileLbl}>Delivery Window:</Text>
-                      <Text style={styles.storeProfileVal}>{currentMerchantStore?.deliveryTime}</Text>
-                    </View>
-
-                    <View style={styles.storeProfileRow}>
-                      <Text style={styles.storeProfileLbl}>Customer Rating:</Text>
-                      <Text style={styles.storeProfileVal}>★ {currentMerchantStore?.rating} ({currentMerchantStore?.reviewCount} reviews)</Text>
-                    </View>
-
-                    {/* Set Shop Timing Button */}
-                    <TouchableOpacity
-                      style={[styles.primaryActionBtn, { marginTop: 14, paddingVertical: 10, backgroundColor: COLORS.emeraldPrimary }]}
-                      onPress={openTimingModal}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={[styles.primaryActionBtnText, { fontSize: 12.5 }]}>
-                        ⏰ Set Shop Hours & 24h Timing Schedule ➔
+                    {currentMerchantStore?.description ? (
+                      <Text style={styles.heroStoreDescription} numberOfLines={3}>
+                        {currentMerchantStore?.description}
                       </Text>
-                    </TouchableOpacity>
+                    ) : null}
                   </View>
                 </View>
 
-                {/* Create & Launch New Store Action Banner */}
+                {/* --- FRIENDLY INTERACTIVE STATUS CONTROLLER CARD --- */}
+                <View style={[styles.friendlyStatusCard, storeOpenStatus ? styles.statusCardLive : styles.statusCardPaused]}>
+                  <View style={{ flex: 1, paddingRight: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 20, marginRight: 8 }}>{storeOpenStatus ? '🟢' : '⏸️'}</Text>
+                      <Text style={styles.friendlyStatusTitle}>
+                        {storeOpenStatus ? 'Store is Live & Accepting Orders' : 'Store is Paused / Taking a Break'}
+                      </Text>
+                    </View>
+                    <Text style={styles.friendlyStatusSub}>
+                      {storeOpenStatus
+                        ? 'Customers in your area can browse your catalog and checkout for rapid dispatch.'
+                        : 'Your products remain saved, but customers will be informed that the store is currently closed.'}
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.friendlyStatusToggleBtn, storeOpenStatus ? styles.toggleBtnLive : styles.toggleBtnPaused]}
+                    onPress={handleToggleStoreLive}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.friendlyStatusToggleText}>
+                      {storeOpenStatus ? 'Pause Store' : 'Go Live Now ➔'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* --- 4 OPERATIONAL HIGHLIGHT CARDS (2x2 GRID) --- */}
+                <Text style={styles.sectionHeaderTitle}>Store Highlights & Operations</Text>
+                <View style={styles.storeMetricsGrid}>
+                  {/* Hours Card */}
+                  <TouchableOpacity
+                    style={styles.metricGridCard}
+                    onPress={openTimingModal}
+                    activeOpacity={0.85}
+                  >
+                    <View style={styles.metricCardTop}>
+                      <Text style={{ fontSize: 22 }}>⏰</Text>
+                      <Text style={styles.metricCardActionText}>Adjust ➔</Text>
+                    </View>
+                    <Text style={styles.metricCardLabel}>Operating Schedule</Text>
+                    <Text style={styles.metricCardValue} numberOfLines={1}>
+                      {storeTiming.is24Hours ? '⚡ 24 Hours Daily' : `${storeTiming.openTime} – ${storeTiming.closeTime}`}
+                    </Text>
+                    <Text style={styles.metricCardNote}>{storeTiming.operatingDays}</Text>
+                  </TouchableOpacity>
+
+                  {/* Catalog Card */}
+                  <TouchableOpacity
+                    style={styles.metricGridCard}
+                    onPress={() => setMerchantTab('products')}
+                    activeOpacity={0.85}
+                  >
+                    <View style={styles.metricCardTop}>
+                      <Text style={{ fontSize: 22 }}>📦</Text>
+                      <Text style={styles.metricCardActionText}>Stock ➔</Text>
+                    </View>
+                    <Text style={styles.metricCardLabel}>Catalog Products</Text>
+                    <Text style={styles.metricCardValue}>
+                      {currentMerchantStore?.products?.length || 0} Listed Items
+                    </Text>
+                    <Text style={styles.metricCardNote}>Tap to manage inventory</Text>
+                  </TouchableOpacity>
+
+                  {/* Delivery Fee & Window */}
+                  <TouchableOpacity
+                    style={styles.metricGridCard}
+                    onPress={handleOpenEditStoreDetailsModal}
+                    activeOpacity={0.85}
+                  >
+                    <View style={styles.metricCardTop}>
+                      <Text style={{ fontSize: 22 }}>🚚</Text>
+                      <Text style={styles.metricCardActionText}>Edit ➔</Text>
+                    </View>
+                    <Text style={styles.metricCardLabel}>Delivery Window</Text>
+                    <Text style={styles.metricCardValue}>
+                      {currentMerchantStore?.deliveryTime || '15-20 min'}
+                    </Text>
+                    <Text style={styles.metricCardNote}>Delivery Fee: {currentMerchantStore?.deliveryFee || '₦1,200'}</Text>
+                  </TouchableOpacity>
+
+                  {/* Reputation Card */}
+                  <View style={styles.metricGridCard}>
+                    <View style={styles.metricCardTop}>
+                      <Text style={{ fontSize: 22 }}>⭐</Text>
+                      <View style={styles.topMerchantBadge}>
+                        <Text style={{ fontSize: 10, color: COLORS.emeraldDeep, fontWeight: '800' }}>VERIFIED</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.metricCardLabel}>Customer Rating</Text>
+                    <Text style={styles.metricCardValue}>
+                      {currentMerchantStore?.rating || '5.0'} ★ Luxe
+                    </Text>
+                    <Text style={styles.metricCardNote}>100% Verified Quality</Text>
+                  </View>
+                </View>
+
+                {/* --- QUICK ACTION MANAGEMENT TILES --- */}
+                <View style={styles.quickActionTileList}>
+                  <TouchableOpacity
+                    style={styles.quickActionTile}
+                    onPress={handleOpenStoreImageModal}
+                    activeOpacity={0.85}
+                  >
+                    <View style={styles.quickActionTileIconWrap}>
+                      <Text style={{ fontSize: 22 }}>🖼️</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={styles.quickActionTileTitle}>Update Store Cover Photo</Text>
+                      <Text style={styles.quickActionTileSub}>Pick from luxury supermarket presets or upload your photo</Text>
+                    </View>
+                    <Text style={styles.quickActionTileArrow}>➔</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.quickActionTile}
+                    onPress={handleOpenEditStoreDetailsModal}
+                    activeOpacity={0.85}
+                  >
+                    <View style={styles.quickActionTileIconWrap}>
+                      <Text style={{ fontSize: 22 }}>🏪</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={styles.quickActionTileTitle}>Edit Store Profile & Contact</Text>
+                      <Text style={styles.quickActionTileSub}>Modify your store name, business address, and phone number</Text>
+                    </View>
+                    <Text style={styles.quickActionTileArrow}>➔</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.quickActionTile}
+                    onPress={openTimingModal}
+                    activeOpacity={0.85}
+                  >
+                    <View style={styles.quickActionTileIconWrap}>
+                      <Text style={{ fontSize: 22 }}>⏰</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={styles.quickActionTileTitle}>Set Daily Opening & 24h Schedule</Text>
+                      <Text style={styles.quickActionTileSub}>Configure regular hours or run 24-hours continuously</Text>
+                    </View>
+                    <Text style={styles.quickActionTileArrow}>➔</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* --- CREATE / REGISTER NEW STORE PROMPT --- */}
                 <View style={styles.createStorePromptCard}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <View style={styles.createStoreIconWrap}>
                       <Text style={{ fontSize: 26 }}>🏬</Text>
                     </View>
                     <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.createStorePromptTitle}>Open a New Store on GETIT</Text>
+                      <Text style={styles.createStorePromptTitle}>Open a New Branch on GETIT</Text>
                       <Text style={styles.createStorePromptSub}>
-                        Create a store branch that will instantly appear live to all buyers on the map & home feed.
+                        Register a second store or supermarket branch anywhere in Nigeria.
                       </Text>
                     </View>
                   </View>
@@ -5824,15 +6168,15 @@ export default function App() {
                     onPress={() => setCreateStoreModalVisible(true)}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.createStoreLaunchBtnText}>+ Register & Launch New Store ✨</Text>
+                    <Text style={styles.createStoreLaunchBtnText}>+ Register & Launch New Branch ✨</Text>
                   </TouchableOpacity>
                 </View>
 
-                {/* Switch Store Branch Selector */}
+                {/* --- SWITCH STORE BRANCH CARD --- */}
                 <View style={styles.switchBranchCard}>
                   <Text style={styles.financeCardTitle}>Select Store Branch to Manage</Text>
-                  <Text style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 10 }}>
-                    Switch between partner stores in your merchant account:
+                  <Text style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 12 }}>
+                    Tap any branch below to view its live stock and incoming orders:
                   </Text>
                   {storesList.map((st) => {
                     const isSelected = st.id === merchantStoreId;
@@ -5841,27 +6185,38 @@ export default function App() {
                         key={st.id}
                         style={[styles.branchItem, isSelected && styles.branchItemActive]}
                         onPress={() => setMerchantStoreId(st.id)}
+                        activeOpacity={0.85}
                       >
-                        <Text style={{ fontSize: 18, marginRight: 10 }}>🏬</Text>
+                        <Image
+                          source={{ uri: st.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=400&q=80' }}
+                          style={styles.branchImageThumb}
+                        />
                         <View style={{ flex: 1 }}>
-                          <Text style={[styles.branchName, isSelected && styles.branchNameActive]} numberOfLines={1} ellipsizeMode="tail">
+                          <Text style={[styles.branchName, isSelected && styles.branchNameActive]} numberOfLines={1}>
                             {st.name}
                           </Text>
-                          <Text style={styles.branchSub}>{st.categoryLabel}</Text>
+                          <Text style={styles.branchSub} numberOfLines={1}>
+                            {st.categoryLabel} • {st.address}
+                          </Text>
                         </View>
-                        {isSelected && <Text style={{ color: COLORS.emeraldPrimary, fontWeight: '900' }}>✓</Text>}
+                        {isSelected ? (
+                          <View style={styles.activeBranchCheckBadge}>
+                            <Text style={styles.activeBranchCheckText}>ACTIVE</Text>
+                          </View>
+                        ) : null}
                       </TouchableOpacity>
                     );
                   })}
                 </View>
 
-                {/* Back to Customer Button */}
+                {/* Switch to Customer View Button */}
                 <TouchableOpacity
                   style={[styles.merchantSwitchBtn, { marginTop: 14 }]}
                   onPress={() => setAppMode('customer')}
+                  activeOpacity={0.85}
                 >
                   <Text style={styles.merchantSwitchBtnText}>
-                    Switch Back to Customer View 👤
+                    🛒 Switch to Customer Shopping Mode ➔
                   </Text>
                 </TouchableOpacity>
               </ScrollView>
@@ -7254,6 +7609,273 @@ export default function App() {
             >
               <Text style={styles.primaryActionBtnText}>
                 💾 Save & Apply Shop Timing Schedule ➔
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* --- CHANGE STORE COVER PHOTO MODAL --- */}
+      <Modal
+        visible={storeImageModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setStoreImageModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setStoreImageModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalHeaderTitle}>Store Cover Photo</Text>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <ScrollView
+            style={styles.modalContent}
+            contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Live Preview Card */}
+            <Text style={styles.modalSectionHeading}>Live Store Photo Preview</Text>
+            <View style={styles.photoModalPreviewCard}>
+              <Image
+                source={{ uri: customStoreImageUrl || currentMerchantStore?.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=1200&q=80' }}
+                style={styles.photoModalPreviewImg}
+                resizeMode="cover"
+              />
+              <View style={styles.photoModalPreviewFooter}>
+                <Text style={styles.photoModalStoreName}>{currentMerchantStore?.name}</Text>
+                <Text style={styles.photoModalStoreSub}>{currentMerchantStore?.categoryLabel} • {currentMerchantStore?.address}</Text>
+              </View>
+            </View>
+
+            {/* Option 1: Upload from Phone Gallery */}
+            <Text style={styles.modalSectionHeading}>Option 1: Upload from Device</Text>
+            <TouchableOpacity
+              style={styles.uploadOptionCard}
+              onPress={handlePickStoreImageFromGallery}
+              activeOpacity={0.85}
+            >
+              <View style={styles.uploadOptionIconBox}>
+                <Text style={{ fontSize: 26 }}>📁</Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={styles.uploadOptionTitle}>Choose Photo from Phone</Text>
+                <Text style={styles.uploadOptionSub}>
+                  Select any high-resolution photo or store logo from your device library
+                </Text>
+              </View>
+              <Text style={{ color: COLORS.emeraldPrimary, fontSize: 18, fontWeight: '800' }}>➔</Text>
+            </TouchableOpacity>
+
+            {/* Option 2: Curated Luxury Presets */}
+            <Text style={[styles.modalSectionHeading, { marginTop: 22 }]}>
+              Option 2: Luxury Store Showcase Presets
+            </Text>
+            <Text style={styles.presetSubtitle}>
+              Tap any curated storefront below to immediately set it as your live store banner:
+            </Text>
+
+            <View style={styles.presetGrid}>
+              {STORE_COVER_PRESETS.map((preset) => {
+                const isCurrent = (customStoreImageUrl || currentMerchantStore?.image) === preset.url;
+                return (
+                  <TouchableOpacity
+                    key={preset.id}
+                    style={[styles.presetCard, isCurrent && styles.presetCardActive]}
+                    onPress={() => {
+                      setCustomStoreImageUrl(preset.url);
+                      handleApplyStoreImage(preset.url);
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Image
+                      source={{ uri: preset.url }}
+                      style={styles.presetThumb}
+                      resizeMode="cover"
+                    />
+                    <View style={styles.presetCardContent}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                        <Text style={{ fontSize: 13, marginRight: 5 }}>{preset.icon}</Text>
+                        <Text style={styles.presetTitle} numberOfLines={1}>
+                          {preset.title}
+                        </Text>
+                      </View>
+                      <Text style={styles.presetCategory} numberOfLines={1}>
+                        {preset.category}
+                      </Text>
+
+                      <View style={[styles.presetSelectPill, isCurrent && styles.presetSelectPillActive]}>
+                        <Text style={[styles.presetSelectText, isCurrent && styles.presetSelectTextActive]}>
+                          {isCurrent ? '✓ Current Photo' : 'Select Photo'}
+                        </Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Option 3: Paste Custom Image Link */}
+            <Text style={[styles.modalSectionHeading, { marginTop: 22 }]}>
+              Option 3: Paste Custom Image Link (URL)
+            </Text>
+            <View style={styles.urlInputCard}>
+              <Text style={styles.urlInputLabel}>PASTE IMAGE URL (HTTPS)</Text>
+              <TextInput
+                style={styles.urlInputField}
+                value={customStoreImageUrl}
+                onChangeText={setCustomStoreImageUrl}
+                placeholder="https://images.unsplash.com/photo-..."
+                placeholderTextColor="#94A3B8"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                style={[styles.primaryActionBtn, { marginTop: 10, backgroundColor: COLORS.emeraldPrimary }]}
+                onPress={() => handleApplyStoreImage(customStoreImageUrl)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.primaryActionBtnText}>Apply Photo URL ➔</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* --- EDIT STORE DETAILS MODAL --- */}
+      <Modal
+        visible={editStoreModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setEditStoreModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setEditStoreModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalHeaderTitle}>Edit Store Profile</Text>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <ScrollView
+            style={styles.modalContent}
+            contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={styles.modalSectionHeading}>Basic Store Identity</Text>
+
+            {/* Store Name */}
+            <View style={styles.formFieldGroup}>
+              <Text style={styles.formLabel}>STORE / BUSINESS NAME *</Text>
+              <TextInput
+                style={styles.formInput}
+                value={editStoreName}
+                onChangeText={setEditStoreName}
+                placeholder="e.g. Fresh Mart Maitama"
+                placeholderTextColor="#94A3B8"
+              />
+            </View>
+
+            {/* Store Category */}
+            <View style={styles.formFieldGroup}>
+              <Text style={styles.formLabel}>PRIMARY CATEGORY *</Text>
+              <TextInput
+                style={styles.formInput}
+                value={editStoreCategory}
+                onChangeText={setEditStoreCategory}
+                placeholder="e.g. Gourmet Groceries & Deli"
+                placeholderTextColor="#94A3B8"
+              />
+              {/* Category Quick Pills */}
+              <View style={styles.quickCategoryPillsRow}>
+                {['Gourmet & Groceries', 'Supermarket', 'Fruits & Organics', 'Pharmacy & Health', 'Artisan Bakery', 'Cellar & Drinks'].map((cat) => (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[styles.quickCatPill, editStoreCategory === cat && styles.quickCatPillActive]}
+                    onPress={() => setEditStoreCategory(cat)}
+                  >
+                    <Text style={[styles.quickCatPillText, editStoreCategory === cat && styles.quickCatPillTextActive]}>
+                      {cat}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* Store Address */}
+            <View style={styles.formFieldGroup}>
+              <Text style={styles.formLabel}>STORE LOCATION / ADDRESS *</Text>
+              <TextInput
+                style={styles.formInput}
+                value={editStoreAddress}
+                onChangeText={setEditStoreAddress}
+                placeholder="e.g. Plot 14 Gana Street, Maitama, Abuja"
+                placeholderTextColor="#94A3B8"
+              />
+            </View>
+
+            {/* Official Phone */}
+            <View style={styles.formFieldGroup}>
+              <Text style={styles.formLabel}>OFFICIAL PHONE / WHATSAPP NUMBER *</Text>
+              <TextInput
+                style={styles.formInput}
+                value={editStorePhone}
+                onChangeText={setEditStorePhone}
+                placeholder="e.g. 0803 123 4567"
+                placeholderTextColor="#94A3B8"
+                keyboardType="phone-pad"
+              />
+            </View>
+
+            {/* Delivery Fee */}
+            <View style={styles.formFieldGroup}>
+              <Text style={styles.formLabel}>DEFAULT DELIVERY FEE (₦)</Text>
+              <TextInput
+                style={styles.formInput}
+                value={editStoreDeliveryFee}
+                onChangeText={setEditStoreDeliveryFee}
+                placeholder="e.g. 1200"
+                placeholderTextColor="#94A3B8"
+                keyboardType="numeric"
+              />
+            </View>
+
+            {/* Description */}
+            <View style={styles.formFieldGroup}>
+              <Text style={styles.formLabel}>STORE DESCRIPTION & SPECIALTY</Text>
+              <TextInput
+                style={[styles.formInput, { height: 75, textAlignVertical: 'top', paddingTop: 10 }]}
+                value={editStoreDescription}
+                onChangeText={setEditStoreDescription}
+                placeholder="Brief summary of your provisions, fresh imports, or pharmacy catalog..."
+                placeholderTextColor="#94A3B8"
+                multiline
+              />
+            </View>
+
+            {/* Save Button */}
+            <TouchableOpacity
+              style={[styles.primaryActionBtn, { marginTop: 18, backgroundColor: COLORS.emeraldPrimary }]}
+              onPress={handleSaveStoreDetails}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryActionBtnText}>
+                💾 Save Store Details & Update Profile ➔
               </Text>
             </TouchableOpacity>
           </ScrollView>
@@ -10009,54 +10631,555 @@ const styles = StyleSheet.create({
     borderColor: COLORS.borderBeige,
   },
 
-  // Store Profile Management
-  storeProfileCard: {
+  // --- Redesigned Luxury & Friendly Store Profile Styles ---
+  storeProfileHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  storePreviewPillBtn: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+    borderWidth: 1.5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+  },
+  storePreviewPillText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  heroStoreShowcaseCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
+    borderRadius: 22,
     overflow: 'hidden',
-    marginTop: 12,
-    marginBottom: 14,
+    marginTop: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  heroStoreBannerWrap: {
+    position: 'relative',
+    width: '100%',
+    height: 185,
+    backgroundColor: '#1E293B',
+  },
+  heroStoreBannerImg: {
+    width: '100%',
+    height: '100%',
+  },
+  heroStoreBannerScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+  },
+  changeCoverBtnFloating: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+  },
+  changeCoverBtnIcon: {
+    fontSize: 13,
+    marginRight: 6,
+  },
+  changeCoverBtnText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  heroStoreLiveBadgeFloat: {
+    position: 'absolute',
+    top: 14,
+    left: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+  },
+  pulseDotSmall: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  heroStoreLiveBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  floatingStoreAvatar: {
+    position: 'absolute',
+    bottom: -22,
+    left: 18,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: COLORS.emeraldDeep,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3.5,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  floatingStoreAvatarInitials: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: COLORS.gold,
+    fontFamily: 'serif',
+  },
+  avatarCameraBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#1E293B',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroStoreBody: {
+    paddingHorizontal: 18,
+    paddingTop: 30,
+    paddingBottom: 18,
+  },
+  heroStoreTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  heroStoreName: {
+    fontSize: 19,
+    fontWeight: '900',
+    color: COLORS.textDark,
+    fontFamily: 'serif',
+    letterSpacing: 0.2,
+  },
+  verifiedPartnerBadge: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  verifiedPartnerText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#92400E',
+    letterSpacing: 0.6,
+  },
+  heroStoreMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  heroCategoryPill: {
+    backgroundColor: COLORS.beigeBg,
+    borderColor: COLORS.borderBeige,
+    borderWidth: 1,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  heroCategoryText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  heroStoreRatingText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#D97706',
+  },
+  editStoreInfoBtn: {
+    backgroundColor: COLORS.beigeBg,
+    borderColor: COLORS.borderBeige,
+    borderWidth: 1,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 12,
+  },
+  editStoreInfoBtnText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+  },
+  heroStoreLocationBox: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.borderLight,
+    gap: 3,
+  },
+  heroStoreLocationText: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    lineHeight: 17,
+  },
+  heroStorePhoneText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: COLORS.emeraldDeep,
+  },
+  heroStoreDescription: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+    marginTop: 8,
+    lineHeight: 17,
+  },
+  friendlyStatusCard: {
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusCardLive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  statusCardPaused: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  friendlyStatusTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  friendlyStatusSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  friendlyStatusToggleBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 12,
+  },
+  toggleBtnLive: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  toggleBtnPaused: {
+    backgroundColor: COLORS.emeraldPrimary,
+  },
+  friendlyStatusToggleText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  sectionHeaderTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    marginBottom: 10,
+    marginTop: 4,
+    letterSpacing: 0.2,
+  },
+  storeMetricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 16,
+  },
+  metricGridCard: {
+    width: '48%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: COLORS.borderBeige,
   },
-  storeProfileBanner: {
-    width: '100%',
-    height: 120,
-  },
-  storeProfileBody: {
-    padding: 16,
-  },
-  storeProfileName: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: COLORS.textDark,
-    fontFamily: 'serif',
-  },
-  storeProfileCategory: {
-    fontSize: 11.5,
-    color: COLORS.roseGold,
-    marginTop: 2,
-  },
-  storeProfileAddress: {
-    fontSize: 11.5,
-    color: COLORS.textMuted,
-    marginVertical: 6,
-  },
-  storeProfileRow: {
+  metricCardTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 4,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderLight,
+    alignItems: 'center',
+    marginBottom: 8,
   },
-  storeProfileLbl: {
+  metricCardActionText: {
     fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.emeraldPrimary,
+  },
+  metricCardLabel: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  metricCardValue: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: COLORS.textDark,
+    marginVertical: 3,
+  },
+  metricCardNote: {
+    fontSize: 10.5,
     color: COLORS.textMuted,
   },
-  storeProfileVal: {
+  topMerchantBadge: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  quickActionTileList: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    marginBottom: 16,
+    gap: 6,
+  },
+  quickActionTile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+  },
+  quickActionTileIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: COLORS.beigeBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+  },
+  quickActionTileTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  quickActionTileSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  quickActionTileArrow: {
+    fontSize: 15,
+    color: COLORS.emeraldPrimary,
+    fontWeight: '900',
+    marginLeft: 6,
+  },
+  branchImageThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    marginRight: 10,
+  },
+  activeBranchCheckBadge: {
+    backgroundColor: COLORS.emeraldDeep,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  activeBranchCheckText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  photoModalPreviewCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    marginBottom: 16,
+  },
+  photoModalPreviewImg: {
+    width: '100%',
+    height: 160,
+  },
+  photoModalPreviewFooter: {
+    padding: 12,
+  },
+  photoModalStoreName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  photoModalStoreSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  uploadOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: COLORS.emeraldDeep,
+    marginBottom: 12,
+  },
+  uploadOptionIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadOptionTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  uploadOptionSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  presetSubtitle: {
     fontSize: 11.5,
+    color: COLORS.textMuted,
+    marginBottom: 10,
+  },
+  presetGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 14,
+  },
+  presetCard: {
+    width: '48%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: COLORS.borderBeige,
+  },
+  presetCardActive: {
+    borderColor: COLORS.emeraldPrimary,
+    borderWidth: 2,
+  },
+  presetThumb: {
+    width: '100%',
+    height: 90,
+  },
+  presetCardContent: {
+    padding: 10,
+  },
+  presetTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    flex: 1,
+  },
+  presetCategory: {
+    fontSize: 10,
+    color: COLORS.textMuted,
+    marginBottom: 8,
+  },
+  presetSelectPill: {
+    backgroundColor: COLORS.beigeBg,
+    paddingVertical: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  presetSelectPillActive: {
+    backgroundColor: COLORS.emeraldDeep,
+  },
+  presetSelectText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  presetSelectTextActive: {
+    color: '#FFFFFF',
+  },
+  urlInputCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  urlInputLabel: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: COLORS.textMuted,
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  urlInputField: {
+    backgroundColor: COLORS.beigeBg,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 12,
+    color: COLORS.textDark,
+  },
+  quickCategoryPillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  quickCatPill: {
+    backgroundColor: COLORS.beigeBg,
+    borderColor: COLORS.borderBeige,
+    borderWidth: 1,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 10,
+  },
+  quickCatPillActive: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderColor: COLORS.emeraldDeep,
+  },
+  quickCatPillText: {
+    fontSize: 10.5,
     fontWeight: '700',
     color: COLORS.textDark,
+  },
+  quickCatPillTextActive: {
+    color: '#FFFFFF',
   },
   switchBranchCard: {
     backgroundColor: '#FFFFFF',
