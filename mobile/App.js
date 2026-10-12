@@ -952,6 +952,9 @@ export default function App() {
   // Pinned Map Location State for Customer & Riders
   const mapRef = useRef(null);
   const cartMapRef = useRef(null);
+  const storeMiniMapRef = useRef(null);
+  const storeFullMapRef = useRef(null);
+  const buyerExploreMapRef = useRef(null);
   const [cameFromCart, setCameFromCart] = useState(false);
   const searchDebounceRef = useRef(null);
   const [mapSearchText, setMapSearchText] = useState('');
@@ -3085,11 +3088,63 @@ export default function App() {
         setEditStoreLatitude(latitude);
         setEditStoreLongitude(longitude);
         setStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+        if (storeMiniMapRef.current) {
+          storeMiniMapRef.current.animateToRegion({
+            latitude,
+            longitude,
+            latitudeDelta: 0.008,
+            longitudeDelta: 0.008,
+          }, 400);
+        }
+        if (storeFullMapRef.current) {
+          storeFullMapRef.current.animateToRegion({
+            latitude,
+            longitude,
+            latitudeDelta: 0.012,
+            longitudeDelta: 0.012,
+          }, 400);
+        }
         Alert.alert('🎯 Store Location Captured!', `Pin moved to your current GPS position: ${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E`);
       }
     } catch (err) {
       console.warn('Error obtaining store GPS:', err);
       Alert.alert('GPS Notice', 'Could not access device GPS. You can drag the pin on the map to place your store.');
+    }
+  };
+
+  const handleZoomStoreMiniMap = (zoomIn) => {
+    const factor = zoomIn ? 0.5 : 2;
+    const curLatDelta = storeMapRegion.latitudeDelta || 0.008;
+    const curLngDelta = storeMapRegion.longitudeDelta || 0.008;
+    const newLatDelta = Math.max(0.001, Math.min(1.0, curLatDelta * factor));
+    const newLngDelta = Math.max(0.001, Math.min(1.0, curLngDelta * factor));
+    const newReg = {
+      latitude: Number(editStoreLatitude) || 9.0882,
+      longitude: Number(editStoreLongitude) || 7.4933,
+      latitudeDelta: newLatDelta,
+      longitudeDelta: newLngDelta,
+    };
+    setStoreMapRegion(newReg);
+    if (storeMiniMapRef.current) {
+      storeMiniMapRef.current.animateToRegion(newReg, 250);
+    }
+  };
+
+  const handleZoomStoreFullMap = (zoomIn) => {
+    const factor = zoomIn ? 0.5 : 2;
+    const curLatDelta = storeMapRegion.latitudeDelta || 0.012;
+    const curLngDelta = storeMapRegion.longitudeDelta || 0.012;
+    const newLatDelta = Math.max(0.001, Math.min(1.0, curLatDelta * factor));
+    const newLngDelta = Math.max(0.001, Math.min(1.0, curLngDelta * factor));
+    const newReg = {
+      latitude: Number(editStoreLatitude) || 9.0882,
+      longitude: Number(editStoreLongitude) || 7.4933,
+      latitudeDelta: newLatDelta,
+      longitudeDelta: newLngDelta,
+    };
+    setStoreMapRegion(newReg);
+    if (storeFullMapRef.current) {
+      storeFullMapRef.current.animateToRegion(newReg, 250);
     }
   };
 
@@ -8802,29 +8857,90 @@ export default function App() {
 
               {/* Store GPS Map Location Box */}
               <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
-                <Text style={styles.editProfileInputLabel}>STOREFRONT GPS PIN ON MAP *</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.editProfileInputLabel}>STOREFRONT GPS PIN ON MAP *</Text>
+                  <TouchableOpacity
+                    onPress={() => setStoreMapModalVisible(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: COLORS.emeraldPrimary }}>
+                      ⛶ Fullscreen ➔
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
                 <View style={styles.storeMiniMapContainer}>
                   <MapView
+                    ref={storeMiniMapRef}
                     style={styles.storeMiniMap}
-                    region={{
+                    initialRegion={{
                       latitude: Number(editStoreLatitude) || 9.0882,
                       longitude: Number(editStoreLongitude) || 7.4933,
                       latitudeDelta: 0.008,
                       longitudeDelta: 0.008,
                     }}
-                    scrollEnabled={false}
-                    zoomEnabled={false}
+                    scrollEnabled={true}
+                    zoomEnabled={true}
+                    pitchEnabled={true}
+                    rotateEnabled={true}
+                    zoomTapEnabled={true}
+                    zoomControlEnabled={false}
+                    onRegionChangeComplete={(r) => {
+                      if (r) setStoreMapRegion(r);
+                    }}
+                    onPress={(e) => {
+                      if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                        const { latitude, longitude } = e.nativeEvent.coordinate;
+                        setEditStoreLatitude(latitude);
+                        setEditStoreLongitude(longitude);
+                        setStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+                      }
+                    }}
                   >
                     <Marker
                       coordinate={{
                         latitude: Number(editStoreLatitude) || 9.0882,
                         longitude: Number(editStoreLongitude) || 7.4933,
                       }}
+                      draggable={true}
+                      onDragEnd={(e) => {
+                        if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                          const { latitude, longitude } = e.nativeEvent.coordinate;
+                          setEditStoreLatitude(latitude);
+                          setEditStoreLongitude(longitude);
+                          setStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+                        }
+                      }}
                       title={editStoreName || 'Your Store'}
-                      description={editStoreAddress || 'Storefront Location'}
+                      description="Drag or tap to place shop pin"
                       pinColor={COLORS.emeraldPrimary}
                     />
                   </MapView>
+
+                  {/* Top Guide Hint Pill */}
+                  <View style={styles.storeMiniMapTopHint}>
+                    <Text style={styles.storeMiniMapTopHintText} numberOfLines={1}>
+                      👆 Tap or drag pin • Use ➕ / ➖ to zoom
+                    </Text>
+                  </View>
+
+                  {/* Mini Map Floating Zoom FABs */}
+                  <View style={styles.storeMiniMapZoomFabCol}>
+                    <TouchableOpacity
+                      style={styles.storeMiniMapZoomBtn}
+                      onPress={() => handleZoomStoreMiniMap(true)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.storeMiniMapZoomText}>➕</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.storeMiniMapZoomBtn}
+                      onPress={() => handleZoomStoreMiniMap(false)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.storeMiniMapZoomText}>➖</Text>
+                    </TouchableOpacity>
+                  </View>
 
                   {/* Overlay Coordinates Pill */}
                   <View style={styles.storeMiniMapBadge}>
@@ -8841,7 +8957,7 @@ export default function App() {
                     onPress={() => setStoreMapModalVisible(true)}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.storeMapOpenBtnText}>📍 Pin Exact Location on Map ➔</Text>
+                    <Text style={styles.storeMapOpenBtnText}>📍 Pin on Fullscreen Map ➔</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -8913,6 +9029,18 @@ export default function App() {
         animationType="slide"
         transparent={false}
         onRequestClose={() => setStoreMapModalVisible(false)}
+        onShow={() => {
+          setTimeout(() => {
+            if (storeFullMapRef.current) {
+              storeFullMapRef.current.animateToRegion({
+                latitude: Number(editStoreLatitude) || 9.0882,
+                longitude: Number(editStoreLongitude) || 7.4933,
+                latitudeDelta: 0.008,
+                longitudeDelta: 0.008,
+              }, 300);
+            }
+          }, 150);
+        }}
       >
         <SafeAreaView style={styles.storeMapModalSafeArea}>
           <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
@@ -8971,12 +9099,16 @@ export default function App() {
                   onPress={() => {
                     setEditStoreLatitude(loc.lat);
                     setEditStoreLongitude(loc.lng);
-                    setStoreMapRegion({
+                    const nextReg = {
                       latitude: loc.lat,
                       longitude: loc.lng,
-                      latitudeDelta: 0.012,
-                      longitudeDelta: 0.012,
-                    });
+                      latitudeDelta: 0.010,
+                      longitudeDelta: 0.010,
+                    };
+                    setStoreMapRegion(nextReg);
+                    if (storeFullMapRef.current) {
+                      storeFullMapRef.current.animateToRegion(nextReg, 350);
+                    }
                   }}
                   activeOpacity={0.8}
                 >
@@ -8989,8 +9121,15 @@ export default function App() {
           {/* Interactive Map View */}
           <View style={{ flex: 1, position: 'relative' }}>
             <MapView
+              ref={storeFullMapRef}
               style={{ width: '100%', height: '100%' }}
-              region={storeMapRegion}
+              initialRegion={storeMapRegion}
+              scrollEnabled={true}
+              zoomEnabled={true}
+              pitchEnabled={true}
+              rotateEnabled={true}
+              zoomTapEnabled={true}
+              zoomControlEnabled={false}
               onRegionChangeComplete={(r) => {
                 if (r) setStoreMapRegion(r);
               }}
@@ -9009,7 +9148,7 @@ export default function App() {
                   latitude: Number(editStoreLatitude) || 9.0882,
                   longitude: Number(editStoreLongitude) || 7.4933,
                 }}
-                draggable
+                draggable={true}
                 onDragEnd={(e) => {
                   if (e && e.nativeEvent && e.nativeEvent.coordinate) {
                     const { latitude, longitude } = e.nativeEvent.coordinate;
@@ -9029,16 +9168,54 @@ export default function App() {
               <Text style={styles.storeMapFloatCoordsText}>
                 🎯 Store Pin: {(Number(editStoreLatitude) || 9.0882).toFixed(5)}° N, {(Number(editStoreLongitude) || 7.4933).toFixed(5)}° E
               </Text>
+              <Text style={styles.storeMapFloatSubText}>
+                Tap anywhere or drag pin to adjust • Use ➕ / ➖ to zoom
+              </Text>
             </View>
 
-            {/* GPS FAB Button */}
-            <TouchableOpacity
-              style={styles.storeMapFabGps}
-              onPress={handleGetMerchantStoreLiveLocation}
-              activeOpacity={0.85}
-            >
-              <Text style={{ fontSize: 22 }}>🎯</Text>
-            </TouchableOpacity>
+            {/* Map Action Floating Controls (GPS, Zoom In, Zoom Out, Center Pin) */}
+            <View style={styles.storeMapFabStack}>
+              <TouchableOpacity
+                style={styles.storeMapFabBtn}
+                onPress={handleGetMerchantStoreLiveLocation}
+                activeOpacity={0.85}
+              >
+                <Text style={{ fontSize: 20 }}>🎯</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.storeMapFabBtn}
+                onPress={() => handleZoomStoreFullMap(true)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.storeMapFabZoomText}>➕</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.storeMapFabBtn}
+                onPress={() => handleZoomStoreFullMap(false)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.storeMapFabZoomText}>➖</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.storeMapFabBtn}
+                onPress={() => {
+                  if (storeFullMapRef.current) {
+                    storeFullMapRef.current.animateToRegion({
+                      latitude: Number(editStoreLatitude) || 9.0882,
+                      longitude: Number(editStoreLongitude) || 7.4933,
+                      latitudeDelta: 0.008,
+                      longitudeDelta: 0.008,
+                    }, 250);
+                  }
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={{ fontSize: 18 }}>📍</Text>
+              </TouchableOpacity>
+            </View>
 
             {/* Bottom Confirm Bar */}
             <View style={styles.storeMapBottomConfirmBar}>
@@ -14994,7 +15171,7 @@ const styles = StyleSheet.create({
   // --- Merchant Store Location Mini Map & Full Pin Picker Modal ---
   storeMiniMapContainer: {
     width: '100%',
-    height: 135,
+    height: 210,
     borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
@@ -15005,6 +15182,49 @@ const styles = StyleSheet.create({
   storeMiniMap: {
     width: '100%',
     height: '100%',
+  },
+  storeMiniMapTopHint: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    right: 48,
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  storeMiniMapTopHintText: {
+    color: '#FFFFFF',
+    fontSize: 9.5,
+    fontWeight: '700',
+  },
+  storeMiniMapZoomFabCol: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    flexDirection: 'column',
+    gap: 6,
+    zIndex: 10,
+  },
+  storeMiniMapZoomBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.18,
+    shadowRadius: 2,
+  },
+  storeMiniMapZoomText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
   },
   storeMiniMapBadge: {
     position: 'absolute',
@@ -15121,16 +15341,50 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 12,
     left: 14,
-    right: 64,
-    backgroundColor: 'rgba(6, 78, 59, 0.92)',
-    paddingVertical: 7,
+    right: 70,
+    backgroundColor: 'rgba(6, 78, 59, 0.94)',
+    paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 20,
+    borderRadius: 16,
   },
   storeMapFloatCoordsText: {
     color: '#FFFFFF',
-    fontSize: 10.5,
+    fontSize: 11,
     fontWeight: '800',
+  },
+  storeMapFloatSubText: {
+    color: COLORS.emeraldSurface,
+    fontSize: 9.5,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  storeMapFabStack: {
+    position: 'absolute',
+    top: 12,
+    right: 14,
+    flexDirection: 'column',
+    gap: 8,
+    zIndex: 10,
+  },
+  storeMapFabBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  storeMapFabZoomText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
   },
   storeMapFabGps: {
     position: 'absolute',
