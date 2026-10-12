@@ -3054,7 +3054,7 @@ export default function App() {
       address: editStoreAddress.trim() || 'Nigeria',
       categoryLabel: editStoreCategory.trim() || 'Gourmet Groceries & Deli',
       phone: editStorePhone.trim(),
-      deliveryFee: `₦${Number(editStoreDeliveryFee || 1200).toLocaleString()}`,
+      deliveryFee: currentMerchantStore?.deliveryFee || '₦1,200',
       description: editStoreDescription.trim() || `${editStoreName.trim()} — verified partner store live on GETIT.`,
       ...(finalImage ? { image: finalImage } : {}),
     };
@@ -3078,7 +3078,6 @@ export default function App() {
         name: updatedObj.name,
         address: updatedObj.address,
         phone: updatedObj.phone,
-        deliveryFee: Number(editStoreDeliveryFee || 1200),
         ...(finalImage ? { image: finalImage } : {}),
       }).catch(console.warn);
     }
@@ -6578,22 +6577,20 @@ export default function App() {
                     <Text style={styles.metricCardNote}>Tap to manage inventory</Text>
                   </TouchableOpacity>
 
-                  {/* Delivery Fee & Window */}
-                  <TouchableOpacity
-                    style={styles.metricGridCard}
-                    onPress={handleOpenEditStoreDetailsModal}
-                    activeOpacity={0.85}
-                  >
+                  {/* Delivery Logistics */}
+                  <View style={styles.metricGridCard}>
                     <View style={styles.metricCardTop}>
                       <Text style={{ fontSize: 22 }}>🚚</Text>
-                      <Text style={styles.metricCardActionText}>Edit ➔</Text>
+                      <View style={styles.topMerchantBadge}>
+                        <Text style={{ fontSize: 9.5, color: COLORS.emeraldDeep, fontWeight: '800' }}>AUTOMATED</Text>
+                      </View>
                     </View>
-                    <Text style={styles.metricCardLabel}>Delivery Window</Text>
+                    <Text style={styles.metricCardLabel}>Rider Dispatch</Text>
                     <Text style={styles.metricCardValue}>
                       {currentMerchantStore?.deliveryTime || '15-20 min'}
                     </Text>
-                    <Text style={styles.metricCardNote}>Delivery Fee: {currentMerchantStore?.deliveryFee || '₦1,200'}</Text>
-                  </TouchableOpacity>
+                    <Text style={styles.metricCardNote}>Calculated by distance</Text>
+                  </View>
 
                   {/* Reputation Card */}
                   <View style={styles.metricGridCard}>
@@ -8370,7 +8367,7 @@ export default function App() {
                   </View>
                   <View style={styles.editProfilePreviewFeeTag}>
                     <Text style={styles.editProfilePreviewFeeText}>
-                      🚚 ₦{Number(editStoreDeliveryFee || 1200).toLocaleString()} Delivery
+                      ⚡ Rapid Courier Dispatch
                     </Text>
                   </View>
                 </View>
@@ -8588,63 +8585,7 @@ export default function App() {
               </View>
             </View>
 
-            {/* 5. CARD: DELIVERY LOGISTICS & FEE */}
-            <View style={styles.editProfileCard}>
-              <View style={styles.editProfileCardHeader}>
-                <View style={styles.editProfileCardIconBox}>
-                  <Text style={{ fontSize: 18 }}>🚚</Text>
-                </View>
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.editProfileCardTitle}>Delivery Logistics & Pricing</Text>
-                  <Text style={styles.editProfileCardSubtitle}>Default delivery charge applied to orders</Text>
-                </View>
-              </View>
-
-              <View style={styles.editProfileInputGroup}>
-                <Text style={styles.editProfileInputLabel}>DEFAULT DELIVERY FEE (₦) *</Text>
-                <View style={styles.editProfileInputWrap}>
-                  <Text style={[styles.editProfileInputLeadingIcon, { fontWeight: '800', color: COLORS.emeraldPrimary }]}>₦</Text>
-                  <TextInput
-                    style={styles.editProfileInput}
-                    value={editStoreDeliveryFee}
-                    onChangeText={(val) => setEditStoreDeliveryFee(val.replace(/\D/g, ''))}
-                    placeholder="1200"
-                    placeholderTextColor="#94A3B8"
-                    keyboardType="numeric"
-                  />
-                </View>
-
-                {/* Quick Fee Presets */}
-                <Text style={[styles.editProfileInputHint, { marginTop: 8, marginBottom: 6, fontWeight: '700' }]}>
-                  ⚡ Quick preset amounts:
-                </Text>
-                <View style={styles.editProfileChipsWrap}>
-                  {[
-                    { fee: '500', label: '₦500 (Nearby)' },
-                    { fee: '1000', label: '₦1,000 (Standard)' },
-                    { fee: '1200', label: '₦1,200 (Recommended)' },
-                    { fee: '1500', label: '₦1,500 (Express)' },
-                    { fee: '2000', label: '₦2,000 (City-Wide)' },
-                  ].map((p) => {
-                    const isSelected = String(editStoreDeliveryFee) === p.fee;
-                    return (
-                      <TouchableOpacity
-                        key={p.fee}
-                        style={[styles.editProfileChip, isSelected && styles.editProfileChipSelected]}
-                        onPress={() => setEditStoreDeliveryFee(p.fee)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={[styles.editProfileChipText, isSelected && styles.editProfileChipTextSelected]}>
-                          {p.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            </View>
-
-            {/* 6. CARD: ABOUT & SPECIALTY */}
+            {/* 5. CARD: ABOUT & SPECIALTY */}
             <View style={styles.editProfileCard}>
               <View style={styles.editProfileCardHeader}>
                 <View style={styles.editProfileCardIconBox}>
