@@ -27,6 +27,7 @@ import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
 import {
   addStoreInventoryItem,
   createDatabaseOrder,
+  getDatabaseOrders,
   updateDatabaseOrderStatus,
   subscribeToOrders,
   getStores,
@@ -1234,6 +1235,27 @@ export default function App() {
     },
   ]);
 
+  // Persistent helpers for local offline storage across app reloads
+  const updateAndPersistOrders = (updater) => {
+    setOrders((prev) => {
+      const updated = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        AsyncStorage.setItem('getit_orders', JSON.stringify(updated)).catch(console.warn);
+      } catch (e) {}
+      return updated;
+    });
+  };
+
+  const updateAndPersistStores = (updater) => {
+    setStoresList((prev) => {
+      const updated = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        AsyncStorage.setItem('getit_stores_list', JSON.stringify(updated)).catch(console.warn);
+      } catch (e) {}
+      return updated;
+    });
+  };
+
   // Live Animated Bolt Motorbike Rider Glide Simulation
   useEffect(() => {
     const timer = setInterval(() => {
@@ -1265,16 +1287,17 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Supabase Real-time Cloud Orders Subscription
+  // Supabase Real-time Cloud Orders Subscription (Persisted)
   useEffect(() => {
     const unsubscribe = subscribeToOrders((payload) => {
       if (payload.eventType === 'INSERT' && payload.new) {
         const item = payload.new;
-        setOrders((prev) => {
+        updateAndPersistOrders((prev) => {
           if (prev.some((o) => o.id === item.id)) return prev;
           return [
             {
               id: item.id,
+              storeId: item.store_id,
               storeName: item.store_name,
               itemsCount: item.items_count,
               items: item.items || [],
@@ -1296,14 +1319,16 @@ export default function App() {
                 latitude: item.delivery_lat,
                 longitude: item.delivery_lng,
               },
-              createdAt: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              createdAt: item.created_at
+                ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : '12:00 PM',
             },
             ...prev,
           ];
         });
       } else if (payload.eventType === 'UPDATE' && payload.new) {
         const updated = payload.new;
-        setOrders((prev) =>
+        updateAndPersistOrders((prev) =>
           prev.map((o) => {
             if (o.id === updated.id) {
               return {
@@ -1382,9 +1407,32 @@ export default function App() {
         if (!isMounted) return;
 
         setStoresList((prev) => {
+          const prevMap = new Map(prev.map((s) => [s.id, s]));
+          const mergedCloud = enriched.map((dbStore) => {
+            const existing = prevMap.get(dbStore.id);
+            if (!existing) return dbStore;
+            return {
+              ...dbStore,
+              ...existing,
+              id: dbStore.id,
+              name: existing.name || dbStore.name,
+              address: existing.address || dbStore.address,
+              phone: existing.phone || dbStore.phone,
+              deliveryFee: existing.deliveryFee || dbStore.deliveryFee,
+              is24Hours: existing.is24Hours !== undefined ? existing.is24Hours : dbStore.is24Hours,
+              openTime: existing.openTime || dbStore.openTime,
+              closeTime: existing.closeTime || dbStore.closeTime,
+              operatingDays: existing.operatingDays || dbStore.operatingDays,
+              isOpen: existing.isOpen !== undefined ? existing.isOpen : (dbStore.isOpen !== undefined ? dbStore.isOpen : true),
+              image: existing.image || dbStore.image,
+              products: existing.products && existing.products.length > 0 ? existing.products : dbStore.products,
+            };
+          });
           const existingIds = new Set(enriched.map((s) => s.id));
           const remainingStatic = prev.filter((s) => !existingIds.has(s.id));
-          return [...enriched, ...remainingStatic];
+          const combined = [...mergedCloud, ...remainingStatic];
+          AsyncStorage.setItem('getit_stores_list', JSON.stringify(combined)).catch(console.warn);
+          return combined;
         });
       } catch (err) {
         console.warn('Error loading cloud stores:', err);
@@ -1430,7 +1478,7 @@ export default function App() {
           products: [],
         };
 
-        setStoresList((prev) => {
+        updateAndPersistStores((prev) => {
           if (prev.some((s) => s.id === newStoreObj.id)) return prev;
           return [newStoreObj, ...prev];
         });
@@ -1443,10 +1491,23 @@ export default function App() {
     };
   }, []);
 
-  // Load saved user & store timing from AsyncStorage on app launch
+  // Load saved state (stores, user, timing, status & orders) from AsyncStorage and Supabase on app launch
   useEffect(() => {
     async function loadStoredState() {
       try {
+        // 1. Restore local stores list
+        const storedStores = await AsyncStorage.getItem('getit_stores_list');
+        if (storedStores) {
+          try {
+            const parsedStores = JSON.parse(storedStores);
+            if (Array.isArray(parsedStores) && parsedStores.length > 0) {
+              setStoresList(parsedStores);
+            }
+          } catch (e) {}
+        }
+
+        // 2. Restore active authenticated user
+        let activeMerchantStoreId = 's1';
         const storedUser = await AsyncStorage.getItem('getit_current_user');
         if (storedUser) {
           const parsed = JSON.parse(storedUser);
@@ -1454,23 +1515,80 @@ export default function App() {
           setIsLoggedIn(true);
           if (parsed.role === 'seller') {
             setAppMode('merchant');
-            if (parsed.storeId) setMerchantStoreId(parsed.storeId);
+            if (parsed.storeId) {
+              setMerchantStoreId(parsed.storeId);
+              activeMerchantStoreId = parsed.storeId;
+            }
           }
         }
 
-        const storedTiming = await AsyncStorage.getItem('getit_store_timing');
-        if (storedTiming) {
-          const parsedTiming = JSON.parse(storedTiming);
-          setStoreTiming(parsedTiming);
+        // 3. Restore store operating schedule
+        const perStoreTiming = await AsyncStorage.getItem(`getit_store_timing_${activeMerchantStoreId}`);
+        const globalTiming = await AsyncStorage.getItem('getit_store_timing');
+        const timingJson = perStoreTiming || globalTiming;
+        if (timingJson) {
+          try {
+            const parsedTiming = JSON.parse(timingJson);
+            setStoreTiming(parsedTiming);
+            setStoresList((prev) =>
+              prev.map((s) => (s.id === activeMerchantStoreId ? { ...s, ...parsedTiming } : s))
+            );
+          } catch (e) {}
+        }
+
+        // 4. Restore store live open/paused status
+        const perStoreLive = await AsyncStorage.getItem(`getit_store_open_status_${activeMerchantStoreId}`);
+        const globalLive = await AsyncStorage.getItem('getit_store_open_status');
+        const liveVal = perStoreLive !== null ? perStoreLive : globalLive;
+        if (liveVal !== null) {
+          const isOpenBool = liveVal === 'true';
+          setStoreOpenStatus(isOpenBool);
           setStoresList((prev) =>
-            prev.map((s) => (s.id === merchantStoreId ? { ...s, ...parsedTiming } : s))
+            prev.map((s) => (s.id === activeMerchantStoreId ? { ...s, isOpen: isOpenBool, is_open: isOpenBool } : s))
           );
+        }
+
+        // 5. Restore store cover photo if customized
+        const savedCover = await AsyncStorage.getItem(`getit_store_image_${activeMerchantStoreId}`);
+        if (savedCover) {
+          setStoresList((prev) =>
+            prev.map((s) => (s.id === activeMerchantStoreId ? { ...s, image: savedCover } : s))
+          );
+        }
+
+        // 6. Restore orders (from AsyncStorage + cloud Supabase sync)
+        const storedOrders = await AsyncStorage.getItem('getit_orders');
+        let initialOrdersList = [];
+        if (storedOrders) {
+          try {
+            initialOrdersList = JSON.parse(storedOrders);
+          } catch (e) {}
+        }
+
+        try {
+          const cloudOrders = await getDatabaseOrders();
+          if (cloudOrders && cloudOrders.length > 0) {
+            const orderMap = new Map();
+            initialOrdersList.forEach((o) => orderMap.set(o.id, o));
+            cloudOrders.forEach((co) => {
+              const existing = orderMap.get(co.id);
+              orderMap.set(co.id, existing ? { ...existing, ...co, status: co.status || existing.status } : co);
+            });
+            initialOrdersList = Array.from(orderMap.values());
+          }
+        } catch (err) {
+          console.warn('Could not sync cloud orders on startup:', err);
+        }
+
+        if (initialOrdersList.length > 0) {
+          setOrders(initialOrdersList);
+          await AsyncStorage.setItem('getit_orders', JSON.stringify(initialOrdersList));
         }
 
         // Ensure default & registered accounts exist in database
         await seedDefaultDatabaseUsers();
       } catch (err) {
-        console.warn('Error loading AsyncStorage user state:', err);
+        console.warn('Error loading AsyncStorage state:', err);
       }
     }
     loadStoredState();
@@ -1913,9 +2031,14 @@ export default function App() {
       );
       return;
     }
+    const orderStore = storesList.find(
+      (s) => (cart[0]?.storeId && s.id === cart[0].storeId) || (cart[0]?.storeName && s.name === cart[0].storeName)
+    ) || selectedStore || currentMerchantStore || storesList[0];
+
     const newOrder = {
       id: `ORD-${Math.floor(10000 + Math.random() * 90000)}`,
-      storeName: cart[0]?.storeName || 'The Gourmet Emporium',
+      storeId: orderStore?.id || 's1',
+      storeName: orderStore?.name || cart[0]?.storeName || 'The Gourmet Emporium',
       itemsCount: cart.reduce((sum, i) => sum + i.qty, 0),
       items: cart.map((i) => ({
         id: i.id,
@@ -1936,7 +2059,7 @@ export default function App() {
       eta: selectedDeliveryTier === 'bolt' ? '18 mins (Bolt Express)' : '25 mins (Concierge)',
       deliveryPin: `${Math.floor(1000 + Math.random() * 9000)}`,
       pickupPin: `${Math.floor(1000 + Math.random() * 9000)}`,
-      customerName: 'Alhaji Farouk Bello',
+      customerName: currentUser?.fullName || currentUser?.name || 'Alhaji Farouk Bello',
       customerAddress: pinnedLocation.name,
       deliveryLocation: {
         latitude: pinnedLocation.latitude,
@@ -1947,7 +2070,7 @@ export default function App() {
       },
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
-    setOrders([newOrder, ...orders]);
+    updateAndPersistOrders((prev) => [newOrder, ...prev]);
     setCart([]);
     setCheckoutModalVisible(false);
     setCartModalVisible(false);
@@ -1958,8 +2081,8 @@ export default function App() {
     // Sync to Supabase Cloud Database
     createDatabaseOrder({
       ...newOrder,
-      storeId: merchantStoreId || 'store-fresh-mart',
-      customerPhone: '+234 803 000 1234',
+      storeId: newOrder.storeId,
+      customerPhone: currentUser?.phone || '+234 803 000 1234',
       deliveryLat: pinnedLocation.latitude,
       deliveryLng: pinnedLocation.longitude,
       courierNotes: riderDeliveryNote || pinnedLocation.notes,
@@ -1971,7 +2094,9 @@ export default function App() {
     storesList.find((s) => s.id === merchantStoreId) || storesList[0];
 
   const merchantOrders = orders.filter(
-    (o) => o.storeName === currentMerchantStore?.name
+    (o) =>
+      (currentMerchantStore && (o.storeId === currentMerchantStore.id || o.storeName === currentMerchantStore.name)) ||
+      (!currentMerchantStore && o.storeName === 'The Gourmet Emporium')
   );
 
   const merchantFilteredOrders = merchantOrders.filter((o) => {
@@ -1989,7 +2114,7 @@ export default function App() {
   );
 
   const acceptMerchantOrder = (orderId) => {
-    setOrders((prev) =>
+    updateAndPersistOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status: 'Preparing' } : o))
     );
     Alert.alert('Order Accepted', `Order ${orderId} is now marked as Preparing in your shop.`);
@@ -2005,7 +2130,7 @@ export default function App() {
     const riderLat = storeLat + (Math.random() - 0.5) * 0.005;
     const riderLng = storeLng + (Math.random() - 0.5) * 0.005;
 
-    setOrders((prev) =>
+    updateAndPersistOrders((prev) =>
       prev.map((o) => {
         if (o.id === orderId) {
           return {
@@ -2038,7 +2163,7 @@ export default function App() {
   };
 
   const readyMerchantOrder = (orderId) => {
-    setOrders((prev) =>
+    updateAndPersistOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status: 'Ready for Pickup' } : o))
     );
     Alert.alert('Order Ready', `Order ${orderId} is packaged. Courier has been notified with the Pickup PIN.`);
@@ -2046,7 +2171,7 @@ export default function App() {
   };
 
   const completeMerchantOrder = (orderId) => {
-    setOrders((prev) =>
+    updateAndPersistOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status: 'Completed', eta: 'Delivered' } : o))
     );
     Alert.alert('Handover Complete', `Order ${orderId} handed over to courier and marked completed.`);
@@ -2060,16 +2185,17 @@ export default function App() {
         text: 'Reject Order',
         style: 'destructive',
         onPress: () => {
-          setOrders((prev) =>
+          updateAndPersistOrders((prev) =>
             prev.map((o) => (o.id === orderId ? { ...o, status: 'Rejected' } : o))
           );
+          updateDatabaseOrderStatus(orderId, { status: 'Rejected' }).catch(() => {});
         },
       },
     ]);
   };
 
   const toggleStock = (productId) => {
-    setStoresList((prev) =>
+    updateAndPersistStores((prev) =>
       prev.map((store) => {
         if (store.id === merchantStoreId) {
           return {
@@ -2113,7 +2239,7 @@ export default function App() {
       outOfStock: false,
     };
 
-    setStoresList((prev) =>
+    updateAndPersistStores((prev) =>
       prev.map((store) => {
         if (store.id === merchantStoreId) {
           return {
@@ -2149,7 +2275,7 @@ export default function App() {
       outOfStock: false,
     };
 
-    setStoresList((prev) =>
+    updateAndPersistStores((prev) =>
       prev.map((store) => {
         if (store.id === merchantStoreId) {
           return {
@@ -2242,8 +2368,8 @@ export default function App() {
       products: [],
     };
 
-    // 1. Instant local update so merchant and buyers see it immediately
-    setStoresList((prev) => [newStoreObj, ...prev]);
+    // 1. Instant local update & persistence so merchant and buyers see it immediately
+    updateAndPersistStores((prev) => [newStoreObj, ...prev]);
     setMerchantStoreId(storeId);
     setCreateStoreModalVisible(false);
     setIsCreatingStore(false);
@@ -2335,7 +2461,7 @@ export default function App() {
       is_open: true,
     };
 
-    setStoresList((prev) => [newStoreObj, ...prev]);
+    updateAndPersistStores((prev) => [newStoreObj, ...prev]);
     setMerchantStoreId(storeId);
     setCurrentUser(newSeller);
     setAppMode('merchant');
@@ -2572,14 +2698,31 @@ export default function App() {
       }).catch(console.warn);
     }
 
+    const activeStoreId = existingSeller.storeId || 's1';
     setCurrentUser(existingSeller);
-    setMerchantStoreId(existingSeller.storeId || 's1');
+    setMerchantStoreId(activeStoreId);
     setAppMode('merchant');
     setIsLoggedIn(true);
     setAuthLoginInput(existingSeller.phone || existingSeller.email || input);
     setAuthLoginPassword(pass);
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingSeller));
+      const savedTiming = await AsyncStorage.getItem(`getit_store_timing_${activeStoreId}`);
+      if (savedTiming) {
+        const parsedTiming = JSON.parse(savedTiming);
+        setStoreTiming(parsedTiming);
+        setStoresList((prev) =>
+          prev.map((s) => (s.id === activeStoreId ? { ...s, ...parsedTiming } : s))
+        );
+      }
+      const savedLive = await AsyncStorage.getItem(`getit_store_open_status_${activeStoreId}`);
+      if (savedLive !== null) {
+        const isOpenBool = savedLive === 'true';
+        setStoreOpenStatus(isOpenBool);
+        setStoresList((prev) =>
+          prev.map((s) => (s.id === activeStoreId ? { ...s, isOpen: isOpenBool, is_open: isOpenBool } : s))
+        );
+      }
     } catch (e) {}
     Alert.alert(
       '🏪 Merchant Hub Live!',
@@ -2659,7 +2802,7 @@ export default function App() {
       is_open: true,
     };
 
-    setStoresList((prev) => [newStoreObj, ...prev]);
+    updateAndPersistStores((prev) => [newStoreObj, ...prev]);
     setMerchantStoreId(storeId);
     setCurrentUser(newSeller);
     setAppMode('merchant');
@@ -2720,16 +2863,25 @@ export default function App() {
     const nextStatus = !storeOpenStatus;
     setStoreOpenStatus(nextStatus);
 
-    setStoresList((prev) =>
-      prev.map((s) => (s.id === merchantStoreId ? { ...s, isOpen: nextStatus, is_open: nextStatus } : s))
+    const targetStoreId = currentMerchantStore?.id || merchantStoreId;
+
+    updateAndPersistStores((prev) =>
+      prev.map((s) => (s.id === targetStoreId ? { ...s, isOpen: nextStatus, is_open: nextStatus } : s))
     );
 
-    if (selectedStore?.id === merchantStoreId || selectedStore?.id === currentMerchantStore?.id) {
+    if (selectedStore?.id === targetStoreId) {
       setSelectedStore((prev) => (prev ? { ...prev, isOpen: nextStatus, is_open: nextStatus } : prev));
     }
 
-    if (merchantStoreId) {
-      updateDatabaseStore(merchantStoreId, { isOpen: nextStatus }).catch(console.warn);
+    try {
+      await AsyncStorage.setItem('getit_store_open_status', String(nextStatus));
+      if (targetStoreId) {
+        await AsyncStorage.setItem(`getit_store_open_status_${targetStoreId}`, String(nextStatus));
+      }
+    } catch (e) {}
+
+    if (targetStoreId) {
+      updateDatabaseStore(targetStoreId, { isOpen: nextStatus }).catch(console.warn);
     }
 
     Alert.alert(
@@ -2749,19 +2901,21 @@ export default function App() {
     };
     setStoreTiming(timingToSave);
 
-    setStoresList((prev) =>
-      prev.map((s) => (s.id === currentMerchantStore?.id ? { ...s, ...timingToSave } : s))
+    const targetStoreId = currentMerchantStore?.id || merchantStoreId;
+
+    updateAndPersistStores((prev) =>
+      prev.map((s) => (s.id === targetStoreId ? { ...s, ...timingToSave } : s))
     );
 
-    if (selectedStore?.id === currentMerchantStore?.id) {
+    if (selectedStore?.id === targetStoreId) {
       setSelectedStore((prev) => (prev ? { ...prev, ...timingToSave } : prev));
     }
 
     setTimingModalVisible(false);
     try {
       await AsyncStorage.setItem('getit_store_timing', JSON.stringify(timingToSave));
-      if (currentMerchantStore?.id) {
-        await AsyncStorage.setItem(`getit_store_timing_${currentMerchantStore.id}`, JSON.stringify(timingToSave));
+      if (targetStoreId) {
+        await AsyncStorage.setItem(`getit_store_timing_${targetStoreId}`, JSON.stringify(timingToSave));
       }
     } catch (e) {
       console.warn('AsyncStorage error:', e);
@@ -2784,19 +2938,20 @@ export default function App() {
     if (!newUri || !currentMerchantStore?.id) return;
     const cleanUri = String(newUri).trim();
     if (!cleanUri) return;
+    const targetStoreId = currentMerchantStore.id;
 
-    setStoresList((prev) =>
-      prev.map((s) => (s.id === currentMerchantStore.id ? { ...s, image: cleanUri } : s))
+    updateAndPersistStores((prev) =>
+      prev.map((s) => (s.id === targetStoreId ? { ...s, image: cleanUri } : s))
     );
-    if (selectedStore?.id === currentMerchantStore.id) {
+    if (selectedStore?.id === targetStoreId) {
       setSelectedStore((prev) => (prev ? { ...prev, image: cleanUri } : prev));
     }
 
     try {
-      AsyncStorage.setItem(`getit_store_image_${currentMerchantStore.id}`, cleanUri);
+      AsyncStorage.setItem(`getit_store_image_${targetStoreId}`, cleanUri);
     } catch (e) {}
 
-    updateDatabaseStore(currentMerchantStore.id, { image: cleanUri }).catch(console.warn);
+    updateDatabaseStore(targetStoreId, { image: cleanUri }).catch(console.warn);
 
     setStoreImageModalVisible(false);
     Alert.alert('🎉 Cover Photo Updated!', `Store image for "${currentMerchantStore.name}" updated successfully!`);
@@ -2832,6 +2987,7 @@ export default function App() {
       Alert.alert('Name Required', 'Please enter a name for your store.');
       return;
     }
+    const targetStoreId = currentMerchantStore?.id || merchantStoreId;
 
     const updatedObj = {
       name: editStoreName.trim(),
@@ -2842,20 +2998,22 @@ export default function App() {
       description: editStoreDescription.trim() || `${editStoreName.trim()} — verified partner store live on GETIT.`,
     };
 
-    setStoresList((prev) =>
-      prev.map((s) => (s.id === currentMerchantStore.id ? { ...s, ...updatedObj } : s))
+    updateAndPersistStores((prev) =>
+      prev.map((s) => (s.id === targetStoreId ? { ...s, ...updatedObj } : s))
     );
 
-    if (selectedStore?.id === currentMerchantStore.id) {
+    if (selectedStore?.id === targetStoreId) {
       setSelectedStore((prev) => (prev ? { ...prev, ...updatedObj } : prev));
     }
 
-    updateDatabaseStore(currentMerchantStore.id, {
-      name: updatedObj.name,
-      address: updatedObj.address,
-      phone: updatedObj.phone,
-      deliveryFee: Number(editStoreDeliveryFee || 1200),
-    }).catch(console.warn);
+    if (targetStoreId) {
+      updateDatabaseStore(targetStoreId, {
+        name: updatedObj.name,
+        address: updatedObj.address,
+        phone: updatedObj.phone,
+        deliveryFee: Number(editStoreDeliveryFee || 1200),
+      }).catch(console.warn);
+    }
 
     setEditStoreModalVisible(false);
     Alert.alert('✅ Store Profile Updated', `Your store details for "${updatedObj.name}" were updated successfully.`);
@@ -3066,7 +3224,7 @@ export default function App() {
       return;
     }
 
-    setStoresList((prev) =>
+    updateAndPersistStores((prev) =>
       prev.map((store) => {
         if (store.id === merchantStoreId) {
           return {

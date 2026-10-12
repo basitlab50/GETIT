@@ -176,6 +176,51 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
   }
 }
 
+export async function getDatabaseOrders() {
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    if (!data) return [];
+
+    return data.map(item => ({
+      id: item.id,
+      storeId: item.store_id,
+      storeName: item.store_name,
+      itemsCount: item.items_count || (item.items ? item.items.length : 1),
+      items: item.items || [],
+      total: Number(item.total) || 0,
+      vendorPayout: Number(item.vendor_payout) || Math.round((Number(item.total) || 0) * 0.9),
+      deliveryPartner: item.delivery_partner || 'bolt',
+      deliveryFee: Number(item.delivery_fee) || 1200,
+      boltStatus: item.bolt_status,
+      boltTrackingCode: item.bolt_tracking_code,
+      boltRider: item.bolt_rider,
+      boltCoords: item.bolt_coords,
+      status: item.status || 'New Order',
+      eta: item.eta || '20 mins',
+      deliveryPin: item.delivery_pin || '2489',
+      pickupPin: item.pickup_pin || '7731',
+      customerName: item.customer_name || 'Customer',
+      customerAddress: item.customer_address || 'Abuja, Nigeria',
+      deliveryLocation: {
+        latitude: item.delivery_lat || 9.0882,
+        longitude: item.delivery_lng || 7.4933,
+      },
+      createdAt: item.created_at
+        ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '12:00 PM',
+    }));
+  } catch (err) {
+    console.warn('Failed to fetch orders from Supabase:', err);
+    return [];
+  }
+}
+
+
 // 4. Realtime Subscription for Orders
 export function subscribeToOrders(callback) {
   const channel = supabase
