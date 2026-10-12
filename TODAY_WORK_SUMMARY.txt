@@ -125,10 +125,19 @@ Status:     All changes synced, verified, and pushed to origin/main
     informing buyers of operating schedule while reassuring them that catalog browsing is active.
   - Added "Replay Close 🔄" button to let users replay the door close sequence anytime.
 
+[15:05:00] Fix Closed Door Animation Driver & Prominent Top Placement
+  - Fixed `useNativeDriver` setting from `true` to `false` in `AnimatedStoreDoor` so animations run
+    smoothly on Web, Expo, and Native mobile platforms (previously `useNativeDriver: true` froze values at 0).
+  - Moved `AnimatedStoreDoor` to the very top of the Store Details page directly replacing/framing the top
+    banner image, ensuring users immediately see the animated doors close shut the instant they open a closed store.
+  - Added closed storefront door facade overlay on store cards in the main Stores feed with lock and sign.
+  - Set default `operatingDays: 'Weekends Only'` for The Gourmet Emporium so it evaluates as closed today (Monday).
+
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
 --------------------------------------------------------------------------------
-- feat(store-closed): add luxury animated double storefront doors with swinging closed sign and interactive door knock
+- fix(store-closed): ensure door animation runs smoothly across web and native with top banner placement
+- 71c3967  feat(store-closed): add luxury animated double storefront doors with swinging closed sign and interactive door knock
 - ab26bc3  fix(store-timing): enforce operating days schedule so weekends-only stores are closed on weekdays
 - 5490172  docs: add work summary and progress log for October 11, 2026
 - 49d313a  fix(basket): rename action button to Change Delivery / Pin Location on Map

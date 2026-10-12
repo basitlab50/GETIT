@@ -598,7 +598,7 @@ const STORES_AROUND_ME = [
     openTime: '08:00 AM',
     closeTime: '10:00 PM',
     is24Hours: false,
-    operatingDays: 'Mon - Sun (Daily)',
+    operatingDays: 'Weekends Only',
     image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
     description: 'Imported artisanal cheeses, prime truffles, charcuterie, and fine everyday provisions.',
     products: [
@@ -958,15 +958,15 @@ function AnimatedStoreDoor({ store, operatingDays, isOpenToday, openTime }) {
 
     Animated.spring(doorAnim, {
       toValue: 1,
-      friction: 6,
-      tension: 35,
-      useNativeDriver: true,
+      friction: 5.5,
+      tension: 30,
+      useNativeDriver: false,
     }).start(() => {
       Animated.spring(lockAnim, {
         toValue: 1,
-        friction: 4,
-        tension: 70,
-        useNativeDriver: true,
+        friction: 3.5,
+        tension: 65,
+        useNativeDriver: false,
       }).start();
     });
   };
@@ -978,15 +978,15 @@ function AnimatedStoreDoor({ store, operatingDays, isOpenToday, openTime }) {
       Animated.sequence([
         Animated.timing(signAnim, {
           toValue: 1,
-          duration: 1900,
+          duration: 1800,
           easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(signAnim, {
           toValue: -1,
-          duration: 1900,
+          duration: 1800,
           easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ])
     );
@@ -997,11 +997,11 @@ function AnimatedStoreDoor({ store, operatingDays, isOpenToday, openTime }) {
 
   const handleKnock = () => {
     Animated.sequence([
-      Animated.timing(knockAnim, { toValue: -6, duration: 50, useNativeDriver: true }),
-      Animated.timing(knockAnim, { toValue: 6, duration: 50, useNativeDriver: true }),
-      Animated.timing(knockAnim, { toValue: -4, duration: 50, useNativeDriver: true }),
-      Animated.timing(knockAnim, { toValue: 4, duration: 50, useNativeDriver: true }),
-      Animated.timing(knockAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
+      Animated.timing(knockAnim, { toValue: -8, duration: 45, useNativeDriver: false }),
+      Animated.timing(knockAnim, { toValue: 8, duration: 45, useNativeDriver: false }),
+      Animated.timing(knockAnim, { toValue: -5, duration: 45, useNativeDriver: false }),
+      Animated.timing(knockAnim, { toValue: 5, duration: 45, useNativeDriver: false }),
+      Animated.timing(knockAnim, { toValue: 0, duration: 45, useNativeDriver: false }),
     ]).start();
 
     const nextCount = knockCount + 1;
@@ -1018,22 +1018,22 @@ function AnimatedStoreDoor({ store, operatingDays, isOpenToday, openTime }) {
 
   const leftDoorTranslate = doorAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [-180, 0],
+    outputRange: [-260, 0],
   });
 
   const rightDoorTranslate = doorAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [180, 0],
+    outputRange: [260, 0],
   });
 
   const signRotate = signAnim.interpolate({
     inputRange: [-1, 1],
-    outputRange: ['-3.5deg', '3.5deg'],
+    outputRange: ['-4deg', '4deg'],
   });
 
   const lockScale = lockAnim.interpolate({
-    inputRange: [0, 0.7, 1],
-    outputRange: [0, 1.25, 1],
+    inputRange: [0, 0.6, 1],
+    outputRange: [0, 1.3, 1],
   });
 
   return (
@@ -1388,12 +1388,12 @@ export default function App() {
     is24Hours: false,
     openTime: '08:00 AM',
     closeTime: '10:00 PM',
-    operatingDays: 'Mon - Sun (Daily)',
+    operatingDays: 'Weekends Only',
   });
   const [tempIs24Hours, setTempIs24Hours] = useState(false);
   const [tempOpenTime, setTempOpenTime] = useState('08:00 AM');
   const [tempCloseTime, setTempCloseTime] = useState('10:00 PM');
-  const [tempOperatingDays, setTempOperatingDays] = useState('Mon - Sun (Daily)');
+  const [tempOperatingDays, setTempOperatingDays] = useState('Weekends Only');
 
   const openTimingModal = () => {
     const activeStore = storesList.find((s) => s.id === merchantStoreId) || currentMerchantStore || storesList[0];
@@ -4916,10 +4916,20 @@ export default function App() {
                     {/* Subtle Top Gradient Veil */}
                     <View style={styles.imageOverlayShadow} />
 
-                    {/* Closed Store Overlay Badge */}
+                    {/* Closed Storefront Door Facade on Card */}
                     {!isStoreOpen && (
-                      <View style={styles.storeClosedOverlayBadge}>
-                        <Text style={styles.storeClosedOverlayBadgeText}>🔒 STORE CLOSED • BROWSING ONLY</Text>
+                      <View style={styles.storeClosedDoorCardOverlay}>
+                        <View style={styles.cardClosedDoorPanelLeft} />
+                        <View style={styles.cardClosedDoorPanelRight} />
+                        <View style={styles.cardClosedLockBadge}>
+                          <Text style={{ fontSize: 12 }}>🔒</Text>
+                          <Text style={styles.cardClosedLockBadgeText}>DOORS CLOSED</Text>
+                        </View>
+                        <View style={styles.cardClosedSignBoard}>
+                          <Text style={styles.cardClosedSignBoardText}>
+                            ⛔ CLOSED • {store.operatingDays || 'BROWSING ONLY'}
+                          </Text>
+                        </View>
                       </View>
                     )}
 
@@ -5360,10 +5370,37 @@ export default function App() {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: cart.length > 0 ? 100 : 30 }}
             >
-              <Image
-                source={{ uri: selectedStore.image }}
-                style={styles.storeModalBannerImage}
-              />
+              {/* TOP BANNER: Show Animated Store Door when closed, or Cover Photo when open */}
+              {!isStoreCurrentlyOpen(selectedStore) ? (
+                (() => {
+                  const isCurrentMerchant = Boolean(
+                    merchantStoreId && (selectedStore.id === merchantStoreId || selectedStore.id === currentMerchantStore?.id)
+                  );
+                  const daysStr =
+                    (isCurrentMerchant && storeTiming?.operatingDays) ||
+                    selectedStore.operatingDays ||
+                    'Mon - Sun (Daily)';
+                  const openTimeStr =
+                    (isCurrentMerchant && storeTiming?.openTime) ||
+                    selectedStore.openTime ||
+                    '08:00 AM';
+                  const isOpenToday = isStoreOpenOnDay(daysStr, new Date());
+
+                  return (
+                    <AnimatedStoreDoor
+                      store={selectedStore}
+                      operatingDays={daysStr}
+                      isOpenToday={isOpenToday}
+                      openTime={openTimeStr}
+                    />
+                  );
+                })()
+              ) : (
+                <Image
+                  source={{ uri: selectedStore.image }}
+                  style={styles.storeModalBannerImage}
+                />
+              )}
 
               <View style={styles.storeModalContent}>
                 <View style={styles.storeBadgeFloating}>
@@ -5421,30 +5458,6 @@ export default function App() {
                   </View>
                 </View>
 
-                {/* Animated Storefront Door & Closed Status when Store is Closed */}
-                {!isStoreCurrentlyOpen(selectedStore) && (() => {
-                  const isCurrentMerchant = Boolean(
-                    merchantStoreId && (selectedStore.id === merchantStoreId || selectedStore.id === currentMerchantStore?.id)
-                  );
-                  const daysStr =
-                    (isCurrentMerchant && storeTiming?.operatingDays) ||
-                    selectedStore.operatingDays ||
-                    'Mon - Sun (Daily)';
-                  const openTimeStr =
-                    (isCurrentMerchant && storeTiming?.openTime) ||
-                    selectedStore.openTime ||
-                    '08:00 AM';
-                  const isOpenToday = isStoreOpenOnDay(daysStr, new Date());
-
-                  return (
-                    <AnimatedStoreDoor
-                      store={selectedStore}
-                      operatingDays={daysStr}
-                      isOpenToday={isOpenToday}
-                      openTime={openTimeStr}
-                    />
-                  );
-                })()}
 
                 {/* --- IN-STORE PRODUCT SEARCH BAR --- */}
                 <View style={styles.storeSearchSection}>
@@ -16462,17 +16475,14 @@ const styles = StyleSheet.create({
   },
   // --- ANIMATED CLOSED STOREFRONT DOOR STYLES ---
   doorPortalContainer: {
-    marginHorizontal: 16,
-    marginVertical: 12,
-    borderRadius: 16,
-    overflow: 'hidden',
+    width: '100%',
     backgroundColor: '#0F172A',
-    borderWidth: 1.5,
-    borderColor: '#334155',
+    borderBottomWidth: 2,
+    borderBottomColor: '#334155',
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.35,
     shadowRadius: 8,
   },
   doorPortalHeader: {
@@ -16504,7 +16514,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   doorStage: {
-    height: 195,
+    height: 210,
     backgroundColor: '#0B0F19',
     position: 'relative',
     overflow: 'hidden',
@@ -16738,6 +16748,75 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 10.5,
     lineHeight: 15,
+  },
+  // Store Card Closed Door Overlay Styles
+  storeClosedDoorCardOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  cardClosedDoorPanelLeft: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: '50%',
+    backgroundColor: '#23150C',
+    borderRightWidth: 1.5,
+    borderRightColor: '#5C331B',
+    opacity: 0.94,
+  },
+  cardClosedDoorPanelRight: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: '50%',
+    backgroundColor: '#23150C',
+    borderLeftWidth: 1.5,
+    borderLeftColor: '#5C331B',
+    opacity: 0.94,
+  },
+  cardClosedLockBadge: {
+    position: 'absolute',
+    top: '36%',
+    backgroundColor: '#DC2626',
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    zIndex: 15,
+    elevation: 6,
+  },
+  cardClosedLockBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    marginLeft: 5,
+  },
+  cardClosedSignBoard: {
+    position: 'absolute',
+    bottom: 12,
+    backgroundColor: '#1C1917',
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    zIndex: 15,
+  },
+  cardClosedSignBoardText: {
+    color: '#FEF08A',
+    fontSize: 9.5,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
 });
 
