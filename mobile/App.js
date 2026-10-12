@@ -5747,7 +5747,7 @@ export default function App() {
                       activeOpacity={0.8}
                     >
                       <Text style={styles.cartMapActionBtnSecondaryText}>
-                        🔍 Search & Pick on Map
+                        📍 Change Delivery / Pin Location on Map
                       </Text>
                     </TouchableOpacity>
 
@@ -11247,20 +11247,22 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cartMapActionBtnSecondary: {
-    flex: 1.2,
+    flex: 1.4,
     backgroundColor: COLORS.emeraldDeep,
     paddingVertical: 9,
+    paddingHorizontal: 8,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   cartMapActionBtnSecondaryText: {
     color: '#FFFFFF',
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '800',
+    textAlign: 'center',
   },
   cartMapActionBtnOutline: {
-    flex: 0.9,
+    flex: 0.75,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: COLORS.borderBeige,
