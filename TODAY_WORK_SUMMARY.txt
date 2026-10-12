@@ -1,0 +1,127 @@
+================================================================================
+                         GETIT - WORK SUMMARY & PROGRESS LOG
+================================================================================
+Date:       October 11, 2026
+Repository: basitlab50/GETIT
+Branch:     main
+Status:     All changes synced, verified, and pushed to origin/main
+================================================================================
+
+--------------------------------------------------------------------------------
+1. OVERVIEW OF COMPLETED TASKS & MILESTONES (CHRONOLOGICAL)
+--------------------------------------------------------------------------------
+
+[15:29:37] Single Account Dual-Role Access (Buyer & Shop Owner)
+  - Allowed a single user account to sign in seamlessly as both buyer and store owner.
+  - Eliminated account switching lockouts and friction.
+  - Commit: 2b75059
+
+[16:23:44] Store Profile UI Modernization & Cover Photo
+  - Redesigned store profile interface with custom cover photo picker and editor.
+  - Added streamlined store details management (title, bio, categories, contact).
+  - Commit: 3b6d14d
+
+[17:00:12] Store Operating Hours Enforcement (Closed State Handling)
+  - Prevented bookings, orders, and checkout actions when store is closed.
+  - Enforced closed store status across both Mobile (Expo) and Web apps.
+  - Commit: de1554c
+
+[17:15:33] Precise Store Hours & Schedule Logic
+  - Fixed open and close hours computation across varying timezones and 24h formats.
+  - Accurate calculation of real-time store availability across all merchants.
+  - Commit: 5ce57ae
+
+[17:42:13] Expo AsyncStorage Persistence for Orders & Merchant Finances
+  - Fixed persistence for orders, earnings, schedules, and profile updates across
+    app reloads and device restarts.
+  - Commit: eeef12a
+
+[18:03:32] Store 24-Hour Persistence & Buyer-Facing Reliability
+  - Resolved cache-drop issue where 24-hour store flags were not evaluated properly
+    upon cold app restarts.
+  - Commit: e3c17f2
+
+[18:18:35] Edit Store Profile Redesign & Live Card Preview
+  - Redesigned modal with clean aesthetics, live preview card, and preset pickers.
+  - Commit: 84e434b
+
+[18:24:11] Automated Distance-Based Delivery Fee Dispatch
+  - Removed manual delivery fee input in favor of automated dynamic delivery
+    calculation based on GPS distance between store and buyer.
+  - Commit: a3e158c
+
+[18:41:47] Interactive Store Location Pinning & Buyer Explore Map
+  - Added map-based store location pinning with GPS coordinate persistence.
+  - Integrated dynamic buyer proximity calculations and map view.
+  - Commit: de178b4
+
+[18:57:35] Store Profile Map Interactivity & Zoom Controls
+  - Enabled smooth pinch-to-zoom, pan, drag-to-adjust pin, and floating +/- zoom controls.
+  - Commit: 3ea2054
+
+[19:04:46] Buyer Live Phone Location Blue Dot Beacon
+  - Added real-time blue glowing beacon for phone's current GPS location on the map.
+  - Provided automatic GPS tracking and recenter capability.
+  - Commit: a7ed68f
+
+[19:20:50] Basket / Checkout Map with Buyer & Store Locations
+  - Showed live buyer location (blue beacon) and store pinned location (emerald pin)
+    in the cart review map before checkout.
+  - Displayed route line and calculated real-time distance and estimated delivery.
+  - Commit: 7164ace
+
+[19:35:24] Location Persistence & GPS Divergence Prompt
+  - Saved chosen delivery pin permanently to AsyncStorage so buyers don't have to
+    re-enter their location on restart.
+  - Added smart warning banner when buyer's live GPS differs from saved delivery pin
+    (allowing easy one-tap update or intentional remote delivery).
+  - Commit: 51cfc0f
+
+[19:42:13] Basket Route Line Correction (Pinned Delivery Pin to Store)
+  - Updated dashed polyline on basket map to connect from pinned delivery location
+    to the store (rather than live phone location), matching the actual delivery route.
+  - Commit: 82fb48d
+
+[19:51:05] Basket Map Button Label Refinement
+  - Renamed confusing "Search & Pick on Map" button to:
+    "📍 Change Delivery / Pin Location on Map"
+  - Adjusted button layout flex and padding for optimal mobile responsiveness.
+  - Commit: 49d313a
+
+--------------------------------------------------------------------------------
+2. KEY ARCHITECTURAL & CODE HIGHLIGHTS
+--------------------------------------------------------------------------------
+* Mobile App: mobile/App.js
+  - Location state: userLocation (live phone GPS) vs. pinnedLocation (saved delivery pin)
+  - MapView: renders both live blue dot beacon and store pin, plus dashed route Polyline
+  - Smart banner: detects divergence (> 300m) between live GPS and delivery pin
+  - Storage: @getit_buyer_pinned_location, @getit_buyer_address_text in AsyncStorage
+  - Quick action buttons: "📍 Change Delivery / Pin Location on Map" & "🗺️ Google Maps ➔"
+
+* Web & Backend:
+  - Vite web application builds cleanly (dist/)
+  - Supabase database migrations in supabase/create_users_and_logs_tables.sql
+  - Automated distance calculation formula for courier dispatch
+
+--------------------------------------------------------------------------------
+3. GIT COMMIT RECORD (OCTOBER 11, 2026)
+--------------------------------------------------------------------------------
+- 49d313a  fix(basket): rename action button to Change Delivery / Pin Location on Map
+- 82fb48d  fix(basket): connect dashed route line from pinned delivery location to store instead of live phone location
+- 51cfc0f  feat(location): persist buyer location across restarts and add smart prompt when live GPS differs from delivery pin
+- 7164ace  feat(basket): show buyer live blue location, store pinned location, route polyline, and distance in basket map
+- a7ed68f  feat(store-location): add live phone location blue dot beacon and auto GPS tracking on store map
+- 3ea2054  fix(store-profile): enable full map interactivity, pinch zoom, drag-to-adjust pin, and floating zoom controls
+- de178b4  Implement store location pinning on map, GPS coordinate persistence, dynamic buyer proximity, and buyer explore map
+- a3e158c  Remove manual delivery fee configuration from Edit Store Profile in favor of automated distance-based dispatch
+- 84e434b  Redesign Edit Store Profile modal with modern friendly UI, live card preview, and preset pickers
+- e3c17f2  Fix store 24-hour persistence and evaluation across reloads on buyer view
+- eeef12a  Fix Expo data persistence for orders, merchant finances, stores, and operating schedules
+- 5ce57ae  Fix store timing logic to accurately evaluate open and close hours across all stores
+- de1554c  Disable booking and purchases when store is closed across mobile and web
+- 3b6d14d  Redesign store profile UI with cover photo changer and store details editor
+- 2b75059  Allow single account to sign in as both buyer and shop owner seamlessly
+
+================================================================================
+END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
+================================================================================
