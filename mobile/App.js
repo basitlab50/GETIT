@@ -2159,12 +2159,14 @@ export default function App() {
   const activeCartStoreLat = Number(activeCartStore?.latitude) || 9.0882;
   const activeCartStoreLng = Number(activeCartStore?.longitude) || 7.4933;
 
-  const activeBuyerLat = Number(userLiveCoords?.latitude || pinnedLocation?.latitude || mapCoords.latitude) || 9.0882;
-  const activeBuyerLng = Number(userLiveCoords?.longitude || pinnedLocation?.longitude || mapCoords.longitude) || 7.4933;
+  // Pinned delivery dropoff destination coordinates
+  const deliveryDestLat = Number(pinnedLocation?.latitude || mapCoords.latitude) || 9.0882;
+  const deliveryDestLng = Number(pinnedLocation?.longitude || mapCoords.longitude) || 7.4933;
 
+  // Distance from Store to Pinned Delivery Destination (for courier dispatch calculations)
   const cartDistanceKm = useMemo(() => {
-    return calculateDistanceKm(activeBuyerLat, activeBuyerLng, activeCartStoreLat, activeCartStoreLng);
-  }, [activeBuyerLat, activeBuyerLng, activeCartStoreLat, activeCartStoreLng]);
+    return calculateDistanceKm(deliveryDestLat, deliveryDestLng, activeCartStoreLat, activeCartStoreLng);
+  }, [deliveryDestLat, deliveryDestLng, activeCartStoreLat, activeCartStoreLng]);
 
   const cartEstDeliveryMins = useMemo(() => {
     if (cartDistanceKm === null) return '15-20 min';
@@ -2189,7 +2191,7 @@ export default function App() {
     return liveDiffDistanceKm !== null && liveDiffDistanceKm >= 0.8;
   }, [liveDiffDistanceKm]);
 
-  // When cart is opened: auto-fetch live GPS for buyer blue dot and fit camera to frame both pins
+  // When cart is opened: auto-fetch live GPS for buyer blue dot and fit camera to frame pins
   useEffect(() => {
     if (cartModalVisible) {
       (async () => {
@@ -2209,12 +2211,19 @@ export default function App() {
 
       setTimeout(() => {
         try {
-          if (cartMapRef.current && activeCartStoreLat && activeBuyerLat) {
+          if (cartMapRef.current && activeCartStoreLat && deliveryDestLat) {
+            const fitPoints = [
+              { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
+              { latitude: deliveryDestLat, longitude: deliveryDestLng },
+            ];
+            if (userLiveCoords?.latitude && userLiveCoords?.longitude) {
+              fitPoints.push({
+                latitude: userLiveCoords.latitude,
+                longitude: userLiveCoords.longitude,
+              });
+            }
             cartMapRef.current.fitToCoordinates(
-              [
-                { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
-                { latitude: activeBuyerLat, longitude: activeBuyerLng },
-              ],
+              fitPoints,
               {
                 edgePadding: { top: 45, right: 45, bottom: 45, left: 45 },
                 animated: true,
@@ -2224,7 +2233,7 @@ export default function App() {
         } catch (e) {}
       }, 350);
     }
-  }, [cartModalVisible, activeCartStoreLat, activeCartStoreLng, activeBuyerLat, activeBuyerLng]);
+  }, [cartModalVisible, activeCartStoreLat, activeCartStoreLng, deliveryDestLat, deliveryDestLng, userLiveCoords]);
 
   const handleCheckout = () => {
     if (cart.length === 0) return;
@@ -5589,10 +5598,10 @@ export default function App() {
                       ref={cartMapRef}
                       style={styles.cartMapCanvas}
                       initialRegion={{
-                        latitude: (activeBuyerLat + activeCartStoreLat) / 2,
-                        longitude: (activeBuyerLng + activeCartStoreLng) / 2,
-                        latitudeDelta: Math.max(0.015, Math.abs(activeBuyerLat - activeCartStoreLat) * 1.8),
-                        longitudeDelta: Math.max(0.015, Math.abs(activeBuyerLng - activeCartStoreLng) * 1.8),
+                        latitude: (deliveryDestLat + activeCartStoreLat) / 2,
+                        longitude: (deliveryDestLng + activeCartStoreLng) / 2,
+                        latitudeDelta: Math.max(0.015, Math.abs(deliveryDestLat - activeCartStoreLat) * 1.8),
+                        longitudeDelta: Math.max(0.015, Math.abs(deliveryDestLng - activeCartStoreLng) * 1.8),
                       }}
                       showsUserLocation={true}
                       showsCompass={false}
@@ -5622,8 +5631,8 @@ export default function App() {
                       {/* 2. Buyer Delivery Destination Pin */}
                       <Marker
                         coordinate={{
-                          latitude: pinnedLocation?.latitude || mapCoords.latitude,
-                          longitude: pinnedLocation?.longitude || mapCoords.longitude,
+                          latitude: deliveryDestLat,
+                          longitude: deliveryDestLng,
                         }}
                         title="📍 Delivery Destination"
                         description={pinnedLocation?.name || 'Rider dropoff location'}
@@ -5644,11 +5653,11 @@ export default function App() {
                         </Marker>
                       )}
 
-                      {/* 4. Dashed Route Line between Store and Buyer */}
+                      {/* 4. Dashed Route Line between Store and Pinned Delivery Destination */}
                       <Polyline
                         coordinates={[
                           { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
-                          { latitude: activeBuyerLat, longitude: activeBuyerLng },
+                          { latitude: deliveryDestLat, longitude: deliveryDestLng },
                         ]}
                         strokeColor={COLORS.emeraldPrimary}
                         strokeWidth={3}
@@ -5667,7 +5676,7 @@ export default function App() {
                               : `Fulfilling from ${activeCartStore?.name || 'Shop'}`}
                           </Text>
                           <Text style={styles.cartMapDistanceSub} numberOfLines={1}>
-                            🏪 Shop Pin ➔ 🔵 Your Live Location (~{cartEstDeliveryMins})
+                            🏪 Shop Pin ➔ 📍 Pinned Destination (~{cartEstDeliveryMins})
                           </Text>
                         </View>
                       </View>
@@ -5681,26 +5690,42 @@ export default function App() {
                     {/* Map Legend Overlay on Bottom-Left */}
                     <View style={styles.cartMapLegendBar}>
                       <View style={styles.cartMapLegendItem}>
-                        <View style={[styles.cartMapLegendDot, { backgroundColor: '#2563EB' }]} />
-                        <Text style={styles.cartMapLegendText}>🔵 You (Live GPS)</Text>
+                        <View style={[styles.cartMapLegendDot, { backgroundColor: '#EF4444' }]} />
+                        <Text style={styles.cartMapLegendText}>📍 Delivery Pin</Text>
                       </View>
                       <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 9 }}>┈┈</Text>
                       <View style={styles.cartMapLegendItem}>
                         <View style={[styles.cartMapLegendDot, { backgroundColor: COLORS.emeraldPrimary }]} />
                         <Text style={styles.cartMapLegendText}>🏪 {activeCartStore?.name || 'Shop'}</Text>
                       </View>
+                      {userLiveCoords && (
+                        <>
+                          <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 9 }}>•</Text>
+                          <View style={styles.cartMapLegendItem}>
+                            <View style={[styles.cartMapLegendDot, { backgroundColor: '#2563EB' }]} />
+                            <Text style={styles.cartMapLegendText}>🔵 You</Text>
+                          </View>
+                        </>
+                      )}
                     </View>
 
                     {/* Fit View Button on Bottom-Right */}
                     <TouchableOpacity
                       style={styles.cartMapFitBtn}
                       onPress={() => {
-                        if (cartMapRef.current && activeCartStoreLat && activeBuyerLat) {
+                        if (cartMapRef.current && activeCartStoreLat && deliveryDestLat) {
+                          const fitPoints = [
+                            { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
+                            { latitude: deliveryDestLat, longitude: deliveryDestLng },
+                          ];
+                          if (userLiveCoords?.latitude && userLiveCoords?.longitude) {
+                            fitPoints.push({
+                              latitude: userLiveCoords.latitude,
+                              longitude: userLiveCoords.longitude,
+                            });
+                          }
                           cartMapRef.current.fitToCoordinates(
-                            [
-                              { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
-                              { latitude: activeBuyerLat, longitude: activeBuyerLng },
-                            ],
+                            fitPoints,
                             {
                               edgePadding: { top: 45, right: 45, bottom: 45, left: 45 },
                               animated: true,
