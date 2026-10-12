@@ -964,6 +964,7 @@ export default function App() {
   const [userLiveCoords, setUserLiveCoords] = useState(null);
   const [activeSearchPins, setActiveSearchPins] = useState([]);
   const [liveApiResults, setLiveApiResults] = useState([]);
+  const [acknowledgedDiffLocation, setAcknowledgedDiffLocation] = useState(false);
 
   const [pinnedLocation, setPinnedLocation] = useState({
     name: 'Plot 14 Gana Street, Maitama, Abuja',
@@ -1622,6 +1623,37 @@ export default function App() {
           }
         }
 
+        // 4. Restore buyer pinned delivery location from AsyncStorage (persists across restarts)
+        try {
+          const storedPinnedLocation = await AsyncStorage.getItem('getit_buyer_pinned_location');
+          if (storedPinnedLocation) {
+            const parsedPinned = JSON.parse(storedPinnedLocation);
+            if (parsedPinned && parsedPinned.latitude && parsedPinned.longitude) {
+              setPinnedLocation(parsedPinned);
+              setSelectedLocation(parsedPinned.name || parsedPinned.district || 'Selected Location');
+              setMapCoords({
+                latitude: parsedPinned.latitude,
+                longitude: parsedPinned.longitude,
+              });
+              setMapRegion({
+                latitude: parsedPinned.latitude,
+                longitude: parsedPinned.longitude,
+                latitudeDelta: 0.0035,
+                longitudeDelta: 0.0035,
+              });
+              if (parsedPinned.name) setMapStreetAddress(parsedPinned.name);
+              if (parsedPinned.apartment) setMapApartment(parsedPinned.apartment);
+              if (parsedPinned.landmark) setMapLandmark(parsedPinned.landmark);
+              if (parsedPinned.notes) {
+                setMapNotes(parsedPinned.notes);
+                setRiderDeliveryNote(parsedPinned.notes);
+              }
+            }
+          }
+        } catch (locErr) {
+          console.warn('Error restoring pinned location on restart:', locErr);
+        }
+
         // 6. Restore orders (from AsyncStorage + cloud Supabase sync)
         const storedOrders = await AsyncStorage.getItem('getit_orders');
         let initialOrdersList = [];
@@ -1981,10 +2013,49 @@ export default function App() {
     };
     setPinnedLocation(updated);
     setSelectedLocation(updated.name);
+    setAcknowledgedDiffLocation(false);
+    AsyncStorage.setItem('getit_buyer_pinned_location', JSON.stringify(updated)).catch(() => {});
     closeLocationModal();
     Alert.alert(
       'Location Pinned on Map! 📍',
       `Riders will navigate directly to ${updated.latitude.toFixed(4)}° N, ${updated.longitude.toFixed(4)}° E.\nLandmark: ${updated.landmark || 'Set on map'}`
+    );
+  };
+
+  const handleSwitchDeliveryToLivePhoneLocation = async () => {
+    if (!userLiveCoords) {
+      Alert.alert('GPS Notice', 'Waiting for device GPS coordinates...');
+      return;
+    }
+    const { latitude, longitude } = userLiveCoords;
+    let street = `${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E`;
+    let district = 'Current Location';
+    try {
+      const rev = await Location.reverseGeocodeAsync({ latitude, longitude });
+      if (rev && rev.length > 0) {
+        street = rev[0].street || rev[0].name || street;
+        district = rev[0].district || rev[0].subregion || rev[0].city || district;
+      }
+    } catch (e) {}
+
+    const updated = {
+      name: `${street}, ${district}`,
+      district: district,
+      latitude,
+      longitude,
+      apartment: mapApartment || '',
+      landmark: 'Live Doorstep GPS Position',
+      notes: riderDeliveryNote || mapNotes || '',
+    };
+    setPinnedLocation(updated);
+    setSelectedLocation(updated.name);
+    setMapCoords({ latitude, longitude });
+    setMapStreetAddress(updated.name);
+    setAcknowledgedDiffLocation(true);
+    AsyncStorage.setItem('getit_buyer_pinned_location', JSON.stringify(updated)).catch(() => {});
+    Alert.alert(
+      '🎯 Switched to Current Phone Location!',
+      `Delivery pin has been updated to your live GPS location:\n${updated.name}`
     );
   };
 
@@ -2100,6 +2171,23 @@ export default function App() {
     const mins = Math.max(10, Math.round(cartDistanceKm * 4.5 + 8));
     return `${mins}-${mins + 5} min`;
   }, [cartDistanceKm]);
+
+  // Proximity check: Difference between buyer's real-time phone GPS and their pinned delivery address
+  const liveDiffDistanceKm = useMemo(() => {
+    if (!userLiveCoords?.latitude || !userLiveCoords?.longitude || !pinnedLocation?.latitude || !pinnedLocation?.longitude) {
+      return null;
+    }
+    return calculateDistanceKm(
+      userLiveCoords.latitude,
+      userLiveCoords.longitude,
+      pinnedLocation.latitude,
+      pinnedLocation.longitude
+    );
+  }, [userLiveCoords, pinnedLocation]);
+
+  const isDeliveryAtDifferentLocation = useMemo(() => {
+    return liveDiffDistanceKm !== null && liveDiffDistanceKm >= 0.8;
+  }, [liveDiffDistanceKm]);
 
   // When cart is opened: auto-fetch live GPS for buyer blue dot and fit camera to frame both pins
   useEffect(() => {
@@ -5452,6 +5540,49 @@ export default function App() {
                     ) : null}
                   </View>
 
+                  {/* Smart Proximity Prompt: When phone GPS differs from pinned delivery location */}
+                  {isDeliveryAtDifferentLocation && !acknowledgedDiffLocation && (
+                    <View style={styles.diffLocationPromptCard}>
+                      <View style={styles.diffLocationPromptHeader}>
+                        <Text style={{ fontSize: 18, marginRight: 8 }}>📍</Text>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.diffLocationPromptBadge}>DIFFERENT LOCATION</Text>
+                            <Text style={styles.diffLocationPromptDist}>
+                              {liveDiffDistanceKm?.toFixed(1)} km away
+                            </Text>
+                          </View>
+                          <Text style={styles.diffLocationPromptTitle}>
+                            Sending to another location or friend?
+                          </Text>
+                          <Text style={styles.diffLocationPromptSub}>
+                            Your delivery pin is at <Text style={{ fontWeight: '800', color: COLORS.textDark }}>{pinnedLocation?.name?.split(',')[0] || 'another address'}</Text>, while your phone is currently in another area. Keep this pin if sending to family/friends, or switch to your live phone GPS.
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.diffLocationPromptActions}>
+                        <TouchableOpacity
+                          style={styles.diffLocationKeepBtn}
+                          onPress={() => setAcknowledgedDiffLocation(true)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.diffLocationKeepBtnText}>
+                            ✓ Keep Pinned Address
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.diffLocationSwitchBtn}
+                          onPress={handleSwitchDeliveryToLivePhoneLocation}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={styles.diffLocationSwitchBtnText}>
+                            🎯 Deliver to My Phone GPS
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+
                   {/* Interactive Mini-Map Preview Structure */}
                   <View style={styles.cartMapContainer}>
                     <MapView
@@ -5778,6 +5909,40 @@ export default function App() {
                         '⛔ Store Currently Closed',
                         `"${closedCartItem.storeName}" is currently closed and not accepting orders or bookings. Please remove items from closed stores before proceeding to checkout.`,
                         [{ text: 'OK', style: 'default' }]
+                      );
+                      return;
+                    }
+
+                    if (isDeliveryAtDifferentLocation && !acknowledgedDiffLocation) {
+                      Alert.alert(
+                        '📍 Confirm Delivery Destination',
+                        `Your delivery pin is currently set to:\n"${pinnedLocation?.name}"\n\nThis is ${liveDiffDistanceKm?.toFixed(1)} km away from your phone's live GPS position.\n\nAre you sending this order to another address or a friend, or would you like to deliver to your current location?`,
+                        [
+                          {
+                            text: '🎯 Deliver to My Phone GPS',
+                            onPress: async () => {
+                              await handleSwitchDeliveryToLivePhoneLocation();
+                              setCartModalVisible(false);
+                              setCheckoutModalVisible(true);
+                            },
+                          },
+                          {
+                            text: `✓ Keep "${pinnedLocation?.name?.split(',')[0] || 'Pinned'}"`,
+                            onPress: () => {
+                              setAcknowledgedDiffLocation(true);
+                              setCartModalVisible(false);
+                              setCheckoutModalVisible(true);
+                            },
+                            style: 'default',
+                          },
+                          {
+                            text: '🗺️ Adjust on Map',
+                            onPress: () => {
+                              openLocationPickerFromCart();
+                            },
+                            style: 'cancel',
+                          },
+                        ]
                       );
                       return;
                     }
@@ -10821,6 +10986,80 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.textDark,
     flex: 1,
+  },
+  diffLocationPromptCard: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+  },
+  diffLocationPromptHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  diffLocationPromptBadge: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#B45309',
+    letterSpacing: 0.8,
+  },
+  diffLocationPromptDist: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#D97706',
+    backgroundColor: '#FDE68A',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  diffLocationPromptTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#92400E',
+    marginTop: 2,
+  },
+  diffLocationPromptSub: {
+    fontSize: 11,
+    color: '#78350F',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  diffLocationPromptActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
+  diffLocationKeepBtn: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D97706',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  diffLocationKeepBtnText: {
+    color: '#92400E',
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+  diffLocationSwitchBtn: {
+    flex: 1.2,
+    backgroundColor: '#D97706',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  diffLocationSwitchBtnText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '800',
   },
   cartMapContainer: {
     height: 220,
