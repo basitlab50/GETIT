@@ -106,6 +106,13 @@ export function PlatformProvider({ children }) {
 
   // --- Cart Operations ---
   const addToCart = (product, quantity = 1) => {
+    // Check if vendor is open
+    const targetVendor = vendors.find((v) => v.id === product.vendorId);
+    if (targetVendor && (targetVendor.isOpen === false || targetVendor.is_open === false || targetVendor.status === 'closed')) {
+      notify('Store Closed', `"${targetVendor.name}" is currently closed and not accepting orders or bookings.`, 'warning');
+      return;
+    }
+
     // Check if adding from different vendor
     const existingVendorId = cart[0]?.product?.vendorId;
     if (cart.length > 0 && existingVendorId && existingVendorId !== product.vendorId) {

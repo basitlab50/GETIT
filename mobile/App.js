@@ -1803,8 +1803,22 @@ export default function App() {
     }
   };
 
-  // Add to cart
+  // Add to cart with store open check
   const addToCart = (product, store) => {
+    const targetStore =
+      store ||
+      selectedStore ||
+      storesList.find((s) => s.id === product.storeId || s.name === product.storeName);
+
+    if (targetStore && !isStoreCurrentlyOpen(targetStore)) {
+      Alert.alert(
+        '🔒 Store Currently Closed',
+        `"${targetStore.name}" is currently closed and not accepting orders or bookings. You can browse provisions, but purchasing is disabled until the store re-opens.`,
+        [{ text: 'Understood', style: 'default' }]
+      );
+      return;
+    }
+
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
@@ -1812,7 +1826,15 @@ export default function App() {
           item.id === product.id ? { ...item, qty: item.qty + 1 } : item
         );
       }
-      return [...prev, { ...product, qty: 1, storeName: store.name }];
+      return [
+        ...prev,
+        {
+          ...product,
+          qty: 1,
+          storeName: targetStore?.name || store?.name || 'GETIT Store',
+          storeId: targetStore?.id || store?.id,
+        },
+      ];
     });
   };
 
@@ -1847,6 +1869,26 @@ export default function App() {
 
   const handleCheckout = () => {
     if (cart.length === 0) return;
+
+    // Guard: Prevent checkout if any cart item belongs to a currently closed store
+    const closedCartItem = cart.find((item) => {
+      const itemStore = storesList.find(
+        (s) => (item.storeId && s.id === item.storeId) || s.name === item.storeName
+      );
+      return itemStore && !isStoreCurrentlyOpen(itemStore);
+    });
+
+    if (closedCartItem) {
+      Alert.alert(
+        '⛔ Store Currently Closed',
+        `"${closedCartItem.storeName}" is currently closed and not accepting orders or bookings. Please remove items from closed stores before proceeding to payment.`,
+        [
+          { text: 'View Basket', onPress: () => setCartModalVisible(true) },
+          { text: 'OK', style: 'cancel' },
+        ]
+      );
+      return;
+    }
     const newOrder = {
       id: `ORD-${Math.floor(10000 + Math.random() * 90000)}`,
       storeName: cart[0]?.storeName || 'The Gourmet Emporium',
@@ -2658,6 +2700,10 @@ export default function App() {
       prev.map((s) => (s.id === merchantStoreId ? { ...s, isOpen: nextStatus, is_open: nextStatus } : s))
     );
 
+    if (selectedStore?.id === merchantStoreId || selectedStore?.id === currentMerchantStore?.id) {
+      setSelectedStore((prev) => (prev ? { ...prev, isOpen: nextStatus, is_open: nextStatus } : prev));
+    }
+
     if (merchantStoreId) {
       updateDatabaseStore(merchantStoreId, { isOpen: nextStatus }).catch(console.warn);
     }
@@ -2666,7 +2712,7 @@ export default function App() {
       nextStatus ? '🟢 Store is LIVE!' : '🔴 Store is PAUSED',
       nextStatus
         ? `${currentMerchantStore?.name} is now online and accepting orders across Nigeria.`
-        : `${currentMerchantStore?.name} is paused. Buyers will see that your store is currently closed.`
+        : `${currentMerchantStore?.name} is paused. Buyers will see that your store is currently closed and ordering/booking is disabled.`
     );
   };
 
@@ -2779,38 +2825,42 @@ export default function App() {
     Alert.alert('✅ Store Profile Updated', `Your store details for "${updatedObj.name}" were updated successfully.`);
   };
 
-  const isStoreCurrentlyOpen = (store) => {
+  function isStoreCurrentlyOpen(store) {
     if (!store) return false;
-    if (store.isOpen === false || store.is_open === false) return false;
-    if (store.id === merchantStoreId) {
-      if (!storeOpenStatus) return false;
-      if (storeTiming.is24Hours) return true;
+    // Explicit closed flag check
+    if (store.isOpen === false || store.is_open === false || store.status === 'closed' || store.isClosed === true) {
+      return false;
+    }
+    // If it's the current merchant store, check merchant live status and operating hours
+    if (store.id === merchantStoreId || store.id === currentMerchantStore?.id) {
+      if (storeOpenStatus === false) return false;
+      if (storeTiming?.is24Hours) return true;
 
       const now = new Date();
       const currentHour = now.getHours();
-      let openH = parseInt(storeTiming.openTime, 10);
-      if (storeTiming.openTime.includes('PM') && openH !== 12) openH += 12;
-      if (storeTiming.openTime.includes('AM') && openH === 12) openH = 0;
+      let openH = parseInt(storeTiming?.openTime || '8', 10);
+      if (storeTiming?.openTime?.includes('PM') && openH !== 12) openH += 12;
+      if (storeTiming?.openTime?.includes('AM') && openH === 12) openH = 0;
 
-      let closeH = parseInt(storeTiming.closeTime, 10);
-      if (storeTiming.closeTime.includes('PM') && closeH !== 12) closeH += 12;
-      if (storeTiming.closeTime.includes('AM') && closeH === 12) closeH = 0;
+      let closeH = parseInt(storeTiming?.closeTime || '22', 10);
+      if (storeTiming?.closeTime?.includes('PM') && closeH !== 12) closeH += 12;
+      if (storeTiming?.closeTime?.includes('AM') && closeH === 12) closeH = 0;
 
       return currentHour >= openH && currentHour < closeH;
     }
     return true;
-  };
+  }
 
-  const getStoreTimingBadge = (store) => {
+  function getStoreTimingBadge(store) {
     const open = isStoreCurrentlyOpen(store);
     if (!open) {
       return {
-        label: '🔴 Closed • Opens 8:00 AM',
-        color: '#EF4444',
+        label: '🔴 Closed • Not Accepting Orders',
+        color: '#DC2626',
         bg: '#FEF2F2',
       };
     }
-    if (store.id === merchantStoreId && storeTiming.is24Hours) {
+    if (store.id === merchantStoreId && storeTiming?.is24Hours) {
       return {
         label: '⚡ Open 24 Hours',
         color: '#047857',
@@ -2818,11 +2868,11 @@ export default function App() {
       };
     }
     return {
-      label: `🟢 Open Now • Closes ${storeTiming.closeTime || '10:00 PM'}`,
+      label: `🟢 Open Now • Closes ${storeTiming?.closeTime || '10:00 PM'}`,
       color: '#047857',
       bg: '#ECFDF5',
     };
-  };
+  }
 
   // Bulk Inventory Import Handlers (SRT, CSV, TSV, POS Files)
   const handlePickInventoryFile = async () => {
@@ -3662,6 +3712,7 @@ export default function App() {
           {/* Store Box Containers */}
           {filteredStores.map((store) => {
             const isFav = favorites.includes(store.id);
+            const isStoreOpen = isStoreCurrentlyOpen(store);
             return (
               <TouchableOpacity
                 key={store.id}
@@ -3679,14 +3730,21 @@ export default function App() {
                   {/* Subtle Top Gradient Veil */}
                   <View style={styles.imageOverlayShadow} />
 
+                  {/* Closed Store Overlay Badge */}
+                  {!isStoreOpen && (
+                    <View style={styles.storeClosedOverlayBadge}>
+                      <Text style={styles.storeClosedOverlayBadgeText}>🔒 STORE CLOSED • BROWSING ONLY</Text>
+                    </View>
+                  )}
+
                   {/* Left Floating Tag */}
                   <View
                     style={[
                       styles.storeBadgeFloating,
-                      { backgroundColor: store.badgeColor || COLORS.emeraldPrimary },
+                      { backgroundColor: !isStoreOpen ? '#6B7280' : store.badgeColor || COLORS.emeraldPrimary },
                     ]}
                   >
-                    <Text style={styles.storeBadgeText}>{store.tag}</Text>
+                    <Text style={styles.storeBadgeText}>{!isStoreOpen ? 'CLOSED' : store.tag}</Text>
                   </View>
 
                   {/* Right Favorite Heart */}
@@ -3761,11 +3819,23 @@ export default function App() {
 
                   {/* Line 6: Full-Width Scalable Explore Store Button (Never disappears on mobile) */}
                   <TouchableOpacity
-                    style={styles.viewStoreFullBtn}
+                    style={[
+                      styles.viewStoreFullBtn,
+                      !isStoreOpen && styles.viewStoreFullBtnClosed,
+                    ]}
                     onPress={() => openStoreModal(store)}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.viewStoreFullBtnText}>Explore Store & Provisions ➔</Text>
+                    <Text
+                      style={[
+                        styles.viewStoreFullBtnText,
+                        !isStoreOpen && styles.viewStoreFullBtnTextClosed,
+                      ]}
+                    >
+                      {isStoreOpen
+                        ? 'Explore Store & Provisions ➔'
+                        : 'Explore Provisions (Browsing Only) ➔'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </TouchableOpacity>
@@ -4151,6 +4221,21 @@ export default function App() {
                   </View>
                 </View>
 
+                {/* Store Closed Notice Banner (Browsing Only Alert) */}
+                {!isStoreCurrentlyOpen(selectedStore) && (
+                  <View style={styles.storeClosedNoticeBanner}>
+                    <View style={styles.storeClosedNoticeIconBox}>
+                      <Text style={styles.storeClosedNoticeIcon}>🔒</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.storeClosedNoticeTitle}>Store Currently Closed</Text>
+                      <Text style={styles.storeClosedNoticeSub}>
+                        {selectedStore.name} is not accepting orders or bookings right now. Provisions in this catalog are available to browse, but purchasing and ordering are disabled until reopening.
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
                 {/* --- IN-STORE PRODUCT SEARCH BAR --- */}
                 <View style={styles.storeSearchSection}>
                   <View style={styles.storeSearchBox}>
@@ -4212,6 +4297,7 @@ export default function App() {
                     </Text>
                     <Text style={styles.catalogCountText}>
                       {filteredStoreProducts.length} item{filteredStoreProducts.length === 1 ? '' : 's'}
+                      {!isStoreCurrentlyOpen(selectedStore) ? ' • 🔒 Browsing Only' : ''}
                     </Text>
                   </View>
 
@@ -4305,6 +4391,13 @@ export default function App() {
                                 </Text>
                               </View>
                             )}
+
+                            {/* Closed Store indicator pill on media */}
+                            {!isStoreCurrentlyOpen(selectedStore) && (
+                              <View style={styles.productBoxClosedTag}>
+                                <Text style={styles.productBoxClosedTagText}>CLOSED</Text>
+                              </View>
+                            )}
                           </View>
 
                           {/* Bottom Details Box */}
@@ -4319,9 +4412,22 @@ export default function App() {
                               </Text>
                             </View>
 
-                            {/* Action: Add / Quantity / Sold Out */}
+                            {/* Action: Add / Quantity / Sold Out / Store Closed */}
                             <View style={styles.productBoxActionRow}>
-                              {prod.outOfStock ? (
+                              {!isStoreCurrentlyOpen(selectedStore) ? (
+                                <TouchableOpacity
+                                  style={styles.productBoxClosedBtn}
+                                  onPress={() =>
+                                    Alert.alert(
+                                      '🔒 Store Currently Closed',
+                                      `"${selectedStore.name}" is currently closed. Ordering and booking provisions are not available right now. Please check back when the store re-opens.`
+                                    )
+                                  }
+                                  activeOpacity={0.7}
+                                >
+                                  <Text style={styles.productBoxClosedBtnText}>🔒 Closed</Text>
+                                </TouchableOpacity>
+                              ) : prod.outOfStock ? (
                                 <View style={styles.productBoxSoldOut}>
                                   <Text style={styles.productBoxSoldOutText}>Sold Out</Text>
                                 </View>
@@ -4387,7 +4493,20 @@ export default function App() {
                           <Text style={styles.productPrice}>{formatNaira(prod.price)}</Text>
                         </View>
 
-                        {prod.outOfStock ? (
+                        {!isStoreCurrentlyOpen(selectedStore) ? (
+                          <TouchableOpacity
+                            style={styles.productClosedBtn}
+                            onPress={() =>
+                              Alert.alert(
+                                '🔒 Store Currently Closed',
+                                `"${selectedStore.name}" is currently closed. Ordering and booking provisions are not available right now. Please check back when the store re-opens.`
+                              )
+                            }
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.productClosedBtnText}>🔒 Closed</Text>
+                          </TouchableOpacity>
+                        ) : prod.outOfStock ? (
                           <View style={styles.soldOutPill}>
                             <Text style={styles.soldOutText}>Sold Out</Text>
                           </View>
@@ -4426,7 +4545,10 @@ export default function App() {
             {/* Bottom floating view cart bar */}
             {cart.length > 0 && (
               <TouchableOpacity
-                style={styles.bottomCartFloatingBar}
+                style={[
+                  styles.bottomCartFloatingBar,
+                  !isStoreCurrentlyOpen(selectedStore) && styles.bottomCartFloatingBarWarning,
+                ]}
                 onPress={() => setCartModalVisible(true)}
                 activeOpacity={0.9}
               >
@@ -4436,8 +4558,10 @@ export default function App() {
                   </Text>
                   <Text style={styles.floatingCartTotal}>{formatNaira(cartTotal)}</Text>
                 </View>
-                <View style={styles.floatingCheckoutBtn}>
-                  <Text style={styles.floatingCheckoutBtnText}>View Basket & Pay →</Text>
+                <View style={[styles.floatingCheckoutBtn, !isStoreCurrentlyOpen(selectedStore) && styles.floatingCheckoutBtnWarning]}>
+                  <Text style={styles.floatingCheckoutBtnText}>
+                    {isStoreCurrentlyOpen(selectedStore) ? 'View Basket & Pay →' : 'View Basket (Closed) →'}
+                  </Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -4842,6 +4966,22 @@ export default function App() {
                 <TouchableOpacity
                   style={styles.primaryActionBtn}
                   onPress={() => {
+                    const closedCartItem = cart.find((item) => {
+                      const itemStore = storesList.find(
+                        (s) => (item.storeId && s.id === item.storeId) || s.name === item.storeName
+                      );
+                      return itemStore && !isStoreCurrentlyOpen(itemStore);
+                    });
+
+                    if (closedCartItem) {
+                      Alert.alert(
+                        '⛔ Store Currently Closed',
+                        `"${closedCartItem.storeName}" is currently closed and not accepting orders or bookings. Please remove items from closed stores before proceeding to checkout.`,
+                        [{ text: 'OK', style: 'default' }]
+                      );
+                      return;
+                    }
+
                     setCartModalVisible(false);
                     setCheckoutModalVisible(true);
                   }}
@@ -8403,6 +8543,116 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+  storeClosedOverlayBadge: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    right: 12,
+    backgroundColor: 'rgba(220, 38, 38, 0.92)',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  storeClosedOverlayBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  viewStoreFullBtnClosed: {
+    backgroundColor: '#374151',
+    shadowColor: '#374151',
+  },
+  viewStoreFullBtnTextClosed: {
+    color: '#D1D5DB',
+  },
+  storeClosedNoticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+    borderColor: '#FCA5A5',
+    borderRadius: 14,
+    padding: 14,
+    marginVertical: 12,
+    gap: 12,
+  },
+  storeClosedNoticeIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storeClosedNoticeIcon: {
+    fontSize: 18,
+  },
+  storeClosedNoticeTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#991B1B',
+    marginBottom: 2,
+  },
+  storeClosedNoticeSub: {
+    fontSize: 12,
+    color: '#7F1D1D',
+    lineHeight: 16,
+  },
+  productBoxClosedTag: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: 'rgba(220, 38, 38, 0.92)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    zIndex: 5,
+  },
+  productBoxClosedTagText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  productBoxClosedBtn: {
+    backgroundColor: '#F3F4F6',
+    height: 32,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  productBoxClosedBtnText: {
+    color: '#6B7280',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  productClosedBtn: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  productClosedBtnText: {
+    color: '#6B7280',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  bottomCartFloatingBarWarning: {
+    backgroundColor: '#1E293B',
+  },
+  floatingCheckoutBtnWarning: {
+    backgroundColor: '#475569',
   },
 
   // Store Details Modal

@@ -10,6 +10,7 @@ export default function ShopDetail({ vendorId, onBack, onOpenCart }) {
   const [selectedCat, setSelectedCat] = useState('all');
 
   const vendor = vendors.find((v) => v.id === vendorId) || vendors[0];
+  const isVendorOpen = vendor ? (vendor.isOpen !== false && vendor.is_open !== false && vendor.status !== 'closed') : true;
   const vendorProducts = products.filter((p) => p.vendorId === vendor.id);
 
   const displayedProducts = selectedCat === 'all'
@@ -263,13 +264,19 @@ export default function ShopDetail({ vendorId, onBack, onOpenCart }) {
 
                 {/* Add Button */}
                 <button
-                  disabled={prod.stock <= 0}
-                  onClick={() => addToCart(prod, 1)}
+                  disabled={prod.stock <= 0 || !isVendorOpen}
+                  onClick={() => {
+                    if (!isVendorOpen) {
+                      alert(`${vendor.name} is currently closed. Ordering and booking provisions are not available.`);
+                      return;
+                    }
+                    addToCart(prod, 1);
+                  }}
                   style={{
                     width: '100%',
                     padding: '8px 10px',
                     borderRadius: '9px',
-                    background: inCart ? '#008751' : '#0F172A',
+                    background: !isVendorOpen ? '#94A3B8' : inCart ? '#008751' : '#0F172A',
                     color: '#FFFFFF',
                     fontSize: '0.75rem',
                     fontWeight: 700,
@@ -278,12 +285,18 @@ export default function ShopDetail({ vendorId, onBack, onOpenCart }) {
                     justifyContent: 'center',
                     gap: '4px',
                     border: 'none',
-                    cursor: prod.stock <= 0 ? 'not-allowed' : 'pointer',
+                    cursor: prod.stock <= 0 || !isVendorOpen ? 'not-allowed' : 'pointer',
                     opacity: prod.stock <= 0 ? 0.6 : 1,
                   }}
                 >
-                  <Plus size={13} />
-                  {inCart ? `Added (${inCart.quantity})` : 'Add to Basket'}
+                  {!isVendorOpen ? (
+                    '🔒 Closed'
+                  ) : (
+                    <>
+                      <Plus size={13} />
+                      {inCart ? `Added (${inCart.quantity})` : 'Add to Basket'}
+                    </>
+                  )}
                 </button>
               </div>
             </div>
