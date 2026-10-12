@@ -3039,7 +3039,7 @@ export default function App() {
     }
   };
 
-  const handleOpenEditStoreDetailsModal = () => {
+  const handleOpenEditStoreDetailsModal = async () => {
     const lat = Number(currentMerchantStore?.latitude) || 9.0882;
     const lng = Number(currentMerchantStore?.longitude) || 7.4933;
     setEditStoreName(currentMerchantStore?.name || '');
@@ -3058,6 +3058,22 @@ export default function App() {
       longitudeDelta: 0.012,
     });
     setEditStoreModalVisible(true);
+
+    // Auto-fetch phone's GPS in background so blue dot is immediately visible
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (loc && loc.coords) {
+          setUserLiveCoords({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          });
+        }
+      }
+    } catch (e) {
+      // quiet background attempt
+    }
   };
 
   const handlePickEditStoreImage = async () => {
@@ -3085,6 +3101,7 @@ export default function App() {
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       if (loc && loc.coords) {
         const { latitude, longitude } = loc.coords;
+        setUserLiveCoords({ latitude, longitude });
         setEditStoreLatitude(latitude);
         setEditStoreLongitude(longitude);
         setStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
@@ -3104,7 +3121,7 @@ export default function App() {
             longitudeDelta: 0.012,
           }, 400);
         }
-        Alert.alert('🎯 Store Location Captured!', `Pin moved to your current GPS position: ${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E`);
+        Alert.alert('🎯 Live Phone GPS Locked!', `Found your current phone location (blue dot) and positioned the store pin at:\n${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E`);
       }
     } catch (err) {
       console.warn('Error obtaining store GPS:', err);
@@ -8885,6 +8902,8 @@ export default function App() {
                     rotateEnabled={true}
                     zoomTapEnabled={true}
                     zoomControlEnabled={false}
+                    showsUserLocation={true}
+                    showsMyLocationButton={false}
                     onRegionChangeComplete={(r) => {
                       if (r) setStoreMapRegion(r);
                     }}
@@ -8897,6 +8916,20 @@ export default function App() {
                       }
                     }}
                   >
+                    {/* Live Phone Location Blue Dot Beacon */}
+                    {userLiveCoords && (
+                      <Marker
+                        coordinate={userLiveCoords}
+                        title="📱 Your Current Phone Location"
+                        description="Live GPS position of your phone"
+                        anchor={{ x: 0.5, y: 0.5 }}
+                      >
+                        <View style={styles.liveBeaconOuter}>
+                          <View style={styles.liveBeaconInner} />
+                        </View>
+                      </Marker>
+                    )}
+
                     <Marker
                       coordinate={{
                         latitude: Number(editStoreLatitude) || 9.0882,
@@ -8920,7 +8953,7 @@ export default function App() {
                   {/* Top Guide Hint Pill */}
                   <View style={styles.storeMiniMapTopHint}>
                     <Text style={styles.storeMiniMapTopHintText} numberOfLines={1}>
-                      👆 Tap or drag pin • Use ➕ / ➖ to zoom
+                      👆 Drag pin to shop • 🔵 Blue dot = Phone GPS
                     </Text>
                   </View>
 
@@ -9040,6 +9073,23 @@ export default function App() {
               }, 300);
             }
           }, 150);
+
+          (async () => {
+            try {
+              const { status } = await Location.getForegroundPermissionsAsync();
+              if (status === 'granted') {
+                const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                if (loc && loc.coords) {
+                  setUserLiveCoords({
+                    latitude: loc.coords.latitude,
+                    longitude: loc.coords.longitude,
+                  });
+                }
+              }
+            } catch (e) {
+              // quiet
+            }
+          })();
         }}
       >
         <SafeAreaView style={styles.storeMapModalSafeArea}>
@@ -9057,7 +9107,7 @@ export default function App() {
 
             <View style={{ alignItems: 'center' }}>
               <Text style={styles.storeMapModalTitle}>Pin Storefront Location</Text>
-              <Text style={styles.storeMapModalSub}>Drag pin or tap map to place your shop</Text>
+              <Text style={styles.storeMapModalSub}>Drag pin to shop • 🔵 Blue dot = Your phone</Text>
             </View>
 
             <TouchableOpacity
@@ -9130,6 +9180,8 @@ export default function App() {
               rotateEnabled={true}
               zoomTapEnabled={true}
               zoomControlEnabled={false}
+              showsUserLocation={true}
+              showsMyLocationButton={false}
               onRegionChangeComplete={(r) => {
                 if (r) setStoreMapRegion(r);
               }}
@@ -9142,6 +9194,20 @@ export default function App() {
                 }
               }}
             >
+              {/* Live Phone Location Blue Dot Beacon */}
+              {userLiveCoords && (
+                <Marker
+                  coordinate={userLiveCoords}
+                  title="📱 Your Current Phone Location"
+                  description="Live GPS position of your phone"
+                  anchor={{ x: 0.5, y: 0.5 }}
+                >
+                  <View style={styles.liveBeaconOuter}>
+                    <View style={styles.liveBeaconInner} />
+                  </View>
+                </Marker>
+              )}
+
               {/* Draggable Store Pin */}
               <Marker
                 coordinate={{
@@ -9163,14 +9229,23 @@ export default function App() {
               />
             </MapView>
 
-            {/* Floating Live Coordinates Banner */}
+            {/* Floating Live Coordinates Banner & Legend */}
             <View style={styles.storeMapFloatCoordsBanner}>
               <Text style={styles.storeMapFloatCoordsText}>
                 🎯 Store Pin: {(Number(editStoreLatitude) || 9.0882).toFixed(5)}° N, {(Number(editStoreLongitude) || 7.4933).toFixed(5)}° E
               </Text>
-              <Text style={styles.storeMapFloatSubText}>
-                Tap anywhere or drag pin to adjust • Use ➕ / ➖ to zoom
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 10 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.emeraldPrimary }} />
+                  <Text style={{ fontSize: 9.5, color: '#FFFFFF', fontWeight: '700' }}>Storefront Pin</Text>
+                </View>
+                {userLiveCoords && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#2563EB' }} />
+                    <Text style={{ fontSize: 9.5, color: '#93C5FD', fontWeight: '700' }}>Your Phone GPS (Blue Dot)</Text>
+                  </View>
+                )}
+              </View>
             </View>
 
             {/* Map Action Floating Controls (GPS, Zoom In, Zoom Out, Center Pin) */}
