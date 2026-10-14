@@ -1624,23 +1624,44 @@ export default function App() {
     });
   };
 
-  // Fetch real-world street road network route from OSRM (snapped to actual tarmac streets and turns)
+  // Fetch real-world street road network route from OSRM (snapped to actual tarmac streets, legs, and pinpoint coordinates)
   const fetchRealRoadDirections = async (waypointCoords) => {
     if (!waypointCoords || waypointCoords.length < 2) return null;
     try {
       const coordStr = waypointCoords
         .map((c) => `${Number(c.longitude).toFixed(5)},${Number(c.latitude).toFixed(5)}`)
         .join(';');
-      const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+      const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson&steps=true`;
       const response = await fetch(url, { headers: { 'User-Agent': 'GETIT-Express/2.0' } });
       const data = await response.json();
       if (data && data.code === 'Ok' && data.routes && data.routes[0]) {
-        const rawCoords = data.routes[0].geometry.coordinates;
-        // Transform [lng, lat] to { latitude, longitude }
-        return rawCoords.map((c) => ({
+        const fullCoords = (data.routes[0].geometry.coordinates || []).map((c) => ({
           latitude: c[1],
           longitude: c[0],
         }));
+
+        // Extract individual legs (Leg 0: Rider -> Stop 1, Leg 1: Stop 1 -> Stop 2, Leg 2: Stop 2 -> Dropoff)
+        const legs = (data.routes[0].legs || []).map((l) =>
+          (l.steps || []).flatMap((st) =>
+            (st.geometry?.coordinates || []).map((c) => ({
+              latitude: c[1],
+              longitude: c[0],
+            }))
+          )
+        );
+
+        // Snapped waypoint coordinates guaranteed to sit precisely on the road line
+        const snappedWaypoints = (data.waypoints || []).map((w) => ({
+          latitude: w.location[1],
+          longitude: w.location[0],
+          name: w.name || '',
+        }));
+
+        return {
+          roadPoints: fullCoords,
+          legs,
+          snappedWaypoints,
+        };
       }
     } catch (e) {
       console.log('OSRM road directions fetch notice:', e?.message);
@@ -1654,7 +1675,7 @@ export default function App() {
       if (
         ord.status !== 'Cancelled' &&
         ord.status !== 'Delivered' &&
-        (!ord.roadRouteCoordinates || ord.roadRouteCoordinates.length === 0)
+        (!ord.roadRouteCoordinates || ord.roadRouteCoordinates.length === 0 || !ord.roadLegs)
       ) {
         const origin = ord.riderOrigin || ord.boltCoords || { latitude: 9.075, longitude: 7.485 };
         const stopsList = ord.stops && ord.stops.length > 0 ? ord.stops : [];
@@ -1666,16 +1687,37 @@ export default function App() {
           dest,
         ];
 
-        fetchRealRoadDirections(waypoints).then((roadPoints) => {
-          if (roadPoints && roadPoints.length > 0) {
+        fetchRealRoadDirections(waypoints).then((result) => {
+          if (result && result.roadPoints && result.roadPoints.length > 0) {
+            // Update stops with their snapped pinpoint coordinates directly on the road!
+            const updatedStops = (ord.stops || []).map((st, sIdx) => {
+              const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx + 1] : null;
+              return {
+                ...st,
+                snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.0882,
+                snappedLongitude: snapped ? snapped.longitude : Number(st.longitude) || 7.4933,
+              };
+            });
+
+            const snappedDest =
+              result.snappedWaypoints && result.snappedWaypoints.length > 0
+                ? result.snappedWaypoints[result.snappedWaypoints.length - 1]
+                : null;
+
             setOrders((prev) =>
               prev.map((o) =>
                 o.id === ord.id
                   ? {
                       ...o,
-                      roadRouteCoordinates: roadPoints,
+                      roadRouteCoordinates: result.roadPoints,
+                      roadLegs: result.legs,
+                      snappedWaypoints: result.snappedWaypoints,
+                      stops: updatedStops,
+                      snappedDeliveryLocation: snappedDest
+                        ? { ...o.deliveryLocation, latitude: snappedDest.latitude, longitude: snappedDest.longitude }
+                        : o.deliveryLocation,
                       roadPointIndex: 0,
-                      boltCoords: roadPoints[0],
+                      boltCoords: result.roadPoints[0],
                     }
                   : o
               )
@@ -3269,12 +3311,36 @@ export default function App() {
       ...stops.map((s) => ({ latitude: Number(s.latitude) || 9.0882, longitude: Number(s.longitude) || 7.4933 })),
       masterOrder.deliveryLocation,
     ];
-    fetchRealRoadDirections(roadWaypoints).then((points) => {
-      if (points && points.length > 0) {
+    fetchRealRoadDirections(roadWaypoints).then((result) => {
+      if (result && result.roadPoints && result.roadPoints.length > 0) {
+        const updatedStops = masterOrder.stops.map((st, sIdx) => {
+          const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx + 1] : null;
+          return {
+            ...st,
+            snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.0882,
+            snappedLongitude: snapped ? snapped.longitude : Number(st.longitude) || 7.4933,
+          };
+        });
+        const snappedDest =
+          result.snappedWaypoints && result.snappedWaypoints.length > 0
+            ? result.snappedWaypoints[result.snappedWaypoints.length - 1]
+            : null;
+
         updateAndPersistOrders((prev) =>
           prev.map((o) =>
             o.id === masterOrder.id
-              ? { ...o, roadRouteCoordinates: points, roadPointIndex: 0, boltCoords: points[0] }
+              ? {
+                  ...o,
+                  roadRouteCoordinates: result.roadPoints,
+                  roadLegs: result.legs,
+                  snappedWaypoints: result.snappedWaypoints,
+                  stops: updatedStops,
+                  snappedDeliveryLocation: snappedDest
+                    ? { ...o.deliveryLocation, latitude: snappedDest.latitude, longitude: snappedDest.longitude }
+                    : o.deliveryLocation,
+                  roadPointIndex: 0,
+                  boltCoords: result.roadPoints[0],
+                }
               : o
           )
         );
@@ -6201,16 +6267,65 @@ export default function App() {
                             scrollEnabled={true}
                             zoomEnabled={true}
                           >
-                            {/* 1. Real Street Road Network Routing (Google Maps Snapped Roads) */}
-                            {ord.roadRouteCoordinates && ord.roadRouteCoordinates.length > 0 ? (
+                            {/* 1. Sequential Turn-by-Turn Real Street Road Network Routing */}
+                            {ord.roadLegs && ord.roadLegs.length > 0 ? (
                               <>
-                                {/* Dark contrast road outline */}
+                                {ord.roadLegs.map((legPts, lIdx) => {
+                                  const isCompletedLeg = (ord.currentStopIndex || 0) > lIdx;
+                                  const isActiveLeg = (ord.currentStopIndex || 0) === lIdx;
+                                  const isUpcomingLeg = (ord.currentStopIndex || 0) < lIdx;
+
+                                  if (isCompletedLeg && legPts.length > 0) {
+                                    return (
+                                      <Polyline
+                                        key={`leg-done-${lIdx}`}
+                                        coordinates={legPts}
+                                        strokeColor="rgba(16, 185, 129, 0.55)"
+                                        strokeWidth={3.5}
+                                      />
+                                    );
+                                  }
+
+                                  if (isActiveLeg && legPts.length > 0) {
+                                    return (
+                                      <React.Fragment key={`leg-active-${lIdx}`}>
+                                        {/* Outer high-contrast boundary for active street route */}
+                                        <Polyline
+                                          coordinates={legPts}
+                                          strokeColor="#1D4ED8"
+                                          strokeWidth={7}
+                                        />
+                                        {/* Vibrant Google Maps Blue interior road lane */}
+                                        <Polyline
+                                          coordinates={legPts}
+                                          strokeColor="#2563EB"
+                                          strokeWidth={4.5}
+                                        />
+                                      </React.Fragment>
+                                    );
+                                  }
+
+                                  if (isUpcomingLeg && legPts.length > 0) {
+                                    return (
+                                      <Polyline
+                                        key={`leg-upcoming-${lIdx}`}
+                                        coordinates={legPts}
+                                        strokeColor="rgba(148, 163, 184, 0.6)"
+                                        strokeWidth={3}
+                                        lineDashPattern={[6, 5]}
+                                      />
+                                    );
+                                  }
+                                  return null;
+                                })}
+                              </>
+                            ) : ord.roadRouteCoordinates && ord.roadRouteCoordinates.length > 0 ? (
+                              <>
                                 <Polyline
                                   coordinates={ord.roadRouteCoordinates}
                                   strokeColor="#1D4ED8"
                                   strokeWidth={6}
                                 />
-                                {/* Vibrant Google Maps Blue interior road route */}
                                 <Polyline
                                   coordinates={ord.roadRouteCoordinates}
                                   strokeColor="#3B82F6"
@@ -6234,30 +6349,68 @@ export default function App() {
                               />
                             )}
 
-                            {/* 2. Participating Shop Markers (with Store Emoji & Numbered Badges) */}
+                            {/* 2. On-Road Snapped Store Stop Pinpoints (Marked Directly On The Blue Line) */}
                             {ord.stops && ord.stops.length > 0 ? (
-                              ord.stops.map((st) => (
-                                <Marker
-                                  key={`ord-st-${st.stopNumber}`}
-                                  coordinate={{
-                                    latitude: Number(st.latitude) || 9.0882,
-                                    longitude: Number(st.longitude) || 7.4933,
-                                  }}
-                                  title={`[${st.stopNumber}] 🏪 ${st.storeName}`}
-                                  description={`Pickup Hub (${st.itemsCount} items • Shop PIN: ${st.pickupPin})`}
-                                  anchor={{ x: 0.5, y: 1.0 }}
-                                >
-                                  <View style={styles.cartMapStoreMarkerPill}>
-                                    <View style={styles.cartMapStopNumberBadge}>
-                                      <Text style={styles.cartMapStopNumberBadgeText}>{st.stopNumber}</Text>
+                              ord.stops.map((st) => {
+                                const isCurrentStop = (ord.currentStopIndex || 0) === st.stopNumber - 1;
+                                const isCompleted = st.pickupStatus === 'picked_up' || (ord.currentStopIndex || 0) >= st.stopNumber;
+
+                                return (
+                                  <Marker
+                                    key={`ord-st-${st.stopNumber}`}
+                                    coordinate={{
+                                      latitude: st.snappedLatitude || Number(st.latitude) || 9.0882,
+                                      longitude: st.snappedLongitude || Number(st.longitude) || 7.4933,
+                                    }}
+                                    title={`[${st.stopNumber}] 🏪 ${st.storeName}`}
+                                    description={`Pickup Hub (${st.itemsCount} items • Shop PIN: ${st.pickupPin})`}
+                                    anchor={{ x: 0.5, y: 1.0 }}
+                                  >
+                                    <View style={styles.roadPinContainer}>
+                                      {/* Store Callout Bubble with Shop Number */}
+                                      <View
+                                        style={[
+                                          styles.roadPinCallout,
+                                          isCurrentStop && styles.roadPinCalloutActive,
+                                          isCompleted && styles.roadPinCalloutDone,
+                                        ]}
+                                      >
+                                        <View
+                                          style={[
+                                            styles.roadPinBadgeNum,
+                                            isCurrentStop && { backgroundColor: '#2563EB' },
+                                            isCompleted && { backgroundColor: '#056B4B' },
+                                          ]}
+                                        >
+                                          <Text style={styles.roadPinBadgeNumText}>
+                                            {isCompleted ? '✓' : st.stopNumber}
+                                          </Text>
+                                        </View>
+                                        <Text style={{ fontSize: 11, marginRight: 2 }}>🏪</Text>
+                                        <Text style={styles.roadPinCalloutText} numberOfLines={1}>
+                                          {st.storeName}
+                                        </Text>
+                                      </View>
+                                      {/* Needle stem pointing straight into road line */}
+                                      <View
+                                        style={[
+                                          styles.roadPinNeedle,
+                                          isCurrentStop && { backgroundColor: '#2563EB' },
+                                          isCompleted && { backgroundColor: '#056B4B' },
+                                        ]}
+                                      />
+                                      {/* Target bullseye dot anchored directly on the blue road line */}
+                                      <View
+                                        style={[
+                                          styles.roadPinDot,
+                                          isCurrentStop && styles.roadPinDotActive,
+                                          isCompleted && styles.roadPinDotDone,
+                                        ]}
+                                      />
                                     </View>
-                                    <Text style={{ fontSize: 12, marginRight: 2 }}>🏪</Text>
-                                    <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
-                                      {st.storeName}
-                                    </Text>
-                                  </View>
-                                </Marker>
-                              ))
+                                  </Marker>
+                                );
+                              })
                             ) : (
                               <Marker
                                 coordinate={{
@@ -6270,26 +6423,27 @@ export default function App() {
                               />
                             )}
 
-                            {/* 3. Customer Delivery Destination Pin (Home Pill) */}
+                            {/* 3. Customer Delivery Destination Pin (Marked Directly On The Road Line) */}
                             <Marker
                               coordinate={{
-                                latitude: ord.deliveryLocation?.latitude || 9.0882,
-                                longitude: ord.deliveryLocation?.longitude || 7.4933,
+                                latitude: ord.snappedDeliveryLocation?.latitude || ord.deliveryLocation?.latitude || 9.0882,
+                                longitude: ord.snappedDeliveryLocation?.longitude || ord.deliveryLocation?.longitude || 7.4933,
                               }}
                               title="🏠 Home: Delivery Destination"
                               description={ord.customerAddress || 'Customer dropoff residence'}
                               anchor={{ x: 0.5, y: 1.0 }}
                             >
-                              <View style={styles.cartMapHomeMarkerPill}>
-                                <View style={styles.cartMapHomeIconBadge}>
-                                  <Text style={{ fontSize: 13 }}>🏠</Text>
-                                </View>
-                                <View style={{ flexDirection: 'column' }}>
-                                  <Text style={styles.cartMapHomeMarkerTitle}>HOME</Text>
-                                  <Text style={styles.cartMapHomeMarkerSub} numberOfLines={1}>
-                                    {ord.customerAddress?.split(',')[0] || 'My Delivery Address'}
+                              <View style={styles.roadPinContainer}>
+                                <View style={[styles.roadPinCallout, { borderColor: '#DC2626' }]}>
+                                  <View style={[styles.roadPinBadgeNum, { backgroundColor: '#DC2626' }]}>
+                                    <Text style={{ fontSize: 9 }}>🏠</Text>
+                                  </View>
+                                  <Text style={[styles.roadPinCalloutText, { color: '#DC2626', fontWeight: '900' }]}>
+                                    HOME
                                   </Text>
                                 </View>
+                                <View style={[styles.roadPinNeedle, { backgroundColor: '#DC2626' }]} />
+                                <View style={[styles.roadPinDot, { borderColor: '#DC2626' }]} />
                               </View>
                             </Marker>
 
@@ -14222,6 +14376,79 @@ const styles = StyleSheet.create({
     fontSize: 8.5,
     fontWeight: '700',
     color: '#059669',
+  },
+  roadPinContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roadPinCallout: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#94A3B8',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+  },
+  roadPinCalloutActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+    transform: [{ scale: 1.05 }],
+  },
+  roadPinCalloutDone: {
+    borderColor: '#056B4B',
+    backgroundColor: '#F0FDF4',
+  },
+  roadPinBadgeNum: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#64748B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roadPinBadgeNumText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  roadPinCalloutText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    maxWidth: 90,
+  },
+  roadPinNeedle: {
+    width: 2.5,
+    height: 8,
+    backgroundColor: '#64748B',
+  },
+  roadPinDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 3.5,
+    borderColor: '#64748B',
+    marginTop: -2,
+  },
+  roadPinDotActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#DBEAFE',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  roadPinDotDone: {
+    borderColor: '#056B4B',
+    backgroundColor: '#DCFCE7',
   },
   buyerCancelOrderBtn: {
     paddingHorizontal: 12,

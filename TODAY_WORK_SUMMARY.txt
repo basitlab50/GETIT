@@ -223,12 +223,16 @@ Status:     All changes synced, verified, and pushed to origin/main
       - Fixed map visibility: The live map was previously hidden inside a collapsed toggle and gated behind `ord.deliveryPartner === 'bolt'`.
         It is now OPEN AND EXPANDED BY DEFAULT for all active orders, regardless of courier tier!
       - Increased map preview height from 160px to 240px with a vibrant emerald border and rounded corners.
-    - Real-World Street Road Network Routing (No More Straight Lines Through Bushes):
-      - Integrated free, high-performance OSRM driving route engine (`router.project-osrm.org`).
-      - Converts coordinates into authentic tarmac street paths with real turns at intersections, roundabouts, and avenues.
-      - The map polyline renders a dual-tone Google Maps blue road route (`#1D4ED8` outer outline with `#3B82F6` inner lane).
-      - The courier motorbike marker moves point-by-point along the actual street waypoints rather than cutting diagonally
-        across buildings and fields.
+    - Sequential Leg Routing (Step-by-Step, Not Running Across Everywhere):
+      - Split the journey into distinct stages/legs: Leg 0 (Rider ➔ Stop 1), Leg 1 (Stop 1 ➔ Stop 2), Leg 2 (Stop 2 ➔ Home).
+      - Highlights only the ACTIVE LEG in bold, vibrant Google Maps Blue (`#2563EB`) with a solid 7px outer outline and 4.5px core.
+      - Displays upcoming legs as a subtle, clean dashed preview line (`rgba(148, 163, 184, 0.6)`) to eliminate visual clutter.
+      - Completed legs automatically transition to soft muted green lines (`rgba(16, 185, 129, 0.55)`).
+    - On-Road Snapped Store Stop Pinpoints (Marked Directly On The Blue Line):
+      - Replaced off-road floating badges with street-anchored pinpoint markers (`anchor={{ x: 0.5, y: 1.0 }}`).
+      - Integrated OSRM snapped waypoint vertices so the pin sits precisely on the blue road line.
+      - Pinpoint includes a top callout bubble (`[1] 🏪 H-Medix`), a vertical needle stem, and a bullseye target dot
+        planted directly into the tarmac polyline.
     - Single Master Security PIN: Buyer gives one single 4-digit Delivery Security PIN to the courier upon final handover.
   - Supabase Network Resiliency & Offline Sync Queue:
     - Fixed `UnexpectedException: The network connection was lost (ExpoModulesCore/Promise.swift:56)`:
