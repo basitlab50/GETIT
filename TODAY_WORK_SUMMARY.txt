@@ -197,6 +197,14 @@ Status:     All changes synced, verified, and pushed to origin/main
     - Each store pickup marker displays a store emoji `🏪`, stop badge (`[1]`, `[2]`), and store name.
     - Buyer destination displays a custom `🏠 HOME` pill badge with home icon and delivery landmark name.
     - Itinerary flow bar updated to show `[1] 🏪 Shop A ➔ [2] 🏪 Shop B ➔ 🏠 Home (Destination)`.
+  - Buyer Orders Screen Organization & UX Overhaul:
+    - Fixed order sorting: Orders are strictly sorted chronologically (newest first). The order just placed is pinned
+      at the very top with a glowing `🔥 JUST PLACED ORDER • TRACKING LIVE` badge.
+    - Clean Status Filter Tabs: Added 4 category tabs (`🟢 Active`, `📦 All`, `✅ Delivered`, `❌ Cancelled`) with count badges.
+    - Expandable Items Preview: Provisions list is now neatly collapsed into a 1-tap `🛒 X Items (₦Y) [▼ View Items]` toggle.
+    - Expandable Live Courier Map: Replaced the overwhelming static 400px MapView with a compact courier bar (`🛵 Musa Ibrahim 4.95★`)
+      and a 1-tap `🗺️ Live Map` toggle to show maps only on demand, preventing performance lag and visual clutter.
+    - Order History Management: Added `🗑️ Clean List` button with options to remove demo/cancelled orders or wipe all past test orders.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)

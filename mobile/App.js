@@ -1553,9 +1553,55 @@ export default function App() {
         landmark: 'Close to ECOWAS Secretariat, Villa 7',
         apartment: 'Villa 7',
       },
+      isDemo: true,
+      timestamp: Date.now() - 3600000,
       createdAt: '1:10 PM',
     },
   ]);
+
+  const [ordersFilterTab, setOrdersFilterTab] = useState('active'); // 'active' | 'all' | 'completed' | 'cancelled'
+  const [lastPlacedOrderId, setLastPlacedOrderId] = useState(null);
+  const [expandedBoltMapOrderIds, setExpandedBoltMapOrderIds] = useState([]);
+  const [expandedItemsOrderIds, setExpandedItemsOrderIds] = useState([]);
+
+  const toggleBoltMapExpand = (orderId) => {
+    setExpandedBoltMapOrderIds((prev) =>
+      prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
+    );
+  };
+
+  const toggleItemsExpand = (orderId) => {
+    setExpandedItemsOrderIds((prev) =>
+      prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
+    );
+  };
+
+  const clearAllOrdersHistory = () => {
+    Alert.alert(
+      'Manage Order History',
+      'Select how you want to clean up your orders list:',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove Old / Cancelled',
+          style: 'default',
+          onPress: () => {
+            const activeOnly = orders.filter(
+              (o) => o.status === 'New Order' || o.status === 'Preparing' || o.status === 'On the Way'
+            );
+            updateAndPersistOrders(activeOnly);
+          },
+        },
+        {
+          text: 'Clear All Orders',
+          style: 'destructive',
+          onPress: () => {
+            updateAndPersistOrders([]);
+          },
+        },
+      ]
+    );
+  };
 
   // Persistent helpers for local offline storage across app reloads
   const updateAndPersistOrders = (updater) => {
@@ -2847,6 +2893,29 @@ export default function App() {
     );
   };
 
+  // Cleanly sorted & filtered buyer orders list:
+  // - Latest placed order is pinned at the top with 🔥 highlight badge
+  // - Chronologically sorted (newest orders first)
+  // - Filterable by Active, All, Delivered, Cancelled
+  const sortedAndFilteredOrders = useMemo(() => {
+    const sorted = [...orders].sort((a, b) => {
+      if (lastPlacedOrderId && a.id === lastPlacedOrderId) return -1;
+      if (lastPlacedOrderId && b.id === lastPlacedOrderId) return 1;
+      return (b.timestamp || 0) - (a.timestamp || 0);
+    });
+
+    if (ordersFilterTab === 'active') {
+      return sorted.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled');
+    }
+    if (ordersFilterTab === 'completed') {
+      return sorted.filter((o) => o.status === 'Delivered');
+    }
+    if (ordersFilterTab === 'cancelled') {
+      return sorted.filter((o) => o.status === 'Cancelled');
+    }
+    return sorted;
+  }, [orders, ordersFilterTab, lastPlacedOrderId]);
+
   const handleCheckout = () => {
     if (cart.length === 0) return;
 
@@ -2939,6 +3008,8 @@ export default function App() {
           notes: riderDeliveryNote || pinnedLocation.notes,
         },
         createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: Date.now(),
+        dateStr: 'Today',
       };
     });
 
@@ -2947,6 +3018,10 @@ export default function App() {
     setCheckoutModalVisible(false);
     setCartModalVisible(false);
     if (selectedStore) setSelectedStore(null);
+    if (createdOrders.length > 0) {
+      setLastPlacedOrderId(createdOrders[0].id);
+      setOrdersFilterTab('active');
+    }
     setActiveTab('orders');
 
     if (isMultiStore) {
@@ -5455,236 +5530,346 @@ export default function App() {
           style={styles.mainScrollView}
           contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
         >
-          <Text style={styles.sectionHeading}>Your Active Orders</Text>
-          <Text style={styles.sectionSubheading}>Live delivery tracking & security PINs</Text>
+          {/* Top Title and History Manager Header */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <View>
+              <Text style={styles.sectionHeading}>My Orders</Text>
+              <Text style={styles.sectionSubheading}>Live delivery tracking & security PINs</Text>
+            </View>
+            {orders.length > 0 && (
+              <TouchableOpacity
+                onPress={clearAllOrdersHistory}
+                style={styles.ordersClearHistoryBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.ordersClearHistoryBtnText}>🗑️ Clean List</Text>
+              </TouchableOpacity>
+            )}
+          </View>
 
-          {orders.map((ord) => (
-            <View key={ord.id} style={styles.orderCard}>
-              {ord.batchId && (
-                <View style={styles.orderBatchBadge}>
-                  <Text style={styles.orderBatchBadgeText}>
-                    🔗 MULTI-STORE BATCH • {ord.batchId} • STOP {ord.stopNumber || 1} OF {ord.totalStops || 1}
-                  </Text>
-                </View>
-              )}
-              <View style={styles.orderCardHeader}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.orderCardTitle}>{ord.storeName}</Text>
-                  <Text style={styles.orderCardSub}>{ord.id} • {ord.itemsCount} items</Text>
-                </View>
-                <View
-                  style={[
-                    styles.orderStatusPill,
-                    ord.status === 'Cancelled' && { backgroundColor: 'rgba(239, 68, 68, 0.12)' },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.orderStatusText,
-                      ord.status === 'Cancelled' && { color: '#EF4444' },
-                    ]}
-                  >
-                    {ord.status}
-                  </Text>
-                </View>
-              </View>
+          {/* Clean Categorized Status Filter Tabs */}
+          <View style={styles.ordersFilterTabBar}>
+            <TouchableOpacity
+              style={[styles.ordersFilterTabBtn, ordersFilterTab === 'active' && styles.ordersFilterTabBtnActive]}
+              onPress={() => setOrdersFilterTab('active')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'active' && styles.ordersFilterTabTextActive]}>
+                🟢 Active ({orders.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled').length})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.ordersFilterTabBtn, ordersFilterTab === 'all' && styles.ordersFilterTabBtnActive]}
+              onPress={() => setOrdersFilterTab('all')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'all' && styles.ordersFilterTabTextActive]}>
+                📦 All ({orders.length})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.ordersFilterTabBtn, ordersFilterTab === 'completed' && styles.ordersFilterTabBtnActive]}
+              onPress={() => setOrdersFilterTab('completed')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'completed' && styles.ordersFilterTabTextActive]}>
+                ✅ Delivered ({orders.filter((o) => o.status === 'Delivered').length})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.ordersFilterTabBtn, ordersFilterTab === 'cancelled' && styles.ordersFilterTabBtnActive]}
+              onPress={() => setOrdersFilterTab('cancelled')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'cancelled' && styles.ordersFilterTabTextActive]}>
+                ❌ Cancelled ({orders.filter((o) => o.status === 'Cancelled').length})
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-              {/* Multi-Stop Itinerary & Merchant Pickup PIN Bar */}
-              {ord.batchId && ord.status !== 'Cancelled' && (
-                <View style={styles.orderMultiStopProgressBox}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Text style={{ fontSize: 13 }}>🛵</Text>
-                      <Text style={styles.orderMultiStopProgressTitle}>
-                        COURIER STOP {ord.stopNumber || 1} OF {ord.totalStops || 1}
+          {/* Empty State */}
+          {sortedAndFilteredOrders.length === 0 ? (
+            <View style={styles.ordersEmptyBox}>
+              <Text style={{ fontSize: 44, marginBottom: 10 }}>📦</Text>
+              <Text style={styles.ordersEmptyTitle}>
+                {ordersFilterTab === 'active' ? 'No Active Orders' : 'No Orders Found'}
+              </Text>
+              <Text style={styles.ordersEmptySub}>
+                {ordersFilterTab === 'active'
+                  ? 'When you place an order, live tracking, courier ETA, and security PINs will appear here in real time.'
+                  : 'Your past orders will appear here once placed.'}
+              </Text>
+              <TouchableOpacity
+                style={[styles.primaryActionBtn, { marginTop: 16 }]}
+                onPress={() => setActiveTab('home')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.primaryActionBtnText}>🛍️ Discover Stores</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            sortedAndFilteredOrders.map((ord) => {
+              const isJustPlaced = ord.id === lastPlacedOrderId || (ord.timestamp && Date.now() - ord.timestamp < 1800000);
+              const isBoltMapOpen = expandedBoltMapOrderIds.includes(ord.id);
+              const isItemsOpen = expandedItemsOrderIds.includes(ord.id);
+
+              return (
+                <View key={ord.id} style={styles.orderCard}>
+                  {/* High-Visibility Banner for the Order Just Placed */}
+                  {isJustPlaced && (
+                    <View style={styles.justPlacedOrderBanner}>
+                      <Text style={styles.justPlacedOrderBannerText}>🔥 JUST PLACED ORDER • TRACKING LIVE</Text>
+                    </View>
+                  )}
+
+                  {/* Multi-Store Batch Tag */}
+                  {ord.batchId && (
+                    <View style={styles.orderBatchBadge}>
+                      <Text style={styles.orderBatchBadgeText}>
+                        🔗 MULTI-STORE BATCH • {ord.batchId} • STOP {ord.stopNumber || 1} OF {ord.totalStops || 1}
                       </Text>
                     </View>
-                    <View style={styles.orderMultiStopPinBadge}>
-                      <Text style={styles.orderMultiStopPinBadgeText}>
-                        Shop Pickup PIN: {ord.pickupPin || '----'}
+                  )}
+
+                  {/* Order Card Header */}
+                  <View style={styles.orderCardHeader}>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <Text style={styles.orderCardTitle}>{ord.storeName}</Text>
+                      <Text style={styles.orderCardSub}>
+                        {ord.id} • {ord.itemsCount} items • {ord.createdAt || 'Just now'}
                       </Text>
                     </View>
-                  </View>
-                  <Text style={styles.orderMultiStopProgressSub}>
-                    {ord.stopItineraryText || `Stop ${ord.stopNumber}: Pickup at ${ord.storeName}`}
-                  </Text>
-                </View>
-              )}
-
-              {/* Order Cancelled Notification Banner */}
-              {ord.status === 'Cancelled' && (
-                <View style={styles.orderCancelledBanner}>
-                  <Text style={styles.orderCancelledBannerTitle}>❌ Order Cancelled & Refunded</Text>
-                  <Text style={styles.orderCancelledBannerSub}>
-                    {ord.cancellationReason || 'Cancelled by customer'}. Full refund of {formatNaira(ord.total)} has been credited to your balance.
-                  </Text>
-                </View>
-              )}
-
-              {/* Pin verification box (suppressed if order was cancelled) */}
-              {ord.status !== 'Cancelled' && (
-                <View style={styles.pinBox}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.pinLabel}>DELIVERY SECURITY PIN</Text>
-                    <Text style={styles.pinInstructions}>
-                      Only release this code when you receive your packages.
-                    </Text>
-                  </View>
-                  <View style={styles.pinNumberWrap}>
-                    <Text style={styles.pinNumberText}>{ord.deliveryPin}</Text>
-                  </View>
-                </View>
-              )}
-
-              {/* --- IN-APP BOLT LIVE COURIER TRACKING (IF BOLT ORDER) --- */}
-              {ord.deliveryPartner === 'bolt' && (
-                <View style={styles.boltTrackingCard}>
-                  <View style={styles.boltTrackingTopRow}>
-                    <View style={styles.boltNetworkTag}>
-                      <Text style={{ fontSize: 16 }}>🟢</Text>
-                      <Text style={styles.boltNetworkTitle}>BOLT DELIVERY NETWORK</Text>
-                    </View>
-                    <View style={styles.boltEtaPill}>
-                      <Text style={styles.boltEtaPillText}>{ord.eta || '12 mins'}</Text>
-                    </View>
-                  </View>
-
-                  {/* Interactive In-App Moving Courier Map */}
-                  <View style={styles.boltTrackingMapWrap}>
-                    <MapView
-                      style={styles.boltTrackingMap}
-                      initialRegion={{
-                        latitude: ord.deliveryLocation?.latitude || 9.0882,
-                        longitude: ord.deliveryLocation?.longitude || 7.4933,
-                        latitudeDelta: 0.015,
-                        longitudeDelta: 0.015,
-                      }}
-                      scrollEnabled={true}
-                      zoomEnabled={true}
+                    <View
+                      style={[
+                        styles.orderStatusPill,
+                        ord.status === 'Cancelled' && { backgroundColor: 'rgba(239, 68, 68, 0.12)' },
+                        ord.status === 'Delivered' && { backgroundColor: 'rgba(5, 107, 75, 0.12)' },
+                      ]}
                     >
-                      {/* Customer Dropoff Pin */}
-                      <Marker
-                        coordinate={{
-                          latitude: ord.deliveryLocation?.latitude || 9.0882,
-                          longitude: ord.deliveryLocation?.longitude || 7.4933,
-                        }}
-                        title="Your Delivery Destination"
-                        description={ord.customerAddress}
-                        pinColor="#056B4B"
-                      />
-
-                      {/* Store Origin Pin */}
-                      <Marker
-                        coordinate={{
-                          latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
-                          longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
-                        }}
-                        title={ord.storeName}
-                        description="Store Fulfillment Hub"
-                        pinColor="#B76E79"
-                      />
-
-                      {/* Moving Bolt Motorbike Rider Pin */}
-                      <Marker
-                        coordinate={
-                          ord.boltCoords || {
-                            latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.002,
-                            longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.002,
-                          }
-                        }
-                        title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Bolt Courier)`}
-                        description={`${ord.boltRider?.vehicle || 'Bajaj Boxer 150'} • ${ord.boltRider?.plate || 'ABJ-492-KW'}`}
-                      />
-                    </MapView>
+                      <Text
+                        style={[
+                          styles.orderStatusText,
+                          ord.status === 'Cancelled' && { color: '#EF4444' },
+                          ord.status === 'Delivered' && { color: '#056B4B' },
+                        ]}
+                      >
+                        {ord.status}
+                      </Text>
+                    </View>
                   </View>
 
-                  {/* Bolt Courier Profile & Call Bar */}
-                  <View style={styles.boltRiderBox}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                      <View style={styles.boltRiderAvatar}>
-                        <Text style={{ fontSize: 20 }}>🛵</Text>
-                      </View>
-                      <View style={{ marginLeft: 10, flex: 1 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <Text style={styles.boltRiderName}>
-                            {ord.boltRider?.name || 'Musa Ibrahim'}
-                          </Text>
-                          <Text style={styles.boltRiderRating}>
-                            {' '}• {ord.boltRider?.rating || '4.95'}★
+                  {/* Multi-Stop Sequence Progress Bar */}
+                  {ord.batchId && ord.status !== 'Cancelled' && (
+                    <View style={styles.orderMultiStopProgressBox}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={{ fontSize: 13 }}>🛵</Text>
+                          <Text style={styles.orderMultiStopProgressTitle}>
+                            COURIER STOP {ord.stopNumber || 1} OF {ord.totalStops || 1}
                           </Text>
                         </View>
-                        <Text style={styles.boltRiderVehicle} numberOfLines={1}>
-                          {ord.boltRider?.vehicle || 'Bajaj Boxer 150'} ({ord.boltRider?.plate || 'ABJ-492-KW'})
+                        <View style={styles.orderMultiStopPinBadge}>
+                          <Text style={styles.orderMultiStopPinBadgeText}>
+                            Shop Pickup PIN: {ord.pickupPin || '----'}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.orderMultiStopProgressSub}>
+                        {ord.stopItineraryText || `Stop ${ord.stopNumber}: Pickup at ${ord.storeName}`}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Order Cancelled Notification Banner */}
+                  {ord.status === 'Cancelled' && (
+                    <View style={styles.orderCancelledBanner}>
+                      <Text style={styles.orderCancelledBannerTitle}>❌ Order Cancelled & Refunded</Text>
+                      <Text style={styles.orderCancelledBannerSub}>
+                        {ord.cancellationReason || 'Cancelled by customer'}. Full refund of {formatNaira(ord.total)} has been credited to your balance.
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Expandable Items Preview Toggle */}
+                  <TouchableOpacity
+                    style={styles.orderItemsToggleRow}
+                    onPress={() => toggleItemsExpand(ord.id)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.orderItemsToggleText}>
+                      🛒 {ord.itemsCount} Provisions Ordered ({formatNaira(ord.subtotal || ord.total)})
+                    </Text>
+                    <Text style={styles.orderItemsToggleChevron}>
+                      {isItemsOpen ? '▲ Hide Items' : '▼ View Items'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {isItemsOpen && (
+                    <View style={styles.orderItemsListExpanded}>
+                      {(ord.items || []).map((itm, idx) => (
+                        <View key={idx} style={styles.orderItemExpandedRow}>
+                          <Text style={styles.orderItemExpandedName}>
+                            {itm.qty}x {itm.name}
+                          </Text>
+                          <Text style={styles.orderItemExpandedPrice}>
+                            {formatNaira((itm.price || 0) * itm.qty)}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Pin verification box (suppressed if order was cancelled) */}
+                  {ord.status !== 'Cancelled' && (
+                    <View style={styles.pinBox}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.pinLabel}>DELIVERY SECURITY PIN</Text>
+                        <Text style={styles.pinInstructions}>
+                          Give this 4-digit code to your rider at your door to confirm delivery.
                         </Text>
                       </View>
+                      <View style={styles.pinNumberWrap}>
+                        <Text style={styles.pinNumberText}>{ord.deliveryPin}</Text>
+                      </View>
                     </View>
+                  )}
 
+                  {/* --- BOLT COURIER TRACKING (CLEAN COMPACT BAR WITH ON-DEMAND EXPANDABLE MAP) --- */}
+                  {ord.deliveryPartner === 'bolt' && ord.status !== 'Cancelled' && (
+                    <View style={styles.boltTrackingSummaryCard}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
+                          <View style={styles.boltRiderAvatarSmall}>
+                            <Text style={{ fontSize: 16 }}>🛵</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.boltRiderNameSmall}>
+                              {ord.boltRider?.name || 'Musa Ibrahim'} (Bolt Courier)
+                            </Text>
+                            <Text style={styles.boltEtaPillTextSmall}>
+                              ⚡ Arrival: {ord.eta || '12 mins'} • {ord.boltRider?.rating || '4.95'}★
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <TouchableOpacity
+                            style={styles.boltToggleMapBtn}
+                            onPress={() => toggleBoltMapExpand(ord.id)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.boltToggleMapBtnText}>
+                              {isBoltMapOpen ? '▲ Hide Map' : '🗺️ Live Map'}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.boltCallBtnSmall}
+                            onPress={() =>
+                              Linking.openURL(`tel:${ord.boltRider?.phone || '+2348032941194'}`)
+                            }
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.boltCallBtnSmallText}>📞 Call</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+
+                      {/* On-Demand Interactive Courier Map */}
+                      {isBoltMapOpen && (
+                        <View style={[styles.boltTrackingMapWrap, { marginTop: 10 }]}>
+                          <MapView
+                            style={styles.boltTrackingMap}
+                            initialRegion={{
+                              latitude: ord.deliveryLocation?.latitude || 9.0882,
+                              longitude: ord.deliveryLocation?.longitude || 7.4933,
+                              latitudeDelta: 0.015,
+                              longitudeDelta: 0.015,
+                            }}
+                            scrollEnabled={true}
+                            zoomEnabled={true}
+                          >
+                            <Marker
+                              coordinate={{
+                                latitude: ord.deliveryLocation?.latitude || 9.0882,
+                                longitude: ord.deliveryLocation?.longitude || 7.4933,
+                              }}
+                              title="Your Delivery Destination"
+                              description={ord.customerAddress}
+                              pinColor="#056B4B"
+                            />
+                            <Marker
+                              coordinate={{
+                                latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
+                                longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
+                              }}
+                              title={ord.storeName}
+                              description="Store Fulfillment Hub"
+                              pinColor="#B76E79"
+                            />
+                            <Marker
+                              coordinate={
+                                ord.boltCoords || {
+                                  latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.002,
+                                  longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.002,
+                                }
+                              }
+                              title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Bolt Courier)`}
+                              description={`${ord.boltRider?.vehicle || 'Bajaj Boxer 150'} • ${ord.boltRider?.plate || 'ABJ-492-KW'}`}
+                            />
+                          </MapView>
+                        </View>
+                      )}
+                    </View>
+                  )}
+
+                  {/* Destination Location Info */}
+                  <View style={styles.orderGpsCard}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.orderGpsTitle}>📍 DELIVERY DESTINATION</Text>
+                      <Text style={styles.orderGpsLandmark} numberOfLines={2}>
+                        {ord.customerAddress || ord.deliveryLocation?.landmark || 'Your Delivery Address'}
+                      </Text>
+                      {ord.deliveryLocation?.notes && (
+                        <Text style={styles.orderGpsNotes} numberOfLines={2}>
+                          🛵 Note: "{ord.deliveryLocation.notes}"
+                        </Text>
+                      )}
+                    </View>
                     <TouchableOpacity
-                      style={styles.boltCallBtn}
+                      style={styles.openMapsBtn}
                       onPress={() =>
-                        Linking.openURL(`tel:${ord.boltRider?.phone || '+2348032941194'}`)
+                        openExternalGoogleMaps(
+                          ord.deliveryLocation?.latitude || 9.0882,
+                          ord.deliveryLocation?.longitude || 7.4933
+                        )
                       }
                       activeOpacity={0.8}
                     >
-                      <Text style={styles.boltCallBtnText}>📞 Call Courier</Text>
+                      <Text style={styles.openMapsBtnText}>Maps ➔</Text>
                     </TouchableOpacity>
                   </View>
-                </View>
-              )}
 
-              {/* Pinned Google Map Destination for Rider */}
-              <View style={styles.orderGpsCard}>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                    <Text style={styles.orderGpsTitle}>📍 PINNED GPS FOR COURIER</Text>
+                  {/* Order Footer Row */}
+                  <View style={styles.orderFooterRow}>
+                    <View>
+                      <Text style={styles.orderTotalText}>Total: {formatNaira(ord.total)}</Text>
+                      <Text style={styles.orderEtaText}>
+                        {ord.status === 'Cancelled' ? 'Status: Cancelled' : `Est. Arrival: ${ord.eta || '15-25 min'}`}
+                      </Text>
+                    </View>
+                    {(ord.status === 'New Order' || ord.status === 'Preparing') && (
+                      <TouchableOpacity
+                        style={styles.buyerCancelOrderBtn}
+                        onPress={() => cancelBuyerOrder(ord.id)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.buyerCancelOrderBtnText}>✕ Cancel Order</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
-                  <Text style={styles.orderGpsCoords}>
-                    {ord.deliveryLocation?.latitude?.toFixed(4) || '9.0882'}° N,{' '}
-                    {ord.deliveryLocation?.longitude?.toFixed(4) || '7.4933'}° E
-                  </Text>
-                  <Text style={styles.orderGpsLandmark} numberOfLines={2}>
-                    Landmark: {ord.deliveryLocation?.landmark || 'Near Transcorp Hilton, Black Gate'}
-                  </Text>
-                  {(ord.deliveryLocation?.notes || ord.deliveryLocation?.apartment) ? (
-                    <Text style={styles.orderGpsNotes} numberOfLines={2}>
-                      🛵 Courier Note: "{ord.deliveryLocation?.notes || `Deliver to ${ord.deliveryLocation?.apartment}`}"
-                    </Text>
-                  ) : null}
                 </View>
-
-                <TouchableOpacity
-                  style={styles.openMapsBtn}
-                  onPress={() =>
-                    openExternalGoogleMaps(
-                      ord.deliveryLocation?.latitude || 9.0882,
-                      ord.deliveryLocation?.longitude || 7.4933
-                    )
-                  }
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.openMapsBtnText}>Open Maps ➔</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.orderFooterRow}>
-                <View>
-                  <Text style={styles.orderTotalText}>Total: {formatNaira(ord.total)}</Text>
-                  <Text style={styles.orderEtaText}>
-                    {ord.status === 'Cancelled' ? 'Status: Cancelled' : `Est. Arrival: ${ord.eta}`}
-                  </Text>
-                </View>
-                {(ord.status === 'New Order' || ord.status === 'Preparing') && (
-                  <TouchableOpacity
-                    style={styles.buyerCancelOrderBtn}
-                    onPress={() => cancelBuyerOrder(ord.id)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.buyerCancelOrderBtnText}>✕ Cancel Order</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-          ))}
+              );
+            })
+          )}
         </ScrollView>
       )}
 
@@ -13422,6 +13607,187 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#7F1D1D',
     lineHeight: 15,
+  },
+  ordersClearHistoryBtn: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  ordersClearHistoryBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  ordersFilterTabBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 14,
+    paddingBottom: 4,
+  },
+  ordersFilterTabBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  ordersFilterTabBtnActive: {
+    backgroundColor: 'rgba(5, 107, 75, 0.12)',
+    borderColor: COLORS.emeraldPrimary,
+  },
+  ordersFilterTabText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+  },
+  ordersFilterTabTextActive: {
+    color: COLORS.emeraldDeep,
+    fontWeight: '800',
+  },
+  ordersEmptyBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 20,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  ordersEmptyTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    fontFamily: 'serif',
+    marginBottom: 6,
+  },
+  ordersEmptySub: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 260,
+  },
+  justPlacedOrderBanner: {
+    backgroundColor: 'rgba(5, 107, 75, 0.12)',
+    borderWidth: 1.5,
+    borderColor: COLORS.emeraldPrimary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    marginBottom: 10,
+  },
+  justPlacedOrderBannerText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: COLORS.emeraldDeep,
+    letterSpacing: 0.5,
+  },
+  orderItemsToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  orderItemsToggleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  orderItemsToggleChevron: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+  },
+  orderItemsListExpanded: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    gap: 4,
+  },
+  orderItemExpandedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 3,
+  },
+  orderItemExpandedName: {
+    fontSize: 11,
+    color: COLORS.textDark,
+    fontWeight: '600',
+    flex: 1,
+    marginRight: 8,
+  },
+  orderItemExpandedPrice: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+  },
+  boltTrackingSummaryCard: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  boltRiderAvatarSmall: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boltRiderNameSmall: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  boltEtaPillTextSmall: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+    marginTop: 1,
+  },
+  boltToggleMapBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+  },
+  boltToggleMapBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  boltCallBtnSmall: {
+    backgroundColor: '#16A34A',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  boltCallBtnSmallText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 
   // Profile Tab
