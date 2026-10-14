@@ -145,6 +145,18 @@ Status:     All changes synced, verified, and pushed to origin/main
     the Orders tab (`activeTab === 'orders'`) with refund confirmation (`formatNaira(ord.total)`),
     status update to `Cancelled`, reason logging, voided security PIN, and Supabase synchronization.
 
+[17:10:00] Basket Map Resizing, Smooth Zooming, Fit View & Fullscreen Interactive Map
+  - Resizable Inline Basket Map: Added dynamic height toggling between compact (220px) and tall (390px)
+    via an inline `↕ Expand` / `⤡ Compact` button, providing plenty of room for inspecting complex multi-store routes.
+  - Floating Zoom Controls (`＋` / `−`): Added dedicated floating zoom pill on the right side of the map
+    to smoothly zoom in by 50% delta and zoom out with programmatic `animateToRegion` adjustments.
+  - Bulletproof "🧭 Fit All" Camera Framing: Created `fitCartMapToAllPins` which calculates accurate
+    bounding boxes across all participating shops, destination pins, and live phone GPS with margin delta,
+    invoking both `animateToRegion` and native `fitToCoordinates` reliably across Web, Android, and iOS.
+  - Fullscreen Dispatch Route Modal: Added a dedicated `⛶ Fullscreen` button opening an edge-to-edge
+    interactive map modal complete with top navigation bar, luxury route subtitle, floating zoom/fit controls,
+    and bottom status drawer showing shop count, route legend, and estimated delivery timing.
+
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
 --------------------------------------------------------------------------------

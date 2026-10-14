@@ -1207,6 +1207,10 @@ export default function App() {
   // Pinned Map Location State for Customer & Riders
   const mapRef = useRef(null);
   const cartMapRef = useRef(null);
+  const cartFullscreenMapRef = useRef(null);
+  const [cartMapSize, setCartMapSize] = useState('compact'); // 'compact' (220px) | 'tall' (390px)
+  const [isCartMapFullscreen, setIsCartMapFullscreen] = useState(false);
+  const [cartMapRegion, setCartMapRegion] = useState(null);
   const storeMiniMapRef = useRef(null);
   const storeFullMapRef = useRef(null);
   const buyerExploreMapRef = useRef(null);
@@ -2506,6 +2510,97 @@ export default function App() {
     return liveDiffDistanceKm !== null && liveDiffDistanceKm >= 0.8;
   }, [liveDiffDistanceKm]);
 
+  // Robust Fit View Handler: Calculates bounding box across destination, stores, and user GPS
+  const fitCartMapToAllPins = (targetRef = cartMapRef, padding = 50) => {
+    try {
+      const targetMap = targetRef?.current || cartMapRef.current;
+      if (!targetMap || !deliveryDestLat) return;
+
+      const points = [
+        { latitude: deliveryDestLat, longitude: deliveryDestLng },
+        ...participatingStores.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
+      ];
+      if (userLiveCoords?.latitude && userLiveCoords?.longitude) {
+        points.push({
+          latitude: userLiveCoords.latitude,
+          longitude: userLiveCoords.longitude,
+        });
+      }
+
+      const lats = points.map((p) => Number(p.latitude)).filter((n) => !isNaN(n) && n !== 0);
+      const lngs = points.map((p) => Number(p.longitude)).filter((n) => !isNaN(n) && n !== 0);
+      if (lats.length === 0 || lngs.length === 0) return;
+
+      const minLat = Math.min(...lats);
+      const maxLat = Math.max(...lats);
+      const minLng = Math.min(...lngs);
+      const maxLng = Math.max(...lngs);
+
+      const centerLat = (minLat + maxLat) / 2;
+      const centerLng = (minLng + maxLng) / 2;
+      const latDelta = Math.max(0.015, (maxLat - minLat) * 1.6);
+      const lngDelta = Math.max(0.015, (maxLng - minLng) * 1.6);
+
+      const targetRegion = {
+        latitude: centerLat,
+        longitude: centerLng,
+        latitudeDelta: latDelta,
+        longitudeDelta: lngDelta,
+      };
+
+      setCartMapRegion(targetRegion);
+
+      // Animate to bounding region
+      if (typeof targetMap.animateToRegion === 'function') {
+        targetMap.animateToRegion(targetRegion, 500);
+      }
+      // Also invoke native fitToCoordinates if available
+      if (typeof targetMap.fitToCoordinates === 'function') {
+        try {
+          targetMap.fitToCoordinates(points, {
+            edgePadding: { top: padding, right: padding, bottom: padding, left: padding },
+            animated: true,
+          });
+        } catch (e) {}
+      }
+    } catch (e) {
+      console.log('fitCartMapToAllPins error:', e?.message);
+    }
+  };
+
+  // Smooth Zoom In (+) and Zoom Out (-) handler for Basket Map
+  const zoomCartMap = (zoomIn = true, targetRef = cartMapRef) => {
+    try {
+      const targetMap = targetRef?.current || cartMapRef.current;
+      if (!targetMap) return;
+
+      const current = cartMapRegion || {
+        latitude: (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2,
+        longitude: (deliveryDestLng + (participatingStores[0]?.longitude || activeCartStoreLng)) / 2,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      };
+
+      const multiplier = zoomIn ? 0.5 : 2.0;
+      const newLatDelta = Math.max(0.002, Math.min(2.0, current.latitudeDelta * multiplier));
+      const newLngDelta = Math.max(0.002, Math.min(2.0, current.longitudeDelta * multiplier));
+
+      const updatedRegion = {
+        latitude: current.latitude,
+        longitude: current.longitude,
+        latitudeDelta: newLatDelta,
+        longitudeDelta: newLngDelta,
+      };
+
+      setCartMapRegion(updatedRegion);
+      if (typeof targetMap.animateToRegion === 'function') {
+        targetMap.animateToRegion(updatedRegion, 300);
+      }
+    } catch (e) {
+      console.log('zoomCartMap error:', e?.message);
+    }
+  };
+
   // When cart is opened: auto-fetch live GPS for buyer blue dot and fit camera to frame pins
   useEffect(() => {
     if (cartModalVisible) {
@@ -2525,30 +2620,19 @@ export default function App() {
       })();
 
       setTimeout(() => {
-        try {
-          if (cartMapRef.current && deliveryDestLat) {
-            const fitPoints = [
-              { latitude: deliveryDestLat, longitude: deliveryDestLng },
-              ...participatingStores.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
-            ];
-            if (userLiveCoords?.latitude && userLiveCoords?.longitude) {
-              fitPoints.push({
-                latitude: userLiveCoords.latitude,
-                longitude: userLiveCoords.longitude,
-              });
-            }
-            cartMapRef.current.fitToCoordinates(
-              fitPoints,
-              {
-                edgePadding: { top: 45, right: 45, bottom: 45, left: 45 },
-                animated: true,
-              }
-            );
-          }
-        } catch (e) {}
-      }, 350);
+        fitCartMapToAllPins(cartMapRef, 45);
+      }, 400);
     }
   }, [cartModalVisible, participatingStores, deliveryDestLat, deliveryDestLng, userLiveCoords]);
+
+  // When fullscreen map opens: auto-frame all pins with larger padding
+  useEffect(() => {
+    if (isCartMapFullscreen) {
+      setTimeout(() => {
+        fitCartMapToAllPins(cartFullscreenMapRef, 70);
+      }, 400);
+    }
+  }, [isCartMapFullscreen]);
 
   // Customer Order Cancellation Handler
   const cancelBuyerOrder = (orderId) => {
@@ -6236,8 +6320,8 @@ export default function App() {
                     </View>
                   )}
 
-                  {/* Interactive Mini-Map Preview Structure */}
-                  <View style={styles.cartMapContainer}>
+                  {/* Interactive Mini-Map Preview Structure (Resizable & Fullscreen-ready) */}
+                  <View style={[styles.cartMapContainer, { height: cartMapSize === 'tall' ? 390 : 220 }]}>
                     <MapView
                       ref={cartMapRef}
                       style={styles.cartMapCanvas}
@@ -6248,11 +6332,12 @@ export default function App() {
                         longitudeDelta: Math.max(0.02, Math.abs(deliveryDestLng - (participatingStores[0]?.longitude || activeCartStoreLng)) * 2),
                       }}
                       showsUserLocation={true}
-                      showsCompass={false}
+                      showsCompass={true}
                       scrollEnabled={true}
                       zoomEnabled={true}
-                      pitchEnabled={false}
-                      rotateEnabled={false}
+                      pitchEnabled={true}
+                      rotateEnabled={true}
+                      onRegionChangeComplete={(reg) => setCartMapRegion(reg)}
                     >
                       {/* 1. Participating Store Pins */}
                       {participatingStores.map((st) => (
@@ -6345,11 +6430,32 @@ export default function App() {
                       </View>
                     </View>
 
+                    {/* Floating Zoom Controls Pill on the Right Side */}
+                    <View style={styles.cartMapZoomPill}>
+                      <TouchableOpacity
+                        style={styles.cartMapZoomBtn}
+                        onPress={() => zoomCartMap(true, cartMapRef)}
+                        activeOpacity={0.7}
+                        accessibilityLabel="Zoom In"
+                      >
+                        <Text style={styles.cartMapZoomBtnText}>＋</Text>
+                      </TouchableOpacity>
+                      <View style={styles.cartMapZoomDivider} />
+                      <TouchableOpacity
+                        style={styles.cartMapZoomBtn}
+                        onPress={() => zoomCartMap(false, cartMapRef)}
+                        activeOpacity={0.7}
+                        accessibilityLabel="Zoom Out"
+                      >
+                        <Text style={styles.cartMapZoomBtnText}>−</Text>
+                      </TouchableOpacity>
+                    </View>
+
                     {/* Map Legend Overlay on Bottom-Left */}
                     <View style={styles.cartMapLegendBar}>
                       <View style={styles.cartMapLegendItem}>
                         <View style={[styles.cartMapLegendDot, { backgroundColor: '#EF4444' }]} />
-                        <Text style={styles.cartMapLegendText}>📍 Delivery Pin</Text>
+                        <Text style={styles.cartMapLegendText}>📍 Delivery</Text>
                       </View>
                       <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 9 }}>┈┈</Text>
                       <View style={styles.cartMapLegendItem}>
@@ -6371,34 +6477,40 @@ export default function App() {
                       )}
                     </View>
 
-                    {/* Fit View Button on Bottom-Right */}
-                    <TouchableOpacity
-                      style={styles.cartMapFitBtn}
-                      onPress={() => {
-                        if (cartMapRef.current && deliveryDestLat) {
-                          const fitPoints = [
-                            ...participatingStores.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
-                            { latitude: deliveryDestLat, longitude: deliveryDestLng },
-                          ];
-                          if (userLiveCoords?.latitude && userLiveCoords?.longitude) {
-                            fitPoints.push({
-                              latitude: userLiveCoords.latitude,
-                              longitude: userLiveCoords.longitude,
-                            });
-                          }
-                          cartMapRef.current.fitToCoordinates(
-                            fitPoints,
-                            {
-                              edgePadding: { top: 45, right: 45, bottom: 45, left: 45 },
-                              animated: true,
-                            }
-                          );
-                        }
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.cartMapFitBtnText}>🧭 Fit View</Text>
-                    </TouchableOpacity>
+                    {/* Bottom-Right Controls Cluster: Fit View, Resize, and Fullscreen */}
+                    <View style={styles.cartMapControlsCluster}>
+                      {/* Fit View Button */}
+                      <TouchableOpacity
+                        style={styles.cartMapFitBtn}
+                        onPress={() => fitCartMapToAllPins(cartMapRef, 45)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.cartMapFitBtnText}>🧭 Fit All</Text>
+                      </TouchableOpacity>
+
+                      {/* Inline Resize Button (220px <-> 390px) */}
+                      <TouchableOpacity
+                        style={styles.cartMapResizeBtn}
+                        onPress={() => {
+                          setCartMapSize((prev) => (prev === 'tall' ? 'compact' : 'tall'));
+                          setTimeout(() => fitCartMapToAllPins(cartMapRef, 45), 250);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.cartMapResizeBtnText}>
+                          {cartMapSize === 'tall' ? '⤡ Compact' : '↕ Expand'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {/* Fullscreen Button */}
+                      <TouchableOpacity
+                        style={styles.cartMapFullscreenBtn}
+                        onPress={() => setIsCartMapFullscreen(true)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.cartMapFullscreenBtnText}>⛶ Fullscreen</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
 
                   {/* Quick Action Buttons Row */}
@@ -6410,6 +6522,16 @@ export default function App() {
                     >
                       <Text style={styles.cartMapActionBtnSecondaryText}>
                         📍 Change Delivery / Pin Location on Map
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.cartMapActionBtnFullscreen}
+                      onPress={() => setIsCartMapFullscreen(true)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.cartMapActionBtnFullscreenText}>
+                        ⛶ View Fullscreen Map
                       </Text>
                     </TouchableOpacity>
 
@@ -6646,6 +6768,189 @@ export default function App() {
               </>
             )}
           </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* --- BASKET FULLSCREEN INTERACTIVE DISPATCH MAP MODAL --- */}
+      <Modal
+        visible={isCartMapFullscreen}
+        animationType="slide"
+        onRequestClose={() => setIsCartMapFullscreen(false)}
+      >
+        <SafeAreaView style={styles.cartFullscreenModalContainer}>
+          {/* Top Luxury Navigation & Header Bar */}
+          <View style={styles.cartFullscreenHeaderBar}>
+            <TouchableOpacity
+              style={styles.cartFullscreenBackBtn}
+              onPress={() => setIsCartMapFullscreen(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.cartFullscreenBackBtnText}>← Back to Basket</Text>
+            </TouchableOpacity>
+
+            <View style={{ flex: 1, marginHorizontal: 8 }}>
+              <Text style={styles.cartFullscreenHeaderTitle} numberOfLines={1}>
+                {participatingStores.length > 1
+                  ? `Multi-Store Dispatch (${participatingStores.length} Shops)`
+                  : `Dispatch Route • ${activeCartStore?.name || 'Shop'}`}
+              </Text>
+              <Text style={styles.cartFullscreenHeaderSub} numberOfLines={1}>
+                📍 To: {pinnedLocation?.name || 'Your Delivery Destination'}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.cartFullscreenCloseCircle}
+              onPress={() => setIsCartMapFullscreen(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontSize: 16, fontWeight: '800', color: COLORS.textDark }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Full-Screen Interactive Map Canvas */}
+          <View style={{ flex: 1, position: 'relative' }}>
+            <MapView
+              ref={cartFullscreenMapRef}
+              style={{ flex: 1, width: '100%', height: '100%' }}
+              initialRegion={{
+                latitude: (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2,
+                longitude: (deliveryDestLng + (participatingStores[0]?.longitude || activeCartStoreLng)) / 2,
+                latitudeDelta: Math.max(0.02, Math.abs(deliveryDestLat - (participatingStores[0]?.latitude || activeCartStoreLat)) * 2),
+                longitudeDelta: Math.max(0.02, Math.abs(deliveryDestLng - (participatingStores[0]?.longitude || activeCartStoreLng)) * 2),
+              }}
+              showsUserLocation={true}
+              showsCompass={true}
+              scrollEnabled={true}
+              zoomEnabled={true}
+              pitchEnabled={true}
+              rotateEnabled={true}
+              onRegionChangeComplete={(reg) => setCartMapRegion(reg)}
+            >
+              {/* Participating Stores Pins */}
+              {participatingStores.map((st) => (
+                <Marker
+                  key={`fs-${st.id}`}
+                  coordinate={{
+                    latitude: st.latitude,
+                    longitude: st.longitude,
+                  }}
+                  title={`🏪 ${st.name}`}
+                  description={`Fulfillment Hub • ${st.itemsCount} items (${formatNaira(st.subtotal)})`}
+                  anchor={{ x: 0.5, y: 1.0 }}
+                >
+                  <View style={styles.cartMapStoreMarkerPill}>
+                    <Text style={{ fontSize: 14, marginRight: 4 }}>🏪</Text>
+                    <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
+                      {st.name}
+                    </Text>
+                  </View>
+                </Marker>
+              ))}
+
+              {/* Delivery Destination Pin */}
+              <Marker
+                coordinate={{
+                  latitude: deliveryDestLat,
+                  longitude: deliveryDestLng,
+                }}
+                title="📍 Delivery Destination"
+                description={pinnedLocation?.name || 'Your dropoff destination'}
+                pinColor="#EF4444"
+              />
+
+              {/* Live Phone GPS Blue Beacon */}
+              {userLiveCoords && (
+                <Marker
+                  coordinate={userLiveCoords}
+                  title="🔵 You Are Here"
+                  description="Live satellite phone GPS"
+                  anchor={{ x: 0.5, y: 0.5 }}
+                >
+                  <View style={styles.liveBeaconOuter}>
+                    <View style={styles.liveBeaconInner} />
+                  </View>
+                </Marker>
+              )}
+
+              {/* Dashed Route Polylines */}
+              {participatingStores.map((st) => (
+                <Polyline
+                  key={`fs-route-${st.id}`}
+                  coordinates={[
+                    { latitude: st.latitude, longitude: st.longitude },
+                    { latitude: deliveryDestLat, longitude: deliveryDestLng },
+                  ]}
+                  strokeColor={COLORS.emeraldPrimary}
+                  strokeWidth={3.5}
+                  lineDashPattern={[8, 5]}
+                />
+              ))}
+            </MapView>
+
+            {/* Floating Zoom & Action Cluster on Fullscreen Map */}
+            <View style={styles.cartFullscreenControlsCluster}>
+              <TouchableOpacity
+                style={styles.cartFullscreenControlBtn}
+                onPress={() => zoomCartMap(true, cartFullscreenMapRef)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.cartFullscreenControlBtnText}>＋</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.cartFullscreenControlBtn}
+                onPress={() => zoomCartMap(false, cartFullscreenMapRef)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.cartFullscreenControlBtnText}>−</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.cartFullscreenControlBtn, { marginTop: 6 }]}
+                onPress={() => fitCartMapToAllPins(cartFullscreenMapRef, 60)}
+                activeOpacity={0.8}
+              >
+                <Text style={{ fontSize: 16 }}>🧭</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Bottom Fullscreen Legend & Status Card */}
+            <View style={styles.cartFullscreenBottomCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 16 }}>🚀</Text>
+                  <Text style={styles.cartFullscreenBottomTitle}>
+                    {participatingStores.length > 1
+                      ? `${participatingStores.length} Stores in Split Dispatch`
+                      : `Dispatching from ${activeCartStore?.name || 'Shop'}`}
+                  </Text>
+                </View>
+                <View style={styles.cartFullscreenDistBadge}>
+                  <Text style={styles.cartFullscreenDistBadgeText}>
+                    {cartDistanceKm !== null ? `${cartDistanceKm.toFixed(1)} km` : '~20 mins'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                <View style={styles.cartMapLegendItem}>
+                  <View style={[styles.cartMapLegendDot, { backgroundColor: '#EF4444' }]} />
+                  <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>📍 Delivery Pin</Text>
+                </View>
+                {participatingStores.map((s) => (
+                  <View key={`fs-leg-${s.id}`} style={styles.cartMapLegendItem}>
+                    <View style={[styles.cartMapLegendDot, { backgroundColor: COLORS.emeraldPrimary }]} />
+                    <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>🏪 {s.name}</Text>
+                  </View>
+                ))}
+                {userLiveCoords && (
+                  <View style={styles.cartMapLegendItem}>
+                    <View style={[styles.cartMapLegendDot, { backgroundColor: '#2563EB' }]} />
+                    <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>🔵 Live Phone</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          </View>
         </SafeAreaView>
       </Modal>
 
@@ -11942,9 +12247,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   cartMapFitBtn: {
-    position: 'absolute',
-    bottom: 8,
-    right: 8,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: COLORS.borderBeige,
@@ -11961,6 +12263,207 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: COLORS.emeraldDeep,
+  },
+  cartMapZoomPill: {
+    position: 'absolute',
+    top: 50,
+    right: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 3,
+    overflow: 'hidden',
+  },
+  cartMapZoomBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  cartMapZoomBtnText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+  },
+  cartMapZoomDivider: {
+    height: 1,
+    backgroundColor: COLORS.borderLight,
+    width: '100%',
+  },
+  cartMapControlsCluster: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cartMapResizeBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 14,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+  },
+  cartMapResizeBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.emeraldPrimary,
+  },
+  cartMapFullscreenBtn: {
+    backgroundColor: COLORS.emeraldDeep,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 14,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+  },
+  cartMapFullscreenBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  cartMapActionBtnFullscreen: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: COLORS.emeraldPrimary,
+    paddingVertical: 9,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cartMapActionBtnFullscreenText: {
+    color: COLORS.emeraldPrimary,
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  cartFullscreenModalContainer: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
+  cartFullscreenHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    zIndex: 10,
+  },
+  cartFullscreenBackBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(5, 107, 75, 0.1)',
+  },
+  cartFullscreenBackBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.emeraldPrimary,
+  },
+  cartFullscreenHeaderTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    fontFamily: 'serif',
+  },
+  cartFullscreenHeaderSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  cartFullscreenCloseCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cartFullscreenControlsCluster: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    alignItems: 'center',
+    gap: 8,
+    zIndex: 20,
+  },
+  cartFullscreenControlBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  cartFullscreenControlBtnText: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: COLORS.emeraldDeep,
+  },
+  cartFullscreenBottomCard: {
+    position: 'absolute',
+    bottom: 20,
+    left: 16,
+    right: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+  },
+  cartFullscreenBottomTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  cartFullscreenDistBadge: {
+    backgroundColor: COLORS.emeraldDeep,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  cartFullscreenDistBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
   },
   cartMapGpsBadge: {
     position: 'absolute',
