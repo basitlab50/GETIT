@@ -164,6 +164,18 @@ Status:     All changes synced, verified, and pushed to origin/main
     enabled Android native `zoomControlEnabled={true}`, enlarged floating `＋`/`−` zoom buttons (`38x38px`),
     and introduced a dedicated inline `Map Controls` bar with one-tap `＋ Zoom In`, `− Zoom Out`, and `🧭 Fit All`.
 
+[17:45:00] Multi-Store Sequential Courier Stops, Surcharges & Segmented Route Lines
+  - Multi-Stop Courier Fee Architecture: Added base courier delivery fee + ₦700 multi-stop surcharge
+    per additional shop pickup (`multiStopCount * 700`) to compensate couriers for multiple hub stops and wait times.
+  - Transparent Fee Breakdown: Added transparent `Multi-Store Stops (+X extra pickups: +₦X,XXX)` row
+    in the basket financial overview card.
+  - Numbered Stop Markers: Embedded numbered stop badges (`[1]`, `[2]`, etc.) directly on store map pins
+    and store group basket cards (`STOP 1 OF 2 • PICKUP HUB`).
+  - Sequenced Multi-Stop Route Polylines: Connected stops in exact courier itinerary order:
+    `Stop 1 (Hub A) ➔ Stop 2 (Hub B) [amber dashed]` ➔ `📍 Delivery Pin [emerald dashed]`.
+  - Sequential Ticket Splitting & Itinerary Progress: Each split order ticket now stores `stopNumber`,
+    `totalStops`, `stopItineraryText`, and `pickupPin` so the buyer and courier can track each leg in sequence.
+
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
 --------------------------------------------------------------------------------

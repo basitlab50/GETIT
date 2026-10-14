@@ -2403,9 +2403,6 @@ export default function App() {
   };
 
   const cartSubtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
-  const deliveryFee = cart.length > 0 ? (selectedDeliveryTier === 'bolt' ? 1200 : 2500) : 0;
-  const conciergeFee = Math.round(cartSubtotal * 0.04);
-  const cartTotal = cartSubtotal + deliveryFee + conciergeFee;
 
   // Group cart items by store for multi-store basket display and split dispatch
   const cartGroupedByStore = useMemo(() => {
@@ -2434,11 +2431,22 @@ export default function App() {
     return Object.values(groups);
   }, [cart, storesList]);
 
-  // Participating stores list for the map
+  // Multi-Stop Courier Fee Calculation
+  // Base fee for first store dispatch + ₦700 per additional pickup stop
+  const baseCourierFee = cart.length > 0 ? (selectedDeliveryTier === 'bolt' ? 1200 : 2500) : 0;
+  const multiStopCount = Math.max(0, cartGroupedByStore.length - 1);
+  const multiStopFeePerShop = 700;
+  const multiStopSurcharge = multiStopCount * multiStopFeePerShop;
+  const deliveryFee = cart.length > 0 ? baseCourierFee + multiStopSurcharge : 0;
+  const conciergeFee = Math.round(cartSubtotal * 0.04);
+  const cartTotal = cartSubtotal + deliveryFee + conciergeFee;
+
+  // Participating stores list for the map with assigned sequential stop numbers
   const participatingStores = useMemo(() => {
-    return cartGroupedByStore.map((g) => ({
+    return cartGroupedByStore.map((g, idx) => ({
       id: g.storeId,
       name: g.storeName,
+      stopNumber: idx + 1,
       latitude: g.latitude,
       longitude: g.longitude,
       isOpen: g.isOpen,
@@ -2489,10 +2497,84 @@ export default function App() {
   }, [deliveryDestLat, deliveryDestLng, activeCartStoreLat, activeCartStoreLng]);
 
   const cartEstDeliveryMins = useMemo(() => {
-    if (cartDistanceKm === null) return '15-20 min';
-    const mins = Math.max(10, Math.round(cartDistanceKm * 4.5 + 8));
+    const distToUse = participatingStores.length > 1 ? multiStopTotalDistanceKm : cartDistanceKm;
+    if (distToUse === null || distToUse === 0) return '15-20 min';
+    const mins = Math.max(12, Math.round(distToUse * 4.5 + 8 + (participatingStores.length - 1) * 7));
     return `${mins}-${mins + 5} min`;
-  }, [cartDistanceKm]);
+  }, [cartDistanceKm, multiStopTotalDistanceKm, participatingStores.length]);
+
+  // Sequential Multi-Stop Route Waypoints: Stop 1 -> Stop 2 -> Final Destination
+  const multiStopWaypoints = useMemo(() => {
+    if (participatingStores.length === 0) return [];
+    const waypoints = participatingStores.map((st, idx) => ({
+      id: `stop-${st.id}`,
+      storeId: st.id,
+      storeName: st.name,
+      stopNumber: idx + 1,
+      totalStops: participatingStores.length + 1,
+      type: 'pickup',
+      title: `Stop ${idx + 1}: ${st.name}`,
+      description: `Pickup Hub (${st.itemsCount} items • ${formatNaira(st.subtotal)})`,
+      latitude: st.latitude,
+      longitude: st.longitude,
+    }));
+
+    waypoints.push({
+      id: 'stop-final-dropoff',
+      storeId: null,
+      storeName: 'Your Delivery Address',
+      stopNumber: waypoints.length + 1,
+      totalStops: waypoints.length + 1,
+      type: 'dropoff',
+      title: '📍 Final Stop: Delivery Pin',
+      description: pinnedLocation?.name || 'Customer dropoff point',
+      latitude: deliveryDestLat,
+      longitude: deliveryDestLng,
+    });
+
+    return waypoints;
+  }, [participatingStores, pinnedLocation, deliveryDestLat, deliveryDestLng]);
+
+  // Cumulative Sequential Distance across all legs (Shop 1 -> Shop 2 -> Customer)
+  const multiStopTotalDistanceKm = useMemo(() => {
+    if (multiStopWaypoints.length < 2) return cartDistanceKm || 0;
+    let dist = 0;
+    for (let i = 0; i < multiStopWaypoints.length - 1; i++) {
+      const leg = calculateDistanceKm(
+        multiStopWaypoints[i].latitude,
+        multiStopWaypoints[i].longitude,
+        multiStopWaypoints[i + 1].latitude,
+        multiStopWaypoints[i + 1].longitude
+      );
+      if (leg) dist += leg;
+    }
+    return dist;
+  }, [multiStopWaypoints, cartDistanceKm]);
+
+  // Sequential Route Line Segments for Map Rendering
+  const multiStopRouteSegments = useMemo(() => {
+    if (multiStopWaypoints.length < 2) return [];
+    const segments = [];
+    for (let i = 0; i < multiStopWaypoints.length - 1; i++) {
+      const from = multiStopWaypoints[i];
+      const to = multiStopWaypoints[i + 1];
+      const isFinalLeg = i === multiStopWaypoints.length - 2;
+      segments.push({
+        id: `seg-${from.id}-${to.id}`,
+        from,
+        to,
+        coordinates: [
+          { latitude: from.latitude, longitude: from.longitude },
+          { latitude: to.latitude, longitude: to.longitude },
+        ],
+        strokeColor: isFinalLeg ? COLORS.emeraldPrimary : '#D97706', // Amber/gold for shop-to-shop pickups, emerald for final dropoff
+        strokeWidth: 3.5,
+        lineDashPattern: isFinalLeg ? [6, 4] : [8, 4],
+        legLabel: `Leg ${i + 1}: ${from.storeName} ➔ ${to.storeName}`,
+      });
+    }
+    return segments;
+  }, [multiStopWaypoints]);
 
   // Proximity check: Difference between buyer's real-time phone GPS and their pinned delivery address
   const liveDiffDistanceKm = useMemo(() => {
@@ -2726,11 +2808,23 @@ export default function App() {
       const grpConciergeFee = Math.round(storeSubtotal * 0.04);
       const grpTotal = storeSubtotal + grpDeliveryFee + grpConciergeFee;
 
+      const stopNumber = index + 1;
+      const totalStops = cartGroupedByStore.length;
       return {
         id: orderId,
         batchId,
         storeId: grp.storeId,
         storeName: grp.storeName,
+        stopNumber,
+        totalStops,
+        stopItineraryText: isMultiStore
+          ? `Stop ${stopNumber} of ${totalStops}: Pickup at ${grp.storeName}`
+          : `Direct Dispatch from ${grp.storeName}`,
+        multiStopStatus: isMultiStore
+          ? index === 0
+            ? `🟢 Stop 1 of ${totalStops}: Rider en route to ${grp.storeName}`
+            : `⏳ Stop ${stopNumber} of ${totalStops}: Queued for pickup after Stop ${index}`
+          : null,
         itemsCount: grp.items.reduce((sum, i) => sum + i.qty, 0),
         items: grp.items.map((i) => ({
           id: i.id,
@@ -2753,7 +2847,9 @@ export default function App() {
         boltRider: null,
         boltCoords: null,
         status: 'New Order',
-        eta: selectedDeliveryTier === 'bolt' ? '18 mins (Bolt Express)' : '25 mins (Concierge)',
+        eta: selectedDeliveryTier === 'bolt'
+          ? `${18 + index * 8} mins (Bolt Multi-Stop)`
+          : `${25 + index * 10} mins (Concierge Multi-Stop)`,
         deliveryPin: `${Math.floor(1000 + Math.random() * 9000)}`,
         pickupPin: `${Math.floor(1000 + Math.random() * 9000)}`,
         customerName: currentUser?.fullName || currentUser?.name || 'Alhaji Farouk Bello',
@@ -2779,9 +2875,9 @@ export default function App() {
     if (isMultiStore) {
       Alert.alert(
         '🎉 Multi-Store Order Confirmed!',
-        `Your basket was split into ${createdOrders.length} independent shop orders:\n\n` +
-          createdOrders.map((o) => `• ${o.id}: ${o.storeName} (${formatNaira(o.total)})`).join('\n') +
-          `\n\nEach shop has received its dispatch ticket and will prepare your provisions independently.`
+        `Your basket was split into ${createdOrders.length} sequenced pickup tickets:\n\n` +
+          createdOrders.map((o) => `• Stop ${o.stopNumber}: ${o.storeName} (${formatNaira(o.total)})\n   Pickup PIN: ${o.pickupPin}`).join('\n\n') +
+          `\n\nYour courier will visit each shop in sequence to collect your provisions before delivering to your destination.`
       );
     } else {
       Alert.alert(
@@ -5289,7 +5385,9 @@ export default function App() {
             <View key={ord.id} style={styles.orderCard}>
               {ord.batchId && (
                 <View style={styles.orderBatchBadge}>
-                  <Text style={styles.orderBatchBadgeText}>🔗 MULTI-STORE BATCH • {ord.batchId}</Text>
+                  <Text style={styles.orderBatchBadgeText}>
+                    🔗 MULTI-STORE BATCH • {ord.batchId} • STOP {ord.stopNumber || 1} OF {ord.totalStops || 1}
+                  </Text>
                 </View>
               )}
               <View style={styles.orderCardHeader}>
@@ -5313,6 +5411,28 @@ export default function App() {
                   </Text>
                 </View>
               </View>
+
+              {/* Multi-Stop Itinerary & Merchant Pickup PIN Bar */}
+              {ord.batchId && ord.status !== 'Cancelled' && (
+                <View style={styles.orderMultiStopProgressBox}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 13 }}>🛵</Text>
+                      <Text style={styles.orderMultiStopProgressTitle}>
+                        COURIER STOP {ord.stopNumber || 1} OF {ord.totalStops || 1}
+                      </Text>
+                    </View>
+                    <View style={styles.orderMultiStopPinBadge}>
+                      <Text style={styles.orderMultiStopPinBadgeText}>
+                        Shop Pickup PIN: {ord.pickupPin || '----'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.orderMultiStopProgressSub}>
+                    {ord.stopItineraryText || `Stop ${ord.stopNumber}: Pickup at ${ord.storeName}`}
+                  </Text>
+                </View>
+              )}
 
               {/* Order Cancelled Notification Banner */}
               {ord.status === 'Cancelled' && (
@@ -6128,8 +6248,17 @@ export default function App() {
                   </TouchableOpacity>
                 </View>
 
-                {cartGroupedByStore.map((grp) => (
+                {cartGroupedByStore.map((grp, grpIdx) => (
                   <View key={grp.storeId} style={styles.cartStoreGroupCard}>
+                    {/* Multi-Stop Sequence Tag (if multi-store order) */}
+                    {cartGroupedByStore.length > 1 && (
+                      <View style={styles.cartStoreStopPill}>
+                        <Text style={styles.cartStoreStopPillText}>
+                          📍 STOP {grpIdx + 1} OF {cartGroupedByStore.length} • PICKUP HUB
+                        </Text>
+                      </View>
+                    )}
+
                     {/* Store Group Header */}
                     <View style={styles.cartStoreGroupHeader}>
                       <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -6232,9 +6361,21 @@ export default function App() {
                     <Text style={styles.billVal}>{formatNaira(cartSubtotal)}</Text>
                   </View>
                   <View style={styles.billRow}>
-                    <Text style={styles.billLabel}>White-Glove Courier</Text>
-                    <Text style={styles.billVal}>{formatNaira(deliveryFee)}</Text>
+                    <Text style={styles.billLabel}>Base Courier Delivery</Text>
+                    <Text style={styles.billVal}>{formatNaira(baseCourierFee)}</Text>
                   </View>
+                  {multiStopCount > 0 && (
+                    <View style={styles.billRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Text style={styles.billLabel}>
+                          Multi-Store Stops ({multiStopCount} extra pickup{multiStopCount > 1 ? 's' : ''})
+                        </Text>
+                      </View>
+                      <Text style={[styles.billVal, { color: COLORS.emeraldPrimary, fontWeight: '800' }]}>
+                        +{formatNaira(multiStopSurcharge)}
+                      </Text>
+                    </View>
+                  )}
                   <View style={styles.billRow}>
                     <Text style={styles.billLabel}>Concierge & Packaging</Text>
                     <Text style={styles.billVal}>{formatNaira(conciergeFee)}</Text>
@@ -6354,7 +6495,7 @@ export default function App() {
                       rotateEnabled={true}
                       onRegionChangeComplete={(reg) => setCartMapRegion(reg)}
                     >
-                      {/* 1. Participating Store Pins */}
+                      {/* 1. Participating Store Pins (with Numbered Stop Badges) */}
                       {participatingStores.map((st) => (
                         <Marker
                           key={st.id}
@@ -6362,12 +6503,14 @@ export default function App() {
                             latitude: st.latitude,
                             longitude: st.longitude,
                           }}
-                          title={`🏪 ${st.name}`}
-                          description={`Dispatch Hub (${st.itemsCount} items • ${formatNaira(st.subtotal)})`}
+                          title={`🏪 Stop ${st.stopNumber}: ${st.name}`}
+                          description={`Pickup Hub (${st.itemsCount} items • ${formatNaira(st.subtotal)})`}
                           anchor={{ x: 0.5, y: 1.0 }}
                         >
                           <View style={styles.cartMapStoreMarkerPill}>
-                            <Text style={{ fontSize: 13, marginRight: 4 }}>🏪</Text>
+                            <View style={styles.cartMapStopNumberBadge}>
+                              <Text style={styles.cartMapStopNumberBadgeText}>{st.stopNumber}</Text>
+                            </View>
                             <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
                               {st.name}
                             </Text>
@@ -6381,7 +6524,7 @@ export default function App() {
                           latitude: deliveryDestLat,
                           longitude: deliveryDestLng,
                         }}
-                        title="📍 Delivery Destination"
+                        title={`📍 Final Stop: Delivery Destination`}
                         description={pinnedLocation?.name || 'Rider dropoff location'}
                         pinColor="#EF4444"
                       />
@@ -6400,17 +6543,14 @@ export default function App() {
                         </Marker>
                       )}
 
-                      {/* 4. Dashed Route Line between Each Store and Pinned Delivery Destination */}
-                      {participatingStores.map((st) => (
+                      {/* 4. Sequential Multi-Stop Route Polylines */}
+                      {multiStopRouteSegments.map((seg) => (
                         <Polyline
-                          key={`route-${st.id}`}
-                          coordinates={[
-                            { latitude: st.latitude, longitude: st.longitude },
-                            { latitude: deliveryDestLat, longitude: deliveryDestLng },
-                          ]}
-                          strokeColor={COLORS.emeraldPrimary}
-                          strokeWidth={3}
-                          lineDashPattern={[6, 4]}
+                          key={seg.id}
+                          coordinates={seg.coordinates}
+                          strokeColor={seg.strokeColor}
+                          strokeWidth={seg.strokeWidth}
+                          lineDashPattern={seg.lineDashPattern}
                         />
                       ))}
                     </MapView>
@@ -6422,14 +6562,14 @@ export default function App() {
                         <View style={{ flex: 1 }}>
                           <Text style={styles.cartMapDistanceTitle} numberOfLines={1}>
                             {participatingStores.length > 1
-                              ? `Multi-Store Dispatch (${participatingStores.length} Shops)`
+                              ? `Multi-Stop Dispatch (${participatingStores.length} Shops + Dropoff)`
                               : cartDistanceKm !== null
                               ? `${cartDistanceKm < 1 ? Math.round(cartDistanceKm * 1000) + ' m' : cartDistanceKm.toFixed(1) + ' km'} away from ${activeCartStore?.name || 'Shop'}`
                               : `Fulfilling from ${activeCartStore?.name || 'Shop'}`}
                           </Text>
                           <Text style={styles.cartMapDistanceSub} numberOfLines={1}>
                             {participatingStores.length > 1
-                              ? `${participatingStores.map((s) => s.name).join(' & ')} ➔ 📍 Your Location`
+                              ? `${participatingStores.map((s) => `[${s.stopNumber}] ${s.name}`).join(' ➔ ')} ➔ 📍 Delivery (~${cartEstDeliveryMins})`
                               : `🏪 Shop Pin ➔ 📍 Pinned Destination (~${cartEstDeliveryMins})`}
                           </Text>
                         </View>
@@ -6437,7 +6577,7 @@ export default function App() {
                       <View style={styles.cartMapDistanceBadge}>
                         <Text style={styles.cartMapDistanceBadgeText}>
                           {participatingStores.length > 1
-                            ? `${participatingStores.length} Hubs`
+                            ? `${multiStopTotalDistanceKm.toFixed(1)} km Total`
                             : cartDistanceKm !== null
                             ? `${cartDistanceKm.toFixed(1)} km`
                             : 'Near'}
@@ -6867,7 +7007,7 @@ export default function App() {
                   rotateEnabled={true}
                   onRegionChangeComplete={(reg) => setCartMapRegion(reg)}
                 >
-                  {/* Participating Stores Pins */}
+                  {/* Participating Stores Pins (with Numbered Stop Badges) */}
                   {participatingStores.map((st) => (
                     <Marker
                       key={`fs-${st.id}`}
@@ -6875,12 +7015,14 @@ export default function App() {
                         latitude: st.latitude,
                         longitude: st.longitude,
                       }}
-                      title={`🏪 ${st.name}`}
-                      description={`Fulfillment Hub • ${st.itemsCount} items (${formatNaira(st.subtotal)})`}
+                      title={`🏪 Stop ${st.stopNumber}: ${st.name}`}
+                      description={`Pickup Hub (${st.itemsCount} items • ${formatNaira(st.subtotal)})`}
                       anchor={{ x: 0.5, y: 1.0 }}
                     >
                       <View style={styles.cartMapStoreMarkerPill}>
-                        <Text style={{ fontSize: 14, marginRight: 4 }}>🏪</Text>
+                        <View style={styles.cartMapStopNumberBadge}>
+                          <Text style={styles.cartMapStopNumberBadgeText}>{st.stopNumber}</Text>
+                        </View>
                         <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
                           {st.name}
                         </Text>
@@ -6894,7 +7036,7 @@ export default function App() {
                       latitude: deliveryDestLat,
                       longitude: deliveryDestLng,
                     }}
-                    title="📍 Delivery Destination"
+                    title="📍 Final Stop: Delivery Destination"
                     description={pinnedLocation?.name || 'Your dropoff destination'}
                     pinColor="#EF4444"
                   />
@@ -6913,17 +7055,14 @@ export default function App() {
                     </Marker>
                   )}
 
-                  {/* Dashed Route Polylines */}
-                  {participatingStores.map((st) => (
+                  {/* Sequential Multi-Stop Route Polylines */}
+                  {multiStopRouteSegments.map((seg) => (
                     <Polyline
-                      key={`fs-route-${st.id}`}
-                      coordinates={[
-                        { latitude: st.latitude, longitude: st.longitude },
-                        { latitude: deliveryDestLat, longitude: deliveryDestLng },
-                      ]}
-                      strokeColor={COLORS.emeraldPrimary}
-                      strokeWidth={3.5}
-                      lineDashPattern={[8, 5]}
+                      key={`fs-${seg.id}`}
+                      coordinates={seg.coordinates}
+                      strokeColor={seg.strokeColor}
+                      strokeWidth={seg.strokeWidth}
+                      lineDashPattern={seg.lineDashPattern}
                     />
                   ))}
                 </MapView>
@@ -6960,28 +7099,39 @@ export default function App() {
                       <Text style={{ fontSize: 16 }}>🚀</Text>
                       <Text style={styles.cartFullscreenBottomTitle}>
                         {participatingStores.length > 1
-                          ? `${participatingStores.length} Stores in Split Dispatch`
+                          ? `Multi-Stop Route (${participatingStores.length} Shops + Dropoff)`
                           : `Dispatching from ${activeCartStore?.name || 'Shop'}`}
                       </Text>
                     </View>
                     <View style={styles.cartFullscreenDistBadge}>
                       <Text style={styles.cartFullscreenDistBadgeText}>
-                        {cartDistanceKm !== null ? `${cartDistanceKm.toFixed(1)} km` : '~20 mins'}
+                        {participatingStores.length > 1
+                          ? `${multiStopTotalDistanceKm.toFixed(1)} km Total`
+                          : cartDistanceKm !== null
+                          ? `${cartDistanceKm.toFixed(1)} km`
+                          : '~20 mins'}
                       </Text>
                     </View>
                   </View>
 
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                     <View style={styles.cartMapLegendItem}>
-                      <View style={[styles.cartMapLegendDot, { backgroundColor: '#EF4444' }]} />
+                      <View style={[styles.cartMapLegendDot, { backgroundColor: '#D97706' }]} />
+                      <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>🏪 Pickups</Text>
+                    </View>
+                    <Text style={{ color: COLORS.textMuted, fontSize: 10 }}>➔</Text>
+                    <View style={styles.cartMapLegendItem}>
+                      <View style={[styles.cartMapLegendDot, { backgroundColor: COLORS.emeraldPrimary }]} />
                       <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>📍 Delivery Pin</Text>
                     </View>
-                    {participatingStores.map((s) => (
-                      <View key={`fs-leg-${s.id}`} style={styles.cartMapLegendItem}>
-                        <View style={[styles.cartMapLegendDot, { backgroundColor: COLORS.emeraldPrimary }]} />
-                        <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>🏪 {s.name}</Text>
+                    {multiStopCount > 0 && (
+                      <View style={styles.cartMapLegendItem}>
+                        <View style={[styles.cartMapLegendDot, { backgroundColor: '#10B981' }]} />
+                        <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>
+                          +{formatNaira(multiStopSurcharge)} stop surcharge
+                        </Text>
                       </View>
-                    ))}
+                    )}
                     {userLiveCoords && (
                       <View style={styles.cartMapLegendItem}>
                         <View style={[styles.cartMapLegendDot, { backgroundColor: '#2563EB' }]} />
@@ -11896,6 +12046,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.borderBeige,
   },
+  cartStoreStopPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(217, 119, 6, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(217, 119, 6, 0.3)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginBottom: 8,
+  },
+  cartStoreStopPillText: {
+    color: '#B45309',
+    fontSize: 9.5,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
   cartStoreGroupHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -12213,6 +12379,20 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 3,
+  },
+  cartMapStopNumberBadge: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#D97706',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 5,
+  },
+  cartMapStopNumberBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
   },
   cartMapStoreMarkerText: {
     fontSize: 10.5,
@@ -12930,6 +13110,39 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: COLORS.roseGold,
     letterSpacing: 0.5,
+  },
+  orderMultiStopProgressBox: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  orderMultiStopProgressTitle: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#B45309',
+    letterSpacing: 0.5,
+  },
+  orderMultiStopProgressSub: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#78350F',
+    marginTop: 2,
+  },
+  orderMultiStopPinBadge: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  orderMultiStopPinBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#B45309',
   },
   buyerCancelOrderBtn: {
     paddingHorizontal: 12,
