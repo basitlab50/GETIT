@@ -6591,6 +6591,7 @@ export default function App() {
                               <View style={styles.multiStopFlowBadge}>
                                 <Text style={styles.multiStopFlowBadgeText}>{st.stopNumber}</Text>
                               </View>
+                              <Text style={{ fontSize: 12, marginRight: 2 }}>🏪</Text>
                               <Text style={styles.multiStopFlowName} numberOfLines={1}>
                                 {st.name}
                               </Text>
@@ -6599,9 +6600,9 @@ export default function App() {
                           </React.Fragment>
                         ))}
                         <View style={[styles.multiStopFlowPill, { backgroundColor: 'rgba(5, 107, 75, 0.12)', borderColor: COLORS.emeraldPrimary }]}>
-                          <Text style={{ fontSize: 12, marginRight: 4 }}>📍</Text>
+                          <Text style={{ fontSize: 13, marginRight: 4 }}>🏠</Text>
                           <Text style={[styles.multiStopFlowName, { color: COLORS.emeraldDeep, fontWeight: '800' }]}>
-                            {pinnedLocation?.name?.split(',')[0] || 'Delivery Pin'}
+                            Home ({pinnedLocation?.name?.split(',')[0] || 'Delivery Pin'})
                           </Text>
                         </View>
                       </ScrollView>
@@ -6634,7 +6635,7 @@ export default function App() {
                       rotateEnabled={true}
                       onRegionChangeComplete={(reg) => setCartMapRegion(reg)}
                     >
-                      {/* 1. Participating Store Pins (with Numbered Stop Badges) */}
+                      {/* 1. Participating Store Pins (with Numbered Stop Badges & Store Emoji) */}
                       {participatingStores.map((st) => (
                         <Marker
                           key={st.id}
@@ -6650,6 +6651,7 @@ export default function App() {
                             <View style={styles.cartMapStopNumberBadge}>
                               <Text style={styles.cartMapStopNumberBadgeText}>{st.stopNumber}</Text>
                             </View>
+                            <Text style={{ fontSize: 13, marginRight: 3 }}>🏪</Text>
                             <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
                               {st.name}
                             </Text>
@@ -6657,16 +6659,28 @@ export default function App() {
                         </Marker>
                       ))}
 
-                      {/* 2. Buyer Delivery Destination Pin */}
+                      {/* 2. Buyer Delivery Destination Pin (Home / Residence Emoji Pill) */}
                       <Marker
                         coordinate={{
                           latitude: deliveryDestLat,
                           longitude: deliveryDestLng,
                         }}
-                        title={`📍 Final Stop: Delivery Destination`}
-                        description={pinnedLocation?.name || 'Rider dropoff location'}
-                        pinColor="#EF4444"
-                      />
+                        title={`🏠 Home: Delivery Destination`}
+                        description={pinnedLocation?.name || 'Customer dropoff residence'}
+                        anchor={{ x: 0.5, y: 1.0 }}
+                      >
+                        <View style={styles.cartMapHomeMarkerPill}>
+                          <View style={styles.cartMapHomeIconBadge}>
+                            <Text style={{ fontSize: 13 }}>🏠</Text>
+                          </View>
+                          <View style={{ flexDirection: 'column' }}>
+                            <Text style={styles.cartMapHomeMarkerTitle}>HOME</Text>
+                            <Text style={styles.cartMapHomeMarkerSub} numberOfLines={1}>
+                              {pinnedLocation?.name?.split(',')[0] || 'My Delivery Address'}
+                            </Text>
+                          </View>
+                        </View>
+                      </Marker>
 
                       {/* 3. Buyer Live Phone GPS Location (Blue Dot Beacon) */}
                       {userLiveCoords && (
@@ -7147,7 +7161,7 @@ export default function App() {
                   rotateEnabled={true}
                   onRegionChangeComplete={(reg) => setCartMapRegion(reg)}
                 >
-                  {/* Participating Stores Pins (with Numbered Stop Badges) */}
+                  {/* Participating Stores Pins (with Numbered Stop Badges & Store Emoji) */}
                   {participatingStores.map((st) => (
                     <Marker
                       key={`fs-${st.id}`}
@@ -7163,6 +7177,7 @@ export default function App() {
                         <View style={styles.cartMapStopNumberBadge}>
                           <Text style={styles.cartMapStopNumberBadgeText}>{st.stopNumber}</Text>
                         </View>
+                        <Text style={{ fontSize: 13, marginRight: 3 }}>🏪</Text>
                         <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
                           {st.name}
                         </Text>
@@ -7170,16 +7185,28 @@ export default function App() {
                     </Marker>
                   ))}
 
-                  {/* Delivery Destination Pin */}
+                  {/* Delivery Destination Pin (Home / Residence Emoji Pill) */}
                   <Marker
                     coordinate={{
                       latitude: deliveryDestLat,
                       longitude: deliveryDestLng,
                     }}
-                    title="📍 Final Stop: Delivery Destination"
-                    description={pinnedLocation?.name || 'Your dropoff destination'}
-                    pinColor="#EF4444"
-                  />
+                    title="🏠 Home: Delivery Destination"
+                    description={pinnedLocation?.name || 'Customer dropoff residence'}
+                    anchor={{ x: 0.5, y: 1.0 }}
+                  >
+                    <View style={styles.cartMapHomeMarkerPill}>
+                      <View style={styles.cartMapHomeIconBadge}>
+                        <Text style={{ fontSize: 13 }}>🏠</Text>
+                      </View>
+                      <View style={{ flexDirection: 'column' }}>
+                        <Text style={styles.cartMapHomeMarkerTitle}>HOME</Text>
+                        <Text style={styles.cartMapHomeMarkerSub} numberOfLines={1}>
+                          {pinnedLocation?.name?.split(',')[0] || 'My Delivery Address'}
+                        </Text>
+                      </View>
+                    </View>
+                  </Marker>
 
                   {/* Live Phone GPS Blue Beacon */}
                   {userLiveCoords && (
@@ -12583,6 +12610,42 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: COLORS.textDark,
     maxWidth: 110,
+  },
+  cartMapHomeMarkerPill: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#DC2626',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+  },
+  cartMapHomeIconBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cartMapHomeMarkerTitle: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#DC2626',
+    letterSpacing: 0.5,
+  },
+  cartMapHomeMarkerSub: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    maxWidth: 95,
   },
   cartMapDistanceBanner: {
     position: 'absolute',

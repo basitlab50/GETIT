@@ -193,6 +193,10 @@ Status:     All changes synced, verified, and pushed to origin/main
     and emerald dashed line connects strictly from Stop 2 to Buyer's Address (Shop A has zero lines to customer).
   - Individual Store Nudge Controls (▲ / ▼): Added inline up/down arrow buttons on each store group card in the basket
     alongside the global `⇅ Reverse Sequence` button, allowing one-tap swapping of store pickup order.
+  - Store & Home Custom Map Badges: Updated map markers on both inline and fullscreen basket maps:
+    - Each store pickup marker displays a store emoji `🏪`, stop badge (`[1]`, `[2]`), and store name.
+    - Buyer destination displays a custom `🏠 HOME` pill badge with home icon and delivery landmark name.
+    - Itinerary flow bar updated to show `[1] 🏪 Shop A ➔ [2] 🏪 Shop B ➔ 🏠 Home (Destination)`.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
