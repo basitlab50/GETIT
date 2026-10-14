@@ -1212,7 +1212,8 @@ export default function App() {
   const [isCartMapFullscreen, setIsCartMapFullscreen] = useState(false);
   const [cartMapRegion, setCartMapRegion] = useState(null);
   const [cartScrollEnabled, setCartScrollEnabled] = useState(true);
-  const [routeDirectionInverted, setRouteDirectionInverted] = useState(false);
+  const cartMapInitialFitDoneRef = useRef(false);
+  const [customStoreOrder, setCustomStoreOrder] = useState([]);
   const storeMiniMapRef = useRef(null);
   const storeFullMapRef = useRef(null);
   const buyerExploreMapRef = useRef(null);
@@ -2445,27 +2446,34 @@ export default function App() {
   const cartTotal = cartSubtotal + deliveryFee + conciergeFee;
 
   // Participating stores list for the map with assigned sequential stop numbers
-  // Intelligently orders pickup stops so the rider starts from the store furthest from the destination
-  // and finishes at the store closest to the buyer's delivery location right before final dropoff!
+  // Follows custom reorder or defaults: Shop A (H-Medix) is Stop 1, Shop B (Abdul Basit Store) is Stop 2
   const participatingStores = useMemo(() => {
     if (!cartGroupedByStore || cartGroupedByStore.length === 0) return [];
 
-    // Calculate distance from each store to the pinned delivery destination
-    const withDistance = cartGroupedByStore.map((g) => {
-      const dist = calculateDistanceKm(
-        Number(g.latitude) || 9.0882,
-        Number(g.longitude) || 7.4933,
-        deliveryDestLat,
-        deliveryDestLng
-      ) || 0;
-      return { ...g, distToDest: dist };
-    });
+    let orderedGroups = [...cartGroupedByStore];
 
-    // Sort descending by distance: Furthest store = Stop 1, closer store = Stop 2, closest store = Stop N
-    const sorted = [...withDistance].sort((a, b) => b.distToDest - a.distToDest);
-    const ordered = routeDirectionInverted ? [...sorted].reverse() : sorted;
+    if (customStoreOrder && customStoreOrder.length > 0) {
+      const ordered = [];
+      customStoreOrder.forEach((id) => {
+        const found = orderedGroups.find((g) => g.storeId === id);
+        if (found) ordered.push(found);
+      });
+      orderedGroups.forEach((g) => {
+        if (!ordered.find((o) => o.storeId === g.storeId)) ordered.push(g);
+      });
+      orderedGroups = ordered;
+    } else {
+      // Automatic alignment: H-Medix is Shop A (Stop 1) and Abdul Basit Store is Shop B (Stop 2)
+      orderedGroups.sort((a, b) => {
+        const aName = (a.storeName || '').toLowerCase();
+        const bName = (b.storeName || '').toLowerCase();
+        if (aName.includes('medix') && bName.includes('basit')) return -1;
+        if (bName.includes('medix') && aName.includes('basit')) return 1;
+        return 0;
+      });
+    }
 
-    return ordered.map((g, idx) => ({
+    return orderedGroups.map((g, idx) => ({
       id: g.storeId,
       storeId: g.storeId,
       name: g.storeName,
@@ -2475,11 +2483,28 @@ export default function App() {
       longitude: Number(g.longitude) || 7.4933,
       isOpen: g.isOpen,
       subtotal: g.subtotal,
-      distToDest: g.distToDest,
       items: g.items,
       itemsCount: g.items.reduce((s, i) => s + i.qty, 0),
     }));
-  }, [cartGroupedByStore, deliveryDestLat, deliveryDestLng, routeDirectionInverted]);
+  }, [cartGroupedByStore, customStoreOrder]);
+
+  const reverseStoreOrder = () => {
+    const currentIds = participatingStores.map((s) => s.id);
+    setCustomStoreOrder([...currentIds].reverse());
+  };
+
+  const moveStoreOrder = (storeId, direction) => {
+    const currentIds = participatingStores.map((s) => s.id);
+    const idx = currentIds.indexOf(storeId);
+    if (idx < 0) return;
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= currentIds.length) return;
+    const copy = [...currentIds];
+    const temp = copy[idx];
+    copy[idx] = copy[targetIdx];
+    copy[targetIdx] = temp;
+    setCustomStoreOrder(copy);
+  };
 
   // Remove all items belonging to a specific store
   const clearStoreItems = (storeId) => {
@@ -2739,7 +2764,7 @@ export default function App() {
     }
   };
 
-  // When cart is opened: auto-fetch live GPS for buyer blue dot and fit camera to frame pins
+  // When cart is opened: auto-fetch live GPS for buyer blue dot and fit camera to frame pins ONCE
   useEffect(() => {
     if (cartModalVisible) {
       (async () => {
@@ -2757,11 +2782,16 @@ export default function App() {
         } catch (e) {}
       })();
 
-      setTimeout(() => {
-        fitCartMapToAllPins(cartMapRef, 45);
-      }, 400);
+      if (!cartMapInitialFitDoneRef.current) {
+        cartMapInitialFitDoneRef.current = true;
+        setTimeout(() => {
+          fitCartMapToAllPins(cartMapRef, 45);
+        }, 500);
+      }
+    } else {
+      cartMapInitialFitDoneRef.current = false;
     }
-  }, [cartModalVisible, participatingStores, deliveryDestLat, deliveryDestLng, userLiveCoords]);
+  }, [cartModalVisible]);
 
   // When fullscreen map opens: auto-frame all pins with larger padding
   useEffect(() => {
@@ -6336,13 +6366,33 @@ export default function App() {
                           </Text>
                         </View>
                       </View>
-                      <TouchableOpacity
-                        style={styles.cartStoreGroupClearBtn}
-                        onPress={() => clearStoreItems(grp.storeId)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.cartStoreGroupClearBtnText}>Remove Shop</Text>
-                      </TouchableOpacity>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        {participatingStores.length > 1 && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', borderRadius: 8, padding: 2 }}>
+                            <TouchableOpacity
+                              onPress={() => moveStoreOrder(grp.storeId, -1)}
+                              disabled={grp.stopNumber === 1}
+                              style={{ paddingHorizontal: 6, paddingVertical: 3, opacity: grp.stopNumber === 1 ? 0.3 : 1 }}
+                            >
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: COLORS.emeraldDeep }}>▲</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => moveStoreOrder(grp.storeId, 1)}
+                              disabled={grp.stopNumber === participatingStores.length}
+                              style={{ paddingHorizontal: 6, paddingVertical: 3, opacity: grp.stopNumber === participatingStores.length ? 0.3 : 1 }}
+                            >
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: COLORS.emeraldDeep }}>▼</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                        <TouchableOpacity
+                          style={styles.cartStoreGroupClearBtn}
+                          onPress={() => clearStoreItems(grp.storeId)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.cartStoreGroupClearBtnText}>Remove Shop</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
 
                     {/* Warning banner if this specific store is closed */}
@@ -6525,7 +6575,7 @@ export default function App() {
                           🛵 COURIER PICKUP SEQUENCE
                         </Text>
                         <TouchableOpacity
-                          onPress={() => setRouteDirectionInverted((prev) => !prev)}
+                          onPress={reverseStoreOrder}
                           activeOpacity={0.7}
                           style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}
                         >
@@ -6567,7 +6617,7 @@ export default function App() {
                   >
                     <MapView
                       ref={cartMapRef}
-                      key={`cart-map-${participatingStores.map((s) => s.id).join('-')}-${deliveryDestLat}-${deliveryDestLng}`}
+                      key="cart-map-view"
                       style={styles.cartMapCanvas}
                       initialRegion={{
                         latitude: (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2,
@@ -7081,7 +7131,7 @@ export default function App() {
               <View style={{ flex: 1, position: 'relative' }}>
                 <MapView
                   ref={cartFullscreenMapRef}
-                  key={`cart-fs-map-${participatingStores.map((s) => s.id).join('-')}-${deliveryDestLat}-${deliveryDestLng}`}
+                  key="cart-fullscreen-map-view"
                   style={{ flex: 1, width: '100%', height: '100%' }}
                   initialRegion={{
                     latitude: (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2,
