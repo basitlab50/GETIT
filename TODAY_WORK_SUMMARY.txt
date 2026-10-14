@@ -214,9 +214,16 @@ Status:     All changes synced, verified, and pushed to origin/main
       - Stage 1: `🛵 Courier assigned! Heading to Stop 1 (H-Medix) to collect your provisions.`
       - Stage 2: `🔔 Picked up from Stop 1 (H-Medix)! Courier is now en route to Stop 2 (Abdul Basit Store).`
       - Stage 3: `🎉 All shops collected! Courier has all your packages and is on the way to your pinned address.`
-      - Stage 4: `✅ Order Delivered successfully! Thank you for choosing GETIT.`
-    - Interactive Stepper Simulation: Added a 1-tap `[ ⚡ Advance Courier to Next Step / Alert ➔ ]` button inside the
-      card so the user can test the transition and watch alerts and checkmarks update live in real time.
+    - Autonomous Real-Time Courier GPS Glide & Auto-Advancement:
+      - Removed the artificial manual "advance courier" button; the courier moves autonomously in real time!
+      - Every 3 seconds, the courier motorbike marker glides along the turn-by-turn road route:
+        Dispatch Origin ➔ Stop 1 (H-Medix) ➔ Stop 2 (Abdul Basit Store) ➔ Customer Residence (Home).
+      - Automatically triggers milestone checkoffs and live alert banners upon arriving within 50m of each stop.
+    - Full Google Maps Style Turn-by-Turn Navigation Map:
+      - Features dynamic multi-stop route polylines: vibrant Google blue `#2563EB` for the active leg,
+        dashed amber line for upcoming shop connections, and dashed emerald line for the dropoff leg.
+      - Displays store stop badges (`[1] 🏪 H-Medix`, `[2] 🏪 Abdul Basit Store`), home destination pill (`🏠 HOME`),
+        and real-time moving motorbike courier marker (`🛵 Musa Ibrahim • 42 km/h • Live`).
     - Single Master Security PIN: Buyer gives one single 4-digit Delivery Security PIN to the courier upon final handover.
   - Supabase Network Resiliency & Offline Sync Queue:
     - Fixed `UnexpectedException: The network connection was lost (ExpoModulesCore/Promise.swift:56)`:
