@@ -179,6 +179,10 @@ Status:     All changes synced, verified, and pushed to origin/main
     and `cartGroupedByStore` to guarantee exact chronological shop sequence. Shop-to-shop hops (amber dashed line)
     connect Store i directly to Store i+1, and ONLY the very last store in the chain connects to the Buyer's pinned destination.
     Store 1 is never connected to the buyer when multiple stores exist.
+  - Native MapView Overlay Cache Invalidation & Itinerary Flow Bar: Added dynamic keys (`key={cart-map-...}`) to both
+    inline and fullscreen `MapView` and `Polyline` components so native Google Maps/MapKit bridges force-clear stale
+    cached polylines on store changes. Added horizontal `multiStopItineraryFlowBar` directly above the map showing
+    `[1] Shop A ➔ [2] Shop B ➔ 📍 Delivery Pin`.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)

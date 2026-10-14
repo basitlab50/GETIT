@@ -6493,6 +6493,33 @@ export default function App() {
                     </View>
                   )}
 
+                  {/* Sequential Stop Itinerary Flow Pills */}
+                  {participatingStores.length > 1 && (
+                    <View style={styles.multiStopItineraryFlowBar}>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: 'center', gap: 6, paddingVertical: 4 }}>
+                        {participatingStores.map((st) => (
+                          <React.Fragment key={`flow-step-${st.id}`}>
+                            <View style={styles.multiStopFlowPill}>
+                              <View style={styles.multiStopFlowBadge}>
+                                <Text style={styles.multiStopFlowBadgeText}>{st.stopNumber}</Text>
+                              </View>
+                              <Text style={styles.multiStopFlowName} numberOfLines={1}>
+                                {st.name}
+                              </Text>
+                            </View>
+                            <Text style={styles.multiStopFlowArrow}>➔</Text>
+                          </React.Fragment>
+                        ))}
+                        <View style={[styles.multiStopFlowPill, { backgroundColor: 'rgba(5, 107, 75, 0.12)', borderColor: COLORS.emeraldPrimary }]}>
+                          <Text style={{ fontSize: 12, marginRight: 4 }}>📍</Text>
+                          <Text style={[styles.multiStopFlowName, { color: COLORS.emeraldDeep, fontWeight: '800' }]}>
+                            {pinnedLocation?.name?.split(',')[0] || 'Delivery Pin'}
+                          </Text>
+                        </View>
+                      </ScrollView>
+                    </View>
+                  )}
+
                   {/* Interactive Mini-Map Preview Structure (Resizable & Fullscreen-ready) */}
                   <View
                     style={[styles.cartMapContainer, { height: cartMapSize === 'tall' ? 390 : 220 }]}
@@ -6502,6 +6529,7 @@ export default function App() {
                   >
                     <MapView
                       ref={cartMapRef}
+                      key={`cart-map-${participatingStores.map((s) => s.id).join('-')}-${deliveryDestLat}-${deliveryDestLng}`}
                       style={styles.cartMapCanvas}
                       initialRegion={{
                         latitude: (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2,
@@ -6569,7 +6597,7 @@ export default function App() {
                       {/* 4. Sequential Multi-Stop Route Polylines */}
                       {multiStopRouteSegments.map((seg) => (
                         <Polyline
-                          key={seg.id}
+                          key={`poly-${seg.id}-${seg.coordinates.map((c) => `${c.latitude}_${c.longitude}`).join('-')}`}
                           coordinates={seg.coordinates}
                           strokeColor={seg.strokeColor}
                           strokeWidth={seg.strokeWidth}
@@ -7015,6 +7043,7 @@ export default function App() {
               <View style={{ flex: 1, position: 'relative' }}>
                 <MapView
                   ref={cartFullscreenMapRef}
+                  key={`cart-fs-map-${participatingStores.map((s) => s.id).join('-')}-${deliveryDestLat}-${deliveryDestLng}`}
                   style={{ flex: 1, width: '100%', height: '100%' }}
                   initialRegion={{
                     latitude: (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2,
@@ -7081,7 +7110,7 @@ export default function App() {
                   {/* Sequential Multi-Stop Route Polylines */}
                   {multiStopRouteSegments.map((seg) => (
                     <Polyline
-                      key={`fs-${seg.id}`}
+                      key={`fs-poly-${seg.id}-${seg.coordinates.map((c) => `${c.latitude}_${c.longitude}`).join('-')}`}
                       coordinates={seg.coordinates}
                       strokeColor={seg.strokeColor}
                       strokeWidth={seg.strokeWidth}
@@ -12373,6 +12402,50 @@ const styles = StyleSheet.create({
   diffLocationSwitchBtnText: {
     color: '#FFFFFF',
     fontSize: 10.5,
+    fontWeight: '800',
+  },
+  multiStopItineraryFlowBar: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  multiStopFlowPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  multiStopFlowBadge: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#D97706',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 5,
+  },
+  multiStopFlowBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9.5,
+    fontWeight: '900',
+  },
+  multiStopFlowName: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    maxWidth: 100,
+  },
+  multiStopFlowArrow: {
+    fontSize: 10,
+    color: COLORS.textMuted,
     fontWeight: '800',
   },
   cartMapContainer: {
