@@ -1211,6 +1211,7 @@ export default function App() {
   const [cartMapSize, setCartMapSize] = useState('compact'); // 'compact' (220px) | 'tall' (390px)
   const [isCartMapFullscreen, setIsCartMapFullscreen] = useState(false);
   const [cartMapRegion, setCartMapRegion] = useState(null);
+  const [cartScrollEnabled, setCartScrollEnabled] = useState(true);
   const storeMiniMapRef = useRef(null);
   const storeFullMapRef = useRef(null);
   const buyerExploreMapRef = useRef(null);
@@ -2574,27 +2575,35 @@ export default function App() {
       const targetMap = targetRef?.current || cartMapRef.current;
       if (!targetMap) return;
 
-      const current = cartMapRegion || {
-        latitude: (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2,
-        longitude: (deliveryDestLng + (participatingStores[0]?.longitude || activeCartStoreLng)) / 2,
-        latitudeDelta: 0.02,
-        longitudeDelta: 0.02,
-      };
+      const centerLat = cartMapRegion?.latitude || (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2;
+      const centerLng = cartMapRegion?.longitude || (deliveryDestLng + (participatingStores[0]?.longitude || activeCartStoreLng)) / 2;
+      const currentLatDelta = cartMapRegion?.latitudeDelta || 0.02;
+      const currentLngDelta = cartMapRegion?.longitudeDelta || 0.02;
 
+      // Multiplier: 0.5 to zoom in closer, 2.0 to zoom out
       const multiplier = zoomIn ? 0.5 : 2.0;
-      const newLatDelta = Math.max(0.002, Math.min(2.0, current.latitudeDelta * multiplier));
-      const newLngDelta = Math.max(0.002, Math.min(2.0, current.longitudeDelta * multiplier));
+      const newLatDelta = Math.max(0.001, Math.min(2.5, currentLatDelta * multiplier));
+      const newLngDelta = Math.max(0.001, Math.min(2.5, currentLngDelta * multiplier));
 
       const updatedRegion = {
-        latitude: current.latitude,
-        longitude: current.longitude,
+        latitude: centerLat,
+        longitude: centerLng,
         latitudeDelta: newLatDelta,
         longitudeDelta: newLngDelta,
       };
 
       setCartMapRegion(updatedRegion);
       if (typeof targetMap.animateToRegion === 'function') {
-        targetMap.animateToRegion(updatedRegion, 300);
+        targetMap.animateToRegion(updatedRegion, 250);
+      }
+      if (typeof targetMap.getCamera === 'function' && typeof targetMap.animateCamera === 'function') {
+        targetMap.getCamera().then((cam) => {
+          if (cam) {
+            const nextAlt = zoomIn ? Math.max(100, cam.altitude * 0.5) : Math.min(100000, cam.altitude * 2.0);
+            const nextZoom = zoomIn ? (cam.zoom ? cam.zoom + 1 : 16) : (cam.zoom ? cam.zoom - 1 : 13);
+            targetMap.animateCamera({ altitude: nextAlt, zoom: nextZoom }, { duration: 250 });
+          }
+        }).catch(() => {});
       }
     } catch (e) {
       console.log('zoomCartMap error:', e?.message);
@@ -6080,7 +6089,7 @@ export default function App() {
             <View style={{ width: 60 }} />
           </View>
 
-          <ScrollView style={{ flex: 1, padding: 16 }}>
+          <ScrollView style={{ flex: 1, padding: 16 }} scrollEnabled={cartScrollEnabled}>
             {cart.length === 0 ? (
               <View style={styles.emptyCartBox}>
                 <Image
@@ -6321,7 +6330,12 @@ export default function App() {
                   )}
 
                   {/* Interactive Mini-Map Preview Structure (Resizable & Fullscreen-ready) */}
-                  <View style={[styles.cartMapContainer, { height: cartMapSize === 'tall' ? 390 : 220 }]}>
+                  <View
+                    style={[styles.cartMapContainer, { height: cartMapSize === 'tall' ? 390 : 220 }]}
+                    onTouchStart={() => setCartScrollEnabled(false)}
+                    onTouchEnd={() => setCartScrollEnabled(true)}
+                    onTouchCancel={() => setCartScrollEnabled(true)}
+                  >
                     <MapView
                       ref={cartMapRef}
                       style={styles.cartMapCanvas}
@@ -6333,6 +6347,7 @@ export default function App() {
                       }}
                       showsUserLocation={true}
                       showsCompass={true}
+                      zoomControlEnabled={true}
                       scrollEnabled={true}
                       zoomEnabled={true}
                       pitchEnabled={true}
@@ -6509,6 +6524,37 @@ export default function App() {
                         activeOpacity={0.8}
                       >
                         <Text style={styles.cartMapFullscreenBtnText}>⛶ Fullscreen</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Inline Zoom & Camera Control Bar (Works smoothly while in Basket view) */}
+                  <View style={styles.cartMapInlineZoomBar}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <Text style={{ fontSize: 13 }}>🔍</Text>
+                      <Text style={styles.cartMapInlineZoomLabel}>Map Zoom:</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <TouchableOpacity
+                        style={styles.cartMapInlineZoomBtn}
+                        onPress={() => zoomCartMap(true, cartMapRef)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.cartMapInlineZoomBtnText}>＋ Zoom In</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.cartMapInlineZoomBtn}
+                        onPress={() => zoomCartMap(false, cartMapRef)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.cartMapInlineZoomBtnText}>− Zoom Out</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.cartMapInlineZoomBtn, { backgroundColor: 'rgba(5, 107, 75, 0.08)', borderColor: COLORS.emeraldPrimary }]}
+                        onPress={() => fitCartMapToAllPins(cartMapRef, 45)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.cartMapInlineZoomBtnText, { color: COLORS.emeraldDeep }]}>🧭 Fit All</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -12262,36 +12308,71 @@ const styles = StyleSheet.create({
   },
   cartMapZoomPill: {
     position: 'absolute',
-    top: 50,
-    right: 8,
+    top: 54,
+    right: 10,
     backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.borderBeige,
-    elevation: 20,
-    zIndex: 100,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: COLORS.emeraldPrimary,
+    elevation: 30,
+    zIndex: 999,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
     overflow: 'hidden',
   },
   cartMapZoomBtn: {
-    width: 32,
-    height: 32,
+    width: 38,
+    height: 38,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
   },
   cartMapZoomBtnText: {
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 20,
+    fontWeight: '900',
     color: COLORS.emeraldDeep,
   },
   cartMapZoomDivider: {
     height: 1,
     backgroundColor: COLORS.borderLight,
     width: '100%',
+  },
+  cartMapInlineZoomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  cartMapInlineZoomLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  cartMapInlineZoomBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  cartMapInlineZoomBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
   },
   cartMapControlsCluster: {
     position: 'absolute',

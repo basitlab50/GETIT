@@ -159,6 +159,10 @@ Status:     All changes synced, verified, and pushed to origin/main
   - Enhanced Touch Responsiveness: Added elevated `zIndex: 100` and `elevation: 25` to floating map buttons
     (`cartMapZoomPill`, `cartMapControlsCluster`, `cartMapFullscreenBtn`) with `pointerEvents="box-none"`
     so touches on buttons over Android/iOS MapView native surfaces are instantly delivered without pass-through.
+  - Non-Fullscreen Map Zooming & Gesture Isolation: Added touch isolation (`cartScrollEnabled: false`
+    on map touch) to prevent the basket modal ScrollView from stealing pinch-to-zoom and pan gestures,
+    enabled Android native `zoomControlEnabled={true}`, enlarged floating `＋`/`−` zoom buttons (`38x38px`),
+    and introduced a dedicated inline `Map Controls` bar with one-tap `＋ Zoom In`, `− Zoom Out`, and `🧭 Fit All`.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
