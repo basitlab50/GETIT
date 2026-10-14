@@ -1212,6 +1212,7 @@ export default function App() {
   const [isCartMapFullscreen, setIsCartMapFullscreen] = useState(false);
   const [cartMapRegion, setCartMapRegion] = useState(null);
   const [cartScrollEnabled, setCartScrollEnabled] = useState(true);
+  const [routeDirectionInverted, setRouteDirectionInverted] = useState(false);
   const storeMiniMapRef = useRef(null);
   const storeFullMapRef = useRef(null);
   const buyerExploreMapRef = useRef(null);
@@ -2444,18 +2445,41 @@ export default function App() {
   const cartTotal = cartSubtotal + deliveryFee + conciergeFee;
 
   // Participating stores list for the map with assigned sequential stop numbers
+  // Intelligently orders pickup stops so the rider starts from the store furthest from the destination
+  // and finishes at the store closest to the buyer's delivery location right before final dropoff!
   const participatingStores = useMemo(() => {
-    return cartGroupedByStore.map((g, idx) => ({
+    if (!cartGroupedByStore || cartGroupedByStore.length === 0) return [];
+
+    // Calculate distance from each store to the pinned delivery destination
+    const withDistance = cartGroupedByStore.map((g) => {
+      const dist = calculateDistanceKm(
+        Number(g.latitude) || 9.0882,
+        Number(g.longitude) || 7.4933,
+        deliveryDestLat,
+        deliveryDestLng
+      ) || 0;
+      return { ...g, distToDest: dist };
+    });
+
+    // Sort descending by distance: Furthest store = Stop 1, closer store = Stop 2, closest store = Stop N
+    const sorted = [...withDistance].sort((a, b) => b.distToDest - a.distToDest);
+    const ordered = routeDirectionInverted ? [...sorted].reverse() : sorted;
+
+    return ordered.map((g, idx) => ({
       id: g.storeId,
+      storeId: g.storeId,
       name: g.storeName,
+      storeName: g.storeName,
       stopNumber: idx + 1,
-      latitude: g.latitude,
-      longitude: g.longitude,
+      latitude: Number(g.latitude) || 9.0882,
+      longitude: Number(g.longitude) || 7.4933,
       isOpen: g.isOpen,
       subtotal: g.subtotal,
+      distToDest: g.distToDest,
+      items: g.items,
       itemsCount: g.items.reduce((s, i) => s + i.qty, 0),
     }));
-  }, [cartGroupedByStore]);
+  }, [cartGroupedByStore, deliveryDestLat, deliveryDestLng, routeDirectionInverted]);
 
   // Remove all items belonging to a specific store
   const clearStoreItems = (storeId) => {
@@ -6271,13 +6295,13 @@ export default function App() {
                   </TouchableOpacity>
                 </View>
 
-                {cartGroupedByStore.map((grp, grpIdx) => (
-                  <View key={grp.storeId} style={styles.cartStoreGroupCard}>
+                {participatingStores.map((grp) => (
+                  <View key={grp.id} style={styles.cartStoreGroupCard}>
                     {/* Multi-Stop Sequence Tag (if multi-store order) */}
-                    {cartGroupedByStore.length > 1 && (
+                    {participatingStores.length > 1 && (
                       <View style={styles.cartStoreStopPill}>
                         <Text style={styles.cartStoreStopPillText}>
-                          📍 STOP {grpIdx + 1} OF {cartGroupedByStore.length} • PICKUP HUB
+                          📍 STOP {grp.stopNumber} OF {participatingStores.length} • PICKUP HUB
                         </Text>
                       </View>
                     )}
@@ -6496,7 +6520,21 @@ export default function App() {
                   {/* Sequential Stop Itinerary Flow Pills */}
                   {participatingStores.length > 1 && (
                     <View style={styles.multiStopItineraryFlowBar}>
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: 'center', gap: 6, paddingVertical: 4 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, paddingHorizontal: 2 }}>
+                        <Text style={{ fontSize: 9.5, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 0.5 }}>
+                          🛵 COURIER PICKUP SEQUENCE
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => setRouteDirectionInverted((prev) => !prev)}
+                          activeOpacity={0.7}
+                          style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}
+                        >
+                          <Text style={{ fontSize: 10, fontWeight: '800', color: COLORS.emeraldDeep }}>
+                            ⇅ Reverse Sequence
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: 'center', gap: 6, paddingVertical: 2 }}>
                         {participatingStores.map((st) => (
                           <React.Fragment key={`flow-step-${st.id}`}>
                             <View style={styles.multiStopFlowPill}>
