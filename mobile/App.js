@@ -6768,189 +6768,185 @@ export default function App() {
               </>
             )}
           </ScrollView>
-        </SafeAreaView>
-      </Modal>
 
-      {/* --- BASKET FULLSCREEN INTERACTIVE DISPATCH MAP MODAL --- */}
-      <Modal
-        visible={isCartMapFullscreen}
-        animationType="slide"
-        onRequestClose={() => setIsCartMapFullscreen(false)}
-      >
-        <SafeAreaView style={styles.cartFullscreenModalContainer}>
-          {/* Top Luxury Navigation & Header Bar */}
-          <View style={styles.cartFullscreenHeaderBar}>
-            <TouchableOpacity
-              style={styles.cartFullscreenBackBtn}
-              onPress={() => setIsCartMapFullscreen(false)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.cartFullscreenBackBtnText}>← Back to Basket</Text>
-            </TouchableOpacity>
-
-            <View style={{ flex: 1, marginHorizontal: 8 }}>
-              <Text style={styles.cartFullscreenHeaderTitle} numberOfLines={1}>
-                {participatingStores.length > 1
-                  ? `Multi-Store Dispatch (${participatingStores.length} Shops)`
-                  : `Dispatch Route • ${activeCartStore?.name || 'Shop'}`}
-              </Text>
-              <Text style={styles.cartFullscreenHeaderSub} numberOfLines={1}>
-                📍 To: {pinnedLocation?.name || 'Your Delivery Destination'}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.cartFullscreenCloseCircle}
-              onPress={() => setIsCartMapFullscreen(false)}
-              activeOpacity={0.8}
-            >
-              <Text style={{ fontSize: 16, fontWeight: '800', color: COLORS.textDark }}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Full-Screen Interactive Map Canvas */}
-          <View style={{ flex: 1, position: 'relative' }}>
-            <MapView
-              ref={cartFullscreenMapRef}
-              style={{ flex: 1, width: '100%', height: '100%' }}
-              initialRegion={{
-                latitude: (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2,
-                longitude: (deliveryDestLng + (participatingStores[0]?.longitude || activeCartStoreLng)) / 2,
-                latitudeDelta: Math.max(0.02, Math.abs(deliveryDestLat - (participatingStores[0]?.latitude || activeCartStoreLat)) * 2),
-                longitudeDelta: Math.max(0.02, Math.abs(deliveryDestLng - (participatingStores[0]?.longitude || activeCartStoreLng)) * 2),
-              }}
-              showsUserLocation={true}
-              showsCompass={true}
-              scrollEnabled={true}
-              zoomEnabled={true}
-              pitchEnabled={true}
-              rotateEnabled={true}
-              onRegionChangeComplete={(reg) => setCartMapRegion(reg)}
-            >
-              {/* Participating Stores Pins */}
-              {participatingStores.map((st) => (
-                <Marker
-                  key={`fs-${st.id}`}
-                  coordinate={{
-                    latitude: st.latitude,
-                    longitude: st.longitude,
-                  }}
-                  title={`🏪 ${st.name}`}
-                  description={`Fulfillment Hub • ${st.itemsCount} items (${formatNaira(st.subtotal)})`}
-                  anchor={{ x: 0.5, y: 1.0 }}
+          {/* --- BASKET FULLSCREEN INTERACTIVE DISPATCH MAP OVERLAY --- */}
+          {isCartMapFullscreen && (
+            <View style={styles.cartFullscreenOverlay}>
+              {/* Top Luxury Navigation & Header Bar */}
+              <View style={styles.cartFullscreenHeaderBar}>
+                <TouchableOpacity
+                  style={styles.cartFullscreenBackBtn}
+                  onPress={() => setIsCartMapFullscreen(false)}
+                  activeOpacity={0.8}
                 >
-                  <View style={styles.cartMapStoreMarkerPill}>
-                    <Text style={{ fontSize: 14, marginRight: 4 }}>🏪</Text>
-                    <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
-                      {st.name}
-                    </Text>
-                  </View>
-                </Marker>
-              ))}
+                  <Text style={styles.cartFullscreenBackBtnText}>← Back to Basket</Text>
+                </TouchableOpacity>
 
-              {/* Delivery Destination Pin */}
-              <Marker
-                coordinate={{
-                  latitude: deliveryDestLat,
-                  longitude: deliveryDestLng,
-                }}
-                title="📍 Delivery Destination"
-                description={pinnedLocation?.name || 'Your dropoff destination'}
-                pinColor="#EF4444"
-              />
-
-              {/* Live Phone GPS Blue Beacon */}
-              {userLiveCoords && (
-                <Marker
-                  coordinate={userLiveCoords}
-                  title="🔵 You Are Here"
-                  description="Live satellite phone GPS"
-                  anchor={{ x: 0.5, y: 0.5 }}
-                >
-                  <View style={styles.liveBeaconOuter}>
-                    <View style={styles.liveBeaconInner} />
-                  </View>
-                </Marker>
-              )}
-
-              {/* Dashed Route Polylines */}
-              {participatingStores.map((st) => (
-                <Polyline
-                  key={`fs-route-${st.id}`}
-                  coordinates={[
-                    { latitude: st.latitude, longitude: st.longitude },
-                    { latitude: deliveryDestLat, longitude: deliveryDestLng },
-                  ]}
-                  strokeColor={COLORS.emeraldPrimary}
-                  strokeWidth={3.5}
-                  lineDashPattern={[8, 5]}
-                />
-              ))}
-            </MapView>
-
-            {/* Floating Zoom & Action Cluster on Fullscreen Map */}
-            <View style={styles.cartFullscreenControlsCluster}>
-              <TouchableOpacity
-                style={styles.cartFullscreenControlBtn}
-                onPress={() => zoomCartMap(true, cartFullscreenMapRef)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.cartFullscreenControlBtnText}>＋</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.cartFullscreenControlBtn}
-                onPress={() => zoomCartMap(false, cartFullscreenMapRef)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.cartFullscreenControlBtnText}>−</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.cartFullscreenControlBtn, { marginTop: 6 }]}
-                onPress={() => fitCartMapToAllPins(cartFullscreenMapRef, 60)}
-                activeOpacity={0.8}
-              >
-                <Text style={{ fontSize: 16 }}>🧭</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Bottom Fullscreen Legend & Status Card */}
-            <View style={styles.cartFullscreenBottomCard}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={{ fontSize: 16 }}>🚀</Text>
-                  <Text style={styles.cartFullscreenBottomTitle}>
+                <View style={{ flex: 1, marginHorizontal: 8 }}>
+                  <Text style={styles.cartFullscreenHeaderTitle} numberOfLines={1}>
                     {participatingStores.length > 1
-                      ? `${participatingStores.length} Stores in Split Dispatch`
-                      : `Dispatching from ${activeCartStore?.name || 'Shop'}`}
+                      ? `Multi-Store Dispatch (${participatingStores.length} Shops)`
+                      : `Dispatch Route • ${activeCartStore?.name || 'Shop'}`}
+                  </Text>
+                  <Text style={styles.cartFullscreenHeaderSub} numberOfLines={1}>
+                    📍 To: {pinnedLocation?.name || 'Your Delivery Destination'}
                   </Text>
                 </View>
-                <View style={styles.cartFullscreenDistBadge}>
-                  <Text style={styles.cartFullscreenDistBadgeText}>
-                    {cartDistanceKm !== null ? `${cartDistanceKm.toFixed(1)} km` : '~20 mins'}
-                  </Text>
-                </View>
+
+                <TouchableOpacity
+                  style={styles.cartFullscreenCloseCircle}
+                  onPress={() => setIsCartMapFullscreen(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: COLORS.textDark }}>✕</Text>
+                </TouchableOpacity>
               </View>
 
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                <View style={styles.cartMapLegendItem}>
-                  <View style={[styles.cartMapLegendDot, { backgroundColor: '#EF4444' }]} />
-                  <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>📍 Delivery Pin</Text>
+              {/* Full-Screen Interactive Map Canvas */}
+              <View style={{ flex: 1, position: 'relative' }}>
+                <MapView
+                  ref={cartFullscreenMapRef}
+                  style={{ flex: 1, width: '100%', height: '100%' }}
+                  initialRegion={{
+                    latitude: (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2,
+                    longitude: (deliveryDestLng + (participatingStores[0]?.longitude || activeCartStoreLng)) / 2,
+                    latitudeDelta: Math.max(0.02, Math.abs(deliveryDestLat - (participatingStores[0]?.latitude || activeCartStoreLat)) * 2),
+                    longitudeDelta: Math.max(0.02, Math.abs(deliveryDestLng - (participatingStores[0]?.longitude || activeCartStoreLng)) * 2),
+                  }}
+                  showsUserLocation={true}
+                  showsCompass={true}
+                  scrollEnabled={true}
+                  zoomEnabled={true}
+                  pitchEnabled={true}
+                  rotateEnabled={true}
+                  onRegionChangeComplete={(reg) => setCartMapRegion(reg)}
+                >
+                  {/* Participating Stores Pins */}
+                  {participatingStores.map((st) => (
+                    <Marker
+                      key={`fs-${st.id}`}
+                      coordinate={{
+                        latitude: st.latitude,
+                        longitude: st.longitude,
+                      }}
+                      title={`🏪 ${st.name}`}
+                      description={`Fulfillment Hub • ${st.itemsCount} items (${formatNaira(st.subtotal)})`}
+                      anchor={{ x: 0.5, y: 1.0 }}
+                    >
+                      <View style={styles.cartMapStoreMarkerPill}>
+                        <Text style={{ fontSize: 14, marginRight: 4 }}>🏪</Text>
+                        <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
+                          {st.name}
+                        </Text>
+                      </View>
+                    </Marker>
+                  ))}
+
+                  {/* Delivery Destination Pin */}
+                  <Marker
+                    coordinate={{
+                      latitude: deliveryDestLat,
+                      longitude: deliveryDestLng,
+                    }}
+                    title="📍 Delivery Destination"
+                    description={pinnedLocation?.name || 'Your dropoff destination'}
+                    pinColor="#EF4444"
+                  />
+
+                  {/* Live Phone GPS Blue Beacon */}
+                  {userLiveCoords && (
+                    <Marker
+                      coordinate={userLiveCoords}
+                      title="🔵 You Are Here"
+                      description="Live satellite phone GPS"
+                      anchor={{ x: 0.5, y: 0.5 }}
+                    >
+                      <View style={styles.liveBeaconOuter}>
+                        <View style={styles.liveBeaconInner} />
+                      </View>
+                    </Marker>
+                  )}
+
+                  {/* Dashed Route Polylines */}
+                  {participatingStores.map((st) => (
+                    <Polyline
+                      key={`fs-route-${st.id}`}
+                      coordinates={[
+                        { latitude: st.latitude, longitude: st.longitude },
+                        { latitude: deliveryDestLat, longitude: deliveryDestLng },
+                      ]}
+                      strokeColor={COLORS.emeraldPrimary}
+                      strokeWidth={3.5}
+                      lineDashPattern={[8, 5]}
+                    />
+                  ))}
+                </MapView>
+
+                {/* Floating Zoom & Action Cluster on Fullscreen Map */}
+                <View style={styles.cartFullscreenControlsCluster} pointerEvents="box-none">
+                  <TouchableOpacity
+                    style={styles.cartFullscreenControlBtn}
+                    onPress={() => zoomCartMap(true, cartFullscreenMapRef)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.cartFullscreenControlBtnText}>＋</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.cartFullscreenControlBtn}
+                    onPress={() => zoomCartMap(false, cartFullscreenMapRef)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.cartFullscreenControlBtnText}>−</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.cartFullscreenControlBtn, { marginTop: 6 }]}
+                    onPress={() => fitCartMapToAllPins(cartFullscreenMapRef, 60)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 16 }}>🧭</Text>
+                  </TouchableOpacity>
                 </View>
-                {participatingStores.map((s) => (
-                  <View key={`fs-leg-${s.id}`} style={styles.cartMapLegendItem}>
-                    <View style={[styles.cartMapLegendDot, { backgroundColor: COLORS.emeraldPrimary }]} />
-                    <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>🏪 {s.name}</Text>
+
+                {/* Bottom Fullscreen Legend & Status Card */}
+                <View style={styles.cartFullscreenBottomCard} pointerEvents="box-none">
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 16 }}>🚀</Text>
+                      <Text style={styles.cartFullscreenBottomTitle}>
+                        {participatingStores.length > 1
+                          ? `${participatingStores.length} Stores in Split Dispatch`
+                          : `Dispatching from ${activeCartStore?.name || 'Shop'}`}
+                      </Text>
+                    </View>
+                    <View style={styles.cartFullscreenDistBadge}>
+                      <Text style={styles.cartFullscreenDistBadgeText}>
+                        {cartDistanceKm !== null ? `${cartDistanceKm.toFixed(1)} km` : '~20 mins'}
+                      </Text>
+                    </View>
                   </View>
-                ))}
-                {userLiveCoords && (
-                  <View style={styles.cartMapLegendItem}>
-                    <View style={[styles.cartMapLegendDot, { backgroundColor: '#2563EB' }]} />
-                    <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>🔵 Live Phone</Text>
+
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    <View style={styles.cartMapLegendItem}>
+                      <View style={[styles.cartMapLegendDot, { backgroundColor: '#EF4444' }]} />
+                      <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>📍 Delivery Pin</Text>
+                    </View>
+                    {participatingStores.map((s) => (
+                      <View key={`fs-leg-${s.id}`} style={styles.cartMapLegendItem}>
+                        <View style={[styles.cartMapLegendDot, { backgroundColor: COLORS.emeraldPrimary }]} />
+                        <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>🏪 {s.name}</Text>
+                      </View>
+                    ))}
+                    {userLiveCoords && (
+                      <View style={styles.cartMapLegendItem}>
+                        <View style={[styles.cartMapLegendDot, { backgroundColor: '#2563EB' }]} />
+                        <Text style={[styles.cartMapLegendText, { color: COLORS.textDark }]}>🔵 Live Phone</Text>
+                      </View>
+                    )}
                   </View>
-                )}
+                </View>
               </View>
             </View>
-          </View>
+          )}
         </SafeAreaView>
       </Modal>
 
@@ -12272,7 +12268,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: COLORS.borderBeige,
-    elevation: 4,
+    elevation: 20,
+    zIndex: 100,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.18,
@@ -12303,6 +12300,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    zIndex: 100,
+    elevation: 20,
   },
   cartMapResizeBtn: {
     backgroundColor: '#FFFFFF',
@@ -12311,7 +12310,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 14,
-    elevation: 3,
+    elevation: 25,
+    zIndex: 101,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.15,
@@ -12327,7 +12327,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 14,
-    elevation: 3,
+    elevation: 25,
+    zIndex: 101,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.15,
@@ -12354,6 +12355,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     textAlign: 'center',
+  },
+  cartFullscreenOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#FFFFFF',
+    zIndex: 99999,
+    elevation: 99999,
   },
   cartFullscreenModalContainer: {
     flex: 1,
