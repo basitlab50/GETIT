@@ -185,6 +185,10 @@ Status:     All changes synced, verified, and pushed to origin/main
     `multiStopItineraryFlowBar`, enabling users to invert pickup stops on-the-fly and recalculate route geometry.
   - Basket Items List Sync: Updated basket store cards to iterate `participatingStores` directly so the card sequence,
     stop numbering badges, flow pills, and map polylines remain 100% synchronized in matching order.
+  - Fix Supabase Store Update (PGRST116): Replaced strict `.single()` with `.maybeSingle()` in `updateDatabaseStore`
+    (in both mobile and web services), preventing crashes when updating newly registered or locally cached stores that
+    haven't yet been seeded into the remote `stores` table. Added automatic `.upsert()` fallback so store rows are
+    transparently created in Supabase when updated.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)

@@ -118,9 +118,35 @@ export async function updateDatabaseStore(storeId, updates) {
       .update(dbUpdates)
       .eq('id', storeId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
+
+    // If store row didn't exist in Supabase yet, upsert it gracefully so it exists
+    if (!data && Object.keys(dbUpdates).length > 0) {
+      const fallbackStore = {
+        id: storeId,
+        name: updates.name || 'GETIT Partner Store',
+        address: updates.address || 'Abuja, Nigeria',
+        district: updates.district || 'Abuja',
+        is_open: updates.isOpen !== undefined ? updates.isOpen : (updates.is_open !== undefined ? updates.is_open : true),
+        latitude: updates.latitude !== undefined ? Number(updates.latitude) : 9.0882,
+        longitude: updates.longitude !== undefined ? Number(updates.longitude) : 7.4933,
+        ...dbUpdates,
+      };
+      const { data: upsertData, error: upsertErr } = await supabase
+        .from('stores')
+        .upsert(fallbackStore, { onConflict: 'id' })
+        .select()
+        .maybeSingle();
+
+      if (upsertErr) {
+        console.warn('Store not in Supabase yet; local state preserved:', upsertErr.message);
+        return null;
+      }
+      return upsertData;
+    }
+
     return data;
   } catch (err) {
     console.error('Failed to update store in Supabase:', err);
