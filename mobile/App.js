@@ -2402,7 +2402,67 @@ export default function App() {
   const conciergeFee = Math.round(cartSubtotal * 0.04);
   const cartTotal = cartSubtotal + deliveryFee + conciergeFee;
 
-  // Active store fulfillment details for the basket map
+  // Group cart items by store for multi-store basket display and split dispatch
+  const cartGroupedByStore = useMemo(() => {
+    const groups = {};
+    cart.forEach((item) => {
+      const storeId = item.storeId || 's1';
+      const storeName = item.storeName || 'GETIT Store';
+      if (!groups[storeId]) {
+        const storeObj = storesList.find(
+          (s) => s.id === storeId || s.name === storeName
+        );
+        groups[storeId] = {
+          storeId,
+          storeName: storeObj?.name || storeName,
+          store: storeObj,
+          latitude: Number(storeObj?.latitude) || 9.0882,
+          longitude: Number(storeObj?.longitude) || 7.4933,
+          items: [],
+          subtotal: 0,
+          isOpen: storeObj ? isStoreCurrentlyOpen(storeObj) : true,
+        };
+      }
+      groups[storeId].items.push(item);
+      groups[storeId].subtotal += item.price * item.qty;
+    });
+    return Object.values(groups);
+  }, [cart, storesList]);
+
+  // Participating stores list for the map
+  const participatingStores = useMemo(() => {
+    return cartGroupedByStore.map((g) => ({
+      id: g.storeId,
+      name: g.storeName,
+      latitude: g.latitude,
+      longitude: g.longitude,
+      isOpen: g.isOpen,
+      subtotal: g.subtotal,
+      itemsCount: g.items.reduce((s, i) => s + i.qty, 0),
+    }));
+  }, [cartGroupedByStore]);
+
+  // Remove all items belonging to a specific store
+  const clearStoreItems = (storeId) => {
+    const targetGroup = cartGroupedByStore.find((g) => g.storeId === storeId);
+    const storeName = targetGroup?.storeName || 'this store';
+    Alert.alert(
+      `Remove ${storeName} Items?`,
+      `Are you sure you want to remove all provisions from "${storeName}" from your basket?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            setCart((prev) => prev.filter((item) => (item.storeId || 's1') !== storeId));
+          },
+        },
+      ]
+    );
+  };
+
+  // Active store fulfillment details for the basket map (primary or first participating store)
   const activeCartStore = useMemo(() => {
     if (!cart || cart.length === 0) return selectedStore || currentMerchantStore || storesList[0];
     const match = storesList.find(
@@ -2466,10 +2526,10 @@ export default function App() {
 
       setTimeout(() => {
         try {
-          if (cartMapRef.current && activeCartStoreLat && deliveryDestLat) {
+          if (cartMapRef.current && deliveryDestLat) {
             const fitPoints = [
-              { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
               { latitude: deliveryDestLat, longitude: deliveryDestLng },
+              ...participatingStores.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
             ];
             if (userLiveCoords?.latitude && userLiveCoords?.longitude) {
               fitPoints.push({
@@ -2488,86 +2548,168 @@ export default function App() {
         } catch (e) {}
       }, 350);
     }
-  }, [cartModalVisible, activeCartStoreLat, activeCartStoreLng, deliveryDestLat, deliveryDestLng, userLiveCoords]);
+  }, [cartModalVisible, participatingStores, deliveryDestLat, deliveryDestLng, userLiveCoords]);
+
+  // Customer Order Cancellation Handler
+  const cancelBuyerOrder = (orderId) => {
+    const targetOrder = orders.find((o) => o.id === orderId);
+    if (!targetOrder) return;
+
+    if (targetOrder.status !== 'New Order' && targetOrder.status !== 'Preparing') {
+      Alert.alert(
+        'Cannot Cancel',
+        `This order is already "${targetOrder.status}". Once a courier is in transit or delivery is complete, cancellation cannot be processed directly in the app. Please contact VIP Concierge support.`
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Cancel Order',
+      `Are you sure you want to cancel order ${targetOrder.id} from "${targetOrder.storeName}"?\n\nA full refund of ${formatNaira(targetOrder.total)} will be credited back to your account immediately.`,
+      [
+        { text: 'Keep Order', style: 'cancel' },
+        {
+          text: 'Yes, Cancel & Refund',
+          style: 'destructive',
+          onPress: () => {
+            updateAndPersistOrders((prev) =>
+              prev.map((o) =>
+                o.id === orderId
+                  ? {
+                      ...o,
+                      status: 'Cancelled',
+                      cancellationReason: 'Cancelled by customer',
+                      cancelledAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    }
+                  : o
+              )
+            );
+            updateDatabaseOrderStatus(orderId, { status: 'Cancelled' }).catch(() => {});
+            Alert.alert(
+              '✅ Order Cancelled',
+              `Order ${targetOrder.id} has been cancelled successfully. Your refund of ${formatNaira(targetOrder.total)} has been processed.`
+            );
+          },
+        },
+      ]
+    );
+  };
 
   const handleCheckout = () => {
     if (cart.length === 0) return;
 
     // Guard: Prevent checkout if any cart item belongs to a currently closed store
-    const closedCartItem = cart.find((item) => {
-      const itemStore = storesList.find(
-        (s) => (item.storeId && s.id === item.storeId) || s.name === item.storeName
-      );
-      return itemStore && !isStoreCurrentlyOpen(itemStore);
-    });
-
-    if (closedCartItem) {
+    const closedGroups = cartGroupedByStore.filter((g) => !g.isOpen);
+    if (closedGroups.length > 0) {
+      const closedNames = closedGroups.map((g) => g.storeName).join(', ');
       Alert.alert(
         '⛔ Store Currently Closed',
-        `"${closedCartItem.storeName}" is currently closed and not accepting orders or bookings. Please remove items from closed stores before proceeding to payment.`,
+        `The following store(s) in your basket are currently closed: ${closedNames}.\n\nPlease remove items from closed stores or remove that shop to proceed with open stores.`,
         [
+          {
+            text: 'Remove Closed Stores',
+            style: 'destructive',
+            onPress: () => {
+              const closedIds = new Set(closedGroups.map((g) => g.storeId));
+              setCart((prev) => prev.filter((item) => !closedIds.has(item.storeId || 's1')));
+            },
+          },
           { text: 'View Basket', onPress: () => setCartModalVisible(true) },
-          { text: 'OK', style: 'cancel' },
+          { text: 'Cancel', style: 'cancel' },
         ]
       );
       return;
     }
-    const orderStore = storesList.find(
-      (s) => (cart[0]?.storeId && s.id === cart[0].storeId) || (cart[0]?.storeName && s.name === cart[0].storeName)
-    ) || selectedStore || currentMerchantStore || storesList[0];
 
-    const newOrder = {
-      id: `ORD-${Math.floor(10000 + Math.random() * 90000)}`,
-      storeId: orderStore?.id || 's1',
-      storeName: orderStore?.name || cart[0]?.storeName || 'The Gourmet Emporium',
-      itemsCount: cart.reduce((sum, i) => sum + i.qty, 0),
-      items: cart.map((i) => ({
-        id: i.id,
-        name: i.name,
-        price: i.price,
-        qty: i.qty,
-        icon: i.icon,
-      })),
-      total: cartTotal,
-      vendorPayout: Math.round(cartSubtotal * 0.9),
-      deliveryPartner: selectedDeliveryTier,
-      deliveryFee,
-      boltStatus: selectedDeliveryTier === 'bolt' ? 'PENDING_VENDOR' : null,
-      boltTrackingCode: selectedDeliveryTier === 'bolt' ? `BOLT-ABJ-${Math.floor(10000 + Math.random() * 90000)}` : null,
-      boltRider: null,
-      boltCoords: null,
-      status: 'New Order',
-      eta: selectedDeliveryTier === 'bolt' ? '18 mins (Bolt Express)' : '25 mins (Concierge)',
-      deliveryPin: `${Math.floor(1000 + Math.random() * 9000)}`,
-      pickupPin: `${Math.floor(1000 + Math.random() * 9000)}`,
-      customerName: currentUser?.fullName || currentUser?.name || 'Alhaji Farouk Bello',
-      customerAddress: pinnedLocation.name,
-      deliveryLocation: {
-        latitude: pinnedLocation.latitude,
-        longitude: pinnedLocation.longitude,
-        landmark: pinnedLocation.landmark,
-        apartment: pinnedLocation.apartment,
-        notes: riderDeliveryNote || pinnedLocation.notes,
-      },
-      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-    updateAndPersistOrders((prev) => [newOrder, ...prev]);
+    const isMultiStore = cartGroupedByStore.length > 1;
+    const batchId = isMultiStore ? `BATCH-${Math.floor(10000 + Math.random() * 90000)}` : null;
+
+    // Split cart into dedicated order tickets per store
+    const createdOrders = cartGroupedByStore.map((grp, index) => {
+      const suffix = isMultiStore ? `-${String.fromCharCode(65 + index)}` : '';
+      const orderId = `ORD-${Math.floor(10000 + Math.random() * 90000)}${suffix}`;
+      const storeSubtotal = grp.subtotal;
+      const grpDeliveryFee = Math.round(deliveryFee / cartGroupedByStore.length);
+      const grpConciergeFee = Math.round(storeSubtotal * 0.04);
+      const grpTotal = storeSubtotal + grpDeliveryFee + grpConciergeFee;
+
+      return {
+        id: orderId,
+        batchId,
+        storeId: grp.storeId,
+        storeName: grp.storeName,
+        itemsCount: grp.items.reduce((sum, i) => sum + i.qty, 0),
+        items: grp.items.map((i) => ({
+          id: i.id,
+          name: i.name,
+          price: i.price,
+          qty: i.qty,
+          icon: i.icon,
+        })),
+        subtotal: storeSubtotal,
+        total: grpTotal,
+        vendorPayout: Math.round(storeSubtotal * 0.9),
+        deliveryPartner: selectedDeliveryTier,
+        deliveryFee: grpDeliveryFee,
+        conciergeFee: grpConciergeFee,
+        boltStatus: selectedDeliveryTier === 'bolt' ? 'PENDING_VENDOR' : null,
+        boltTrackingCode:
+          selectedDeliveryTier === 'bolt'
+            ? `BOLT-ABJ-${Math.floor(10000 + Math.random() * 90000)}${suffix}`
+            : null,
+        boltRider: null,
+        boltCoords: null,
+        status: 'New Order',
+        eta: selectedDeliveryTier === 'bolt' ? '18 mins (Bolt Express)' : '25 mins (Concierge)',
+        deliveryPin: `${Math.floor(1000 + Math.random() * 9000)}`,
+        pickupPin: `${Math.floor(1000 + Math.random() * 9000)}`,
+        customerName: currentUser?.fullName || currentUser?.name || 'Alhaji Farouk Bello',
+        customerAddress: pinnedLocation.name,
+        deliveryLocation: {
+          latitude: pinnedLocation.latitude,
+          longitude: pinnedLocation.longitude,
+          landmark: pinnedLocation.landmark,
+          apartment: pinnedLocation.apartment,
+          notes: riderDeliveryNote || pinnedLocation.notes,
+        },
+        createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+    });
+
+    updateAndPersistOrders((prev) => [...createdOrders, ...prev]);
     setCart([]);
     setCheckoutModalVisible(false);
     setCartModalVisible(false);
     if (selectedStore) setSelectedStore(null);
     setActiveTab('orders');
-    Alert.alert('Order Confirmed!', `Your order ${newOrder.id} has been placed via ${selectedDeliveryTier === 'bolt' ? 'Bolt Express' : 'GETIT Concierge'}.`);
 
-    // Sync to Supabase Cloud Database
-    createDatabaseOrder({
-      ...newOrder,
-      storeId: newOrder.storeId,
-      customerPhone: currentUser?.phone || '+234 803 000 1234',
-      deliveryLat: pinnedLocation.latitude,
-      deliveryLng: pinnedLocation.longitude,
-      courierNotes: riderDeliveryNote || pinnedLocation.notes,
-    }).catch((e) => console.log('Supabase order upload notice:', e?.message));
+    if (isMultiStore) {
+      Alert.alert(
+        '🎉 Multi-Store Order Confirmed!',
+        `Your basket was split into ${createdOrders.length} independent shop orders:\n\n` +
+          createdOrders.map((o) => `• ${o.id}: ${o.storeName} (${formatNaira(o.total)})`).join('\n') +
+          `\n\nEach shop has received its dispatch ticket and will prepare your provisions independently.`
+      );
+    } else {
+      Alert.alert(
+        'Order Confirmed! ⚡',
+        `Your order ${createdOrders[0].id} for ${createdOrders[0].storeName} has been placed via ${
+          selectedDeliveryTier === 'bolt' ? 'Bolt Express' : 'GETIT Concierge'
+        }.`
+      );
+    }
+
+    // Sync all split orders to Supabase Cloud Database
+    createdOrders.forEach((ord) => {
+      createDatabaseOrder({
+        ...ord,
+        storeId: ord.storeId,
+        customerPhone: currentUser?.phone || '+234 803 000 1234',
+        deliveryLat: pinnedLocation.latitude,
+        deliveryLng: pinnedLocation.longitude,
+        courierNotes: riderDeliveryNote || pinnedLocation.notes,
+      }).catch((e) => console.log('Supabase order upload notice:', e?.message));
+    });
   };
 
   // Merchant Helper Computations & Actions
@@ -5052,28 +5194,57 @@ export default function App() {
 
           {orders.map((ord) => (
             <View key={ord.id} style={styles.orderCard}>
+              {ord.batchId && (
+                <View style={styles.orderBatchBadge}>
+                  <Text style={styles.orderBatchBadgeText}>🔗 MULTI-STORE BATCH • {ord.batchId}</Text>
+                </View>
+              )}
               <View style={styles.orderCardHeader}>
-                <View>
+                <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={styles.orderCardTitle}>{ord.storeName}</Text>
                   <Text style={styles.orderCardSub}>{ord.id} • {ord.itemsCount} items</Text>
                 </View>
-                <View style={styles.orderStatusPill}>
-                  <Text style={styles.orderStatusText}>{ord.status}</Text>
+                <View
+                  style={[
+                    styles.orderStatusPill,
+                    ord.status === 'Cancelled' && { backgroundColor: 'rgba(239, 68, 68, 0.12)' },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.orderStatusText,
+                      ord.status === 'Cancelled' && { color: '#EF4444' },
+                    ]}
+                  >
+                    {ord.status}
+                  </Text>
                 </View>
               </View>
 
-              {/* Pin verification box */}
-              <View style={styles.pinBox}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.pinLabel}>DELIVERY SECURITY PIN</Text>
-                  <Text style={styles.pinInstructions}>
-                    Only release this code when you receive your packages.
+              {/* Order Cancelled Notification Banner */}
+              {ord.status === 'Cancelled' && (
+                <View style={styles.orderCancelledBanner}>
+                  <Text style={styles.orderCancelledBannerTitle}>❌ Order Cancelled & Refunded</Text>
+                  <Text style={styles.orderCancelledBannerSub}>
+                    {ord.cancellationReason || 'Cancelled by customer'}. Full refund of {formatNaira(ord.total)} has been credited to your balance.
                   </Text>
                 </View>
-                <View style={styles.pinNumberWrap}>
-                  <Text style={styles.pinNumberText}>{ord.deliveryPin}</Text>
+              )}
+
+              {/* Pin verification box (suppressed if order was cancelled) */}
+              {ord.status !== 'Cancelled' && (
+                <View style={styles.pinBox}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pinLabel}>DELIVERY SECURITY PIN</Text>
+                    <Text style={styles.pinInstructions}>
+                      Only release this code when you receive your packages.
+                    </Text>
+                  </View>
+                  <View style={styles.pinNumberWrap}>
+                    <Text style={styles.pinNumberText}>{ord.deliveryPin}</Text>
+                  </View>
                 </View>
-              </View>
+              )}
 
               {/* --- IN-APP BOLT LIVE COURIER TRACKING (IF BOLT ORDER) --- */}
               {ord.deliveryPartner === 'bolt' && (
@@ -5206,8 +5377,21 @@ export default function App() {
               </View>
 
               <View style={styles.orderFooterRow}>
-                <Text style={styles.orderTotalText}>Total: {formatNaira(ord.total)}</Text>
-                <Text style={styles.orderEtaText}>Est. Arrival: {ord.eta}</Text>
+                <View>
+                  <Text style={styles.orderTotalText}>Total: {formatNaira(ord.total)}</Text>
+                  <Text style={styles.orderEtaText}>
+                    {ord.status === 'Cancelled' ? 'Status: Cancelled' : `Est. Arrival: ${ord.eta}`}
+                  </Text>
+                </View>
+                {(ord.status === 'New Order' || ord.status === 'Preparing') && (
+                  <TouchableOpacity
+                    style={styles.buyerCancelOrderBtn}
+                    onPress={() => cancelBuyerOrder(ord.id)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.buyerCancelOrderBtnText}>✕ Cancel Order</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           ))}
@@ -5851,47 +6035,99 @@ export default function App() {
                   </TouchableOpacity>
                 </View>
 
-                {cart.map((item) => (
-                  <View key={item.id} style={styles.cartItemRow}>
-                    {getProductImageSource(item.imageUrl || item.imageUri) ? (
-                      <Image
-                        source={getProductImageSource(item.imageUrl || item.imageUri)}
-                        style={{ width: 34, height: 34, borderRadius: 6, marginRight: 12 }}
-                        resizeMode="contain"
-                      />
-                    ) : (
-                      <Text style={{ fontSize: 24, marginRight: 12 }}>{item.icon}</Text>
-                    )}
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.cartItemName}>{item.name}</Text>
-                      <Text style={styles.cartItemStore}>{item.storeName}</Text>
-                      <Text style={styles.cartItemPrice}>
-                        {formatNaira(item.price * item.qty)}
-                      </Text>
-                    </View>
-                    <View style={styles.qtyControlRow}>
+                {cartGroupedByStore.map((grp) => (
+                  <View key={grp.storeId} style={styles.cartStoreGroupCard}>
+                    {/* Store Group Header */}
+                    <View style={styles.cartStoreGroupHeader}>
+                      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ fontSize: 16 }}>🏪</Text>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.cartStoreGroupName} numberOfLines={1}>
+                              {grp.storeName}
+                            </Text>
+                            <View
+                              style={[
+                                styles.cartStoreStatusBadge,
+                                { backgroundColor: grp.isOpen ? 'rgba(5, 107, 75, 0.12)' : 'rgba(239, 68, 68, 0.12)' },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.cartStoreStatusText,
+                                  { color: grp.isOpen ? '#056B4B' : '#EF4444' },
+                                ]}
+                              >
+                                {grp.isOpen ? '● Open' : '● Closed'}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={styles.cartStoreSubtotal}>
+                            Subtotal: {formatNaira(grp.subtotal)} ({grp.items.reduce((s, i) => s + i.qty, 0)} items)
+                          </Text>
+                        </View>
+                      </View>
                       <TouchableOpacity
-                        style={styles.qtyButton}
-                        onPress={() => removeFromCart(item.id)}
-                      >
-                        <Text style={styles.qtyBtnText}>-</Text>
-                      </TouchableOpacity>
-                      <Text style={styles.qtyCountText}>{item.qty}</Text>
-                      <TouchableOpacity
-                        style={styles.qtyButton}
-                        onPress={() => addToCart(item, { name: item.storeName })}
-                      >
-                        <Text style={styles.qtyBtnText}>+</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.removeItemBtn}
-                        onPress={() => deleteItemFromCart(item.id)}
+                        style={styles.cartStoreGroupClearBtn}
+                        onPress={() => clearStoreItems(grp.storeId)}
                         activeOpacity={0.7}
-                        accessibilityLabel="Remove item"
                       >
-                        <Text style={styles.removeItemBtnText}>✕</Text>
+                        <Text style={styles.cartStoreGroupClearBtnText}>Remove Shop</Text>
                       </TouchableOpacity>
                     </View>
+
+                    {/* Warning banner if this specific store is closed */}
+                    {!grp.isOpen && (
+                      <View style={styles.cartStoreClosedBanner}>
+                        <Text style={styles.cartStoreClosedText}>
+                          ⚠️ This shop is currently closed. Remove items to proceed with checkout.
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Store Items List */}
+                    {grp.items.map((item) => (
+                      <View key={item.id} style={styles.cartItemRow}>
+                        {getProductImageSource(item.imageUrl || item.imageUri) ? (
+                          <Image
+                            source={getProductImageSource(item.imageUrl || item.imageUri)}
+                            style={{ width: 34, height: 34, borderRadius: 6, marginRight: 12 }}
+                            resizeMode="contain"
+                          />
+                        ) : (
+                          <Text style={{ fontSize: 24, marginRight: 12 }}>{item.icon}</Text>
+                        )}
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.cartItemName}>{item.name}</Text>
+                          <Text style={styles.cartItemPrice}>
+                            {formatNaira(item.price * item.qty)}
+                          </Text>
+                        </View>
+                        <View style={styles.qtyControlRow}>
+                          <TouchableOpacity
+                            style={styles.qtyButton}
+                            onPress={() => removeFromCart(item.id)}
+                          >
+                            <Text style={styles.qtyBtnText}>-</Text>
+                          </TouchableOpacity>
+                          <Text style={styles.qtyCountText}>{item.qty}</Text>
+                          <TouchableOpacity
+                            style={styles.qtyButton}
+                            onPress={() => addToCart(item, { name: item.storeName })}
+                          >
+                            <Text style={styles.qtyBtnText}>+</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.removeItemBtn}
+                            onPress={() => deleteItemFromCart(item.id)}
+                            activeOpacity={0.7}
+                            accessibilityLabel="Remove item"
+                          >
+                            <Text style={styles.removeItemBtnText}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))}
                   </View>
                 ))}
 
@@ -6006,10 +6242,10 @@ export default function App() {
                       ref={cartMapRef}
                       style={styles.cartMapCanvas}
                       initialRegion={{
-                        latitude: (deliveryDestLat + activeCartStoreLat) / 2,
-                        longitude: (deliveryDestLng + activeCartStoreLng) / 2,
-                        latitudeDelta: Math.max(0.015, Math.abs(deliveryDestLat - activeCartStoreLat) * 1.8),
-                        longitudeDelta: Math.max(0.015, Math.abs(deliveryDestLng - activeCartStoreLng) * 1.8),
+                        latitude: (deliveryDestLat + (participatingStores[0]?.latitude || activeCartStoreLat)) / 2,
+                        longitude: (deliveryDestLng + (participatingStores[0]?.longitude || activeCartStoreLng)) / 2,
+                        latitudeDelta: Math.max(0.02, Math.abs(deliveryDestLat - (participatingStores[0]?.latitude || activeCartStoreLat)) * 2),
+                        longitudeDelta: Math.max(0.02, Math.abs(deliveryDestLng - (participatingStores[0]?.longitude || activeCartStoreLng)) * 2),
                       }}
                       showsUserLocation={true}
                       showsCompass={false}
@@ -6018,23 +6254,26 @@ export default function App() {
                       pitchEnabled={false}
                       rotateEnabled={false}
                     >
-                      {/* 1. Store Pinned Location Marker */}
-                      <Marker
-                        coordinate={{
-                          latitude: activeCartStoreLat,
-                          longitude: activeCartStoreLng,
-                        }}
-                        title={`🏪 ${activeCartStore?.name || 'Shop'}`}
-                        description={activeCartStore?.address || 'Dispatches from here'}
-                        anchor={{ x: 0.5, y: 1.0 }}
-                      >
-                        <View style={styles.cartMapStoreMarkerPill}>
-                          <Text style={{ fontSize: 13, marginRight: 4 }}>🏪</Text>
-                          <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
-                            {activeCartStore?.name || 'Shop'}
-                          </Text>
-                        </View>
-                      </Marker>
+                      {/* 1. Participating Store Pins */}
+                      {participatingStores.map((st) => (
+                        <Marker
+                          key={st.id}
+                          coordinate={{
+                            latitude: st.latitude,
+                            longitude: st.longitude,
+                          }}
+                          title={`🏪 ${st.name}`}
+                          description={`Dispatch Hub (${st.itemsCount} items • ${formatNaira(st.subtotal)})`}
+                          anchor={{ x: 0.5, y: 1.0 }}
+                        >
+                          <View style={styles.cartMapStoreMarkerPill}>
+                            <Text style={{ fontSize: 13, marginRight: 4 }}>🏪</Text>
+                            <Text style={styles.cartMapStoreMarkerText} numberOfLines={1}>
+                              {st.name}
+                            </Text>
+                          </View>
+                        </Marker>
+                      ))}
 
                       {/* 2. Buyer Delivery Destination Pin */}
                       <Marker
@@ -6061,16 +6300,19 @@ export default function App() {
                         </Marker>
                       )}
 
-                      {/* 4. Dashed Route Line between Store and Pinned Delivery Destination */}
-                      <Polyline
-                        coordinates={[
-                          { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
-                          { latitude: deliveryDestLat, longitude: deliveryDestLng },
-                        ]}
-                        strokeColor={COLORS.emeraldPrimary}
-                        strokeWidth={3}
-                        lineDashPattern={[6, 4]}
-                      />
+                      {/* 4. Dashed Route Line between Each Store and Pinned Delivery Destination */}
+                      {participatingStores.map((st) => (
+                        <Polyline
+                          key={`route-${st.id}`}
+                          coordinates={[
+                            { latitude: st.latitude, longitude: st.longitude },
+                            { latitude: deliveryDestLat, longitude: deliveryDestLng },
+                          ]}
+                          strokeColor={COLORS.emeraldPrimary}
+                          strokeWidth={3}
+                          lineDashPattern={[6, 4]}
+                        />
+                      ))}
                     </MapView>
 
                     {/* Proximity & Distance Header Overlay */}
@@ -6079,18 +6321,26 @@ export default function App() {
                         <Text style={{ fontSize: 14 }}>🚀</Text>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.cartMapDistanceTitle} numberOfLines={1}>
-                            {cartDistanceKm !== null
+                            {participatingStores.length > 1
+                              ? `Multi-Store Dispatch (${participatingStores.length} Shops)`
+                              : cartDistanceKm !== null
                               ? `${cartDistanceKm < 1 ? Math.round(cartDistanceKm * 1000) + ' m' : cartDistanceKm.toFixed(1) + ' km'} away from ${activeCartStore?.name || 'Shop'}`
                               : `Fulfilling from ${activeCartStore?.name || 'Shop'}`}
                           </Text>
                           <Text style={styles.cartMapDistanceSub} numberOfLines={1}>
-                            🏪 Shop Pin ➔ 📍 Pinned Destination (~{cartEstDeliveryMins})
+                            {participatingStores.length > 1
+                              ? `${participatingStores.map((s) => s.name).join(' & ')} ➔ 📍 Your Location`
+                              : `🏪 Shop Pin ➔ 📍 Pinned Destination (~${cartEstDeliveryMins})`}
                           </Text>
                         </View>
                       </View>
                       <View style={styles.cartMapDistanceBadge}>
                         <Text style={styles.cartMapDistanceBadgeText}>
-                          {cartDistanceKm !== null ? `${cartDistanceKm.toFixed(1)} km` : 'Near'}
+                          {participatingStores.length > 1
+                            ? `${participatingStores.length} Hubs`
+                            : cartDistanceKm !== null
+                            ? `${cartDistanceKm.toFixed(1)} km`
+                            : 'Near'}
                         </Text>
                       </View>
                     </View>
@@ -6104,7 +6354,11 @@ export default function App() {
                       <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 9 }}>┈┈</Text>
                       <View style={styles.cartMapLegendItem}>
                         <View style={[styles.cartMapLegendDot, { backgroundColor: COLORS.emeraldPrimary }]} />
-                        <Text style={styles.cartMapLegendText}>🏪 {activeCartStore?.name || 'Shop'}</Text>
+                        <Text style={styles.cartMapLegendText}>
+                          {participatingStores.length > 1
+                            ? `🏪 ${participatingStores.length} Stores`
+                            : `🏪 ${activeCartStore?.name || 'Shop'}`}
+                        </Text>
                       </View>
                       {userLiveCoords && (
                         <>
@@ -6121,9 +6375,9 @@ export default function App() {
                     <TouchableOpacity
                       style={styles.cartMapFitBtn}
                       onPress={() => {
-                        if (cartMapRef.current && activeCartStoreLat && deliveryDestLat) {
+                        if (cartMapRef.current && deliveryDestLat) {
                           const fitPoints = [
-                            { latitude: activeCartStoreLat, longitude: activeCartStoreLng },
+                            ...participatingStores.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
                             { latitude: deliveryDestLat, longitude: deliveryDestLng },
                           ];
                           if (userLiveCoords?.latitude && userLiveCoords?.longitude) {
@@ -11287,6 +11541,69 @@ const styles = StyleSheet.create({
     color: COLORS.textDark,
     fontFamily: 'serif',
   },
+  cartStoreGroupCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+  },
+  cartStoreGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    marginBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  cartStoreGroupName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    fontFamily: 'serif',
+  },
+  cartStoreStatusBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  cartStoreStatusText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  cartStoreSubtotal: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.emeraldPrimary,
+    marginTop: 2,
+  },
+  cartStoreGroupClearBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+  },
+  cartStoreGroupClearBtnText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+  cartStoreClosedBanner: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#EF4444',
+  },
+  cartStoreClosedText: {
+    fontSize: 11,
+    color: '#B91C1C',
+    fontWeight: '600',
+    lineHeight: 15,
+  },
   cartItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -12004,6 +12321,52 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: COLORS.roseGold,
     fontWeight: '700',
+  },
+  orderBatchBadge: {
+    backgroundColor: 'rgba(183, 110, 121, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  orderBatchBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: COLORS.roseGold,
+    letterSpacing: 0.5,
+  },
+  buyerCancelOrderBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+  },
+  buyerCancelOrderBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+  orderCancelledBanner: {
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+  },
+  orderCancelledBannerTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#B91C1C',
+    marginBottom: 2,
+  },
+  orderCancelledBannerSub: {
+    fontSize: 11,
+    color: '#7F1D1D',
+    lineHeight: 15,
   },
 
   // Profile Tab

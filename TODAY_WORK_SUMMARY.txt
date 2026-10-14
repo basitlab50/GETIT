@@ -131,7 +131,19 @@ Status:     All changes synced, verified, and pushed to origin/main
   - Moved `AnimatedStoreDoor` to the very top of the Store Details page directly replacing/framing the top
     banner image, ensuring users immediately see the animated doors close shut the instant they open a closed store.
   - Added closed storefront door facade overlay on store cards in the main Stores feed with lock and sign.
-  - Set default `operatingDays: 'Weekends Only'` for The Gourmet Emporium so it evaluates as closed today (Monday).
+[16:20:00] Multi-Store Basket, Split Dispatch Checkout & Order Cancellation (Roadmap Item #6)
+  - Multi-Store Basket Grouping: Grouped cart provisions by store (`cartGroupedByStore`) with
+    dedicated shop cards, store name header, open/closed status badge, subtotal, and "Remove Shop" button.
+  - Multi-Store Basket Map: Rendered interactive map plotting pins for all participating stores,
+    dashed polyline connectors from every shop to delivery destination, and dynamic "Multi-Store Dispatch" banner.
+  - Closed Store Checkout Guard: Alerted buyer if any store in basket is closed today, with one-tap
+    "Remove Closed Stores" to proceed with open stores.
+  - Split Checkout Tickets: `handleCheckout` automatically generates a multi-store `batchId` (`BATCH-XXXXX`)
+    and splits cart into dedicated independent order tickets (`ORD-XXXXX-A`, `ORD-XXXXX-B`).
+    Each vendor receives only their store's ticket, 90% payout, and separate pickup/delivery PINs.
+  - Order Cancellation & Refund Flow: Allowed buyers to cancel pending/preparing orders directly from
+    the Orders tab (`activeTab === 'orders'`) with refund confirmation (`formatNaira(ord.total)`),
+    status update to `Cancelled`, reason logging, voided security PIN, and Supabase synchronization.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
