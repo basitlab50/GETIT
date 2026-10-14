@@ -223,10 +223,12 @@ Status:     All changes synced, verified, and pushed to origin/main
       - Fixed map visibility: The live map was previously hidden inside a collapsed toggle and gated behind `ord.deliveryPartner === 'bolt'`.
         It is now OPEN AND EXPANDED BY DEFAULT for all active orders, regardless of courier tier!
       - Increased map preview height from 160px to 240px with a vibrant emerald border and rounded corners.
-      - Features dynamic multi-stop route polylines: vibrant Google blue `#2563EB` for the active leg,
-        dashed amber line for upcoming shop connections, and dashed emerald line for the dropoff leg.
-      - Displays store stop badges (`[1] 🏪 H-Medix`, `[2] 🏪 Abdul Basit Store`), home destination pill (`🏠 HOME`),
-        and real-time moving motorbike courier marker (`🛵 Musa Ibrahim • 42 km/h • Live`).
+    - Real-World Street Road Network Routing (No More Straight Lines Through Bushes):
+      - Integrated free, high-performance OSRM driving route engine (`router.project-osrm.org`).
+      - Converts coordinates into authentic tarmac street paths with real turns at intersections, roundabouts, and avenues.
+      - The map polyline renders a dual-tone Google Maps blue road route (`#1D4ED8` outer outline with `#3B82F6` inner lane).
+      - The courier motorbike marker moves point-by-point along the actual street waypoints rather than cutting diagonally
+        across buildings and fields.
     - Single Master Security PIN: Buyer gives one single 4-digit Delivery Security PIN to the courier upon final handover.
   - Supabase Network Resiliency & Offline Sync Queue:
     - Fixed `UnexpectedException: The network connection was lost (ExpoModulesCore/Promise.swift:56)`:
