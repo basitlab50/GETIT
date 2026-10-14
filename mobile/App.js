@@ -2916,6 +2916,91 @@ export default function App() {
     return sorted;
   }, [orders, ordersFilterTab, lastPlacedOrderId]);
 
+  // Advance multi-stop courier journey: Step 1 -> Step 2 -> Dropoff Destination
+  const advanceMultiStopJourney = (orderId) => {
+    updateAndPersistOrders((prev) =>
+      prev.map((ord) => {
+        if (ord.id !== orderId) return ord;
+        if (!ord.stops || ord.stops.length <= 1) {
+          const nextStatus = ord.status === 'Preparing' ? 'On the Way' : 'Delivered';
+          const newAlert = nextStatus === 'Delivered'
+            ? '✅ Package delivered! Enjoy your provisions.'
+            : '🛵 Courier has picked up your provisions and is on the way to your door!';
+          return {
+            ...ord,
+            status: nextStatus,
+            journeyAlert: newAlert,
+          };
+        }
+
+        const currentIdx = ord.currentStopIndex || 0;
+        const totalStops = ord.stops.length;
+
+        if (currentIdx < totalStops - 1) {
+          const nextIdx = currentIdx + 1;
+          const updatedStops = ord.stops.map((st, idx) => {
+            if (idx === currentIdx) {
+              return {
+                ...st,
+                pickupStatus: 'picked_up',
+                pickedUpAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              };
+            }
+            if (idx === nextIdx) {
+              return { ...st, pickupStatus: 'in_progress' };
+            }
+            return st;
+          });
+
+          const completedStoreName = ord.stops[currentIdx].storeName;
+          const nextStoreName = ord.stops[nextIdx].storeName;
+          const newAlert = `🔔 Picked up from Stop ${currentIdx + 1} (${completedStoreName})! Courier is now en route to Stop ${nextIdx + 1} (${nextStoreName}).`;
+
+          Alert.alert(
+            '🔔 Pickup Completed!',
+            `Courier has collected your items from ${completedStoreName}!\n\nNext: Rider is en route to ${nextStoreName} for Stop ${nextIdx + 1}.`
+          );
+
+          return {
+            ...ord,
+            currentStopIndex: nextIdx,
+            stops: updatedStops,
+            journeyAlert: newAlert,
+            status: 'Preparing',
+          };
+        } else if (currentIdx === totalStops - 1) {
+          const updatedStops = ord.stops.map((st) => ({
+            ...st,
+            pickupStatus: 'picked_up',
+            pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          }));
+
+          const newAlert = `🎉 All ${totalStops} shops collected! Courier has all your packages and is on the way to your pinned address.`;
+
+          Alert.alert(
+            '🎉 All Shops Collected!',
+            `Courier has collected all packages from every shop and is now heading directly to your destination!`
+          );
+
+          return {
+            ...ord,
+            currentStopIndex: totalStops,
+            stops: updatedStops,
+            journeyAlert: newAlert,
+            status: 'On the Way',
+          };
+        } else {
+          Alert.alert('✅ Order Delivered', 'All provisions have been delivered to your destination!');
+          return {
+            ...ord,
+            status: 'Delivered',
+            journeyAlert: '✅ Order Delivered successfully! Thank you for choosing GETIT.',
+          };
+        }
+      })
+    );
+  };
+
   const handleCheckout = () => {
     if (cart.length === 0) return;
 
@@ -2942,35 +3027,23 @@ export default function App() {
       return;
     }
 
-    const isMultiStore = cartGroupedByStore.length > 1;
-    const batchId = isMultiStore ? `BATCH-${Math.floor(10000 + Math.random() * 90000)}` : null;
+    const isMultiStore = participatingStores.length > 1;
+    const masterOrderId = `ORD-${Math.floor(10000 + Math.random() * 90000)}`;
+    const masterDeliveryPin = `${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // Split cart into dedicated order tickets per store
-    const createdOrders = cartGroupedByStore.map((grp, index) => {
-      const suffix = isMultiStore ? `-${String.fromCharCode(65 + index)}` : '';
-      const orderId = `ORD-${Math.floor(10000 + Math.random() * 90000)}${suffix}`;
+    const stops = participatingStores.map((grp, index) => {
       const storeSubtotal = grp.subtotal;
-      const grpDeliveryFee = Math.round(deliveryFee / cartGroupedByStore.length);
+      const grpDeliveryFee = Math.round(deliveryFee / participatingStores.length);
       const grpConciergeFee = Math.round(storeSubtotal * 0.04);
       const grpTotal = storeSubtotal + grpDeliveryFee + grpConciergeFee;
+      const pickupPin = `${Math.floor(1000 + Math.random() * 9000)}`;
 
-      const stopNumber = index + 1;
-      const totalStops = cartGroupedByStore.length;
       return {
-        id: orderId,
-        batchId,
+        stopNumber: index + 1,
         storeId: grp.storeId,
         storeName: grp.storeName,
-        stopNumber,
-        totalStops,
-        stopItineraryText: isMultiStore
-          ? `Stop ${stopNumber} of ${totalStops}: Pickup at ${grp.storeName}`
-          : `Direct Dispatch from ${grp.storeName}`,
-        multiStopStatus: isMultiStore
-          ? index === 0
-            ? `🟢 Stop 1 of ${totalStops}: Rider en route to ${grp.storeName}`
-            : `⏳ Stop ${stopNumber} of ${totalStops}: Queued for pickup after Stop ${index}`
-          : null,
+        latitude: Number(grp.latitude) || 9.0882,
+        longitude: Number(grp.longitude) || 7.4933,
         itemsCount: grp.items.reduce((sum, i) => sum + i.qty, 0),
         items: grp.items.map((i) => ({
           id: i.id,
@@ -2982,75 +3055,103 @@ export default function App() {
         subtotal: storeSubtotal,
         total: grpTotal,
         vendorPayout: Math.round(storeSubtotal * 0.9),
-        deliveryPartner: selectedDeliveryTier,
-        deliveryFee: grpDeliveryFee,
-        conciergeFee: grpConciergeFee,
-        boltStatus: selectedDeliveryTier === 'bolt' ? 'PENDING_VENDOR' : null,
-        boltTrackingCode:
-          selectedDeliveryTier === 'bolt'
-            ? `BOLT-ABJ-${Math.floor(10000 + Math.random() * 90000)}${suffix}`
-            : null,
-        boltRider: null,
-        boltCoords: null,
-        status: 'New Order',
-        eta: selectedDeliveryTier === 'bolt'
-          ? `${18 + index * 8} mins (Bolt Multi-Stop)`
-          : `${25 + index * 10} mins (Concierge Multi-Stop)`,
-        deliveryPin: `${Math.floor(1000 + Math.random() * 9000)}`,
-        pickupPin: `${Math.floor(1000 + Math.random() * 9000)}`,
-        customerName: currentUser?.fullName || currentUser?.name || 'Alhaji Farouk Bello',
-        customerAddress: pinnedLocation.name,
-        deliveryLocation: {
-          latitude: pinnedLocation.latitude,
-          longitude: pinnedLocation.longitude,
-          landmark: pinnedLocation.landmark,
-          apartment: pinnedLocation.apartment,
-          notes: riderDeliveryNote || pinnedLocation.notes,
-        },
-        createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        timestamp: Date.now(),
-        dateStr: 'Today',
+        pickupPin: pickupPin,
+        pickupStatus: index === 0 ? 'in_progress' : 'queued',
+        pickedUpAt: null,
       };
     });
 
-    updateAndPersistOrders((prev) => [...createdOrders, ...prev]);
+    const masterOrder = {
+      id: masterOrderId,
+      isMultiStore,
+      stopsCount: stops.length,
+      currentStopIndex: 0,
+      journeyAlert: isMultiStore
+        ? `🛵 Courier assigned! Heading to Stop 1 (${stops[0].storeName}) to collect your provisions.`
+        : `🛵 Courier assigned! Heading to ${stops[0].storeName}.`,
+      status: 'Preparing',
+      storeName: isMultiStore
+        ? `Multi-Store Order (${stops.map((s) => s.storeName).join(' + ')})`
+        : stops[0]?.storeName || 'GETIT Store',
+      stops: stops,
+      itemsCount: cart.reduce((sum, i) => sum + i.qty, 0),
+      items: cart.map((i) => ({
+        id: i.id,
+        name: i.name,
+        price: i.price,
+        qty: i.qty,
+        storeName: i.storeName || stops[0]?.storeName,
+      })),
+      subtotal: cartSubtotal,
+      deliveryFee: deliveryFee,
+      conciergeFee: conciergeFee,
+      total: cartTotal,
+      deliveryPartner: selectedDeliveryTier,
+      deliveryPin: masterDeliveryPin,
+      customerName: currentUser?.fullName || currentUser?.name || 'Alhaji Farouk Bello',
+      customerAddress: pinnedLocation.name,
+      deliveryLocation: {
+        latitude: pinnedLocation.latitude,
+        longitude: pinnedLocation.longitude,
+        landmark: pinnedLocation.landmark,
+        apartment: pinnedLocation.apartment,
+        notes: riderDeliveryNote || pinnedLocation.notes,
+      },
+      boltRider: {
+        name: 'Musa Ibrahim',
+        phone: '+234 803 294 1194',
+        rating: '4.95',
+        vehicle: 'Bajaj Boxer 150 (Red)',
+        plate: 'ABJ-492-KW',
+      },
+      eta: isMultiStore ? '25-35 mins' : '15-20 mins',
+      timestamp: Date.now(),
+      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      dateStr: 'Today',
+    };
+
+    updateAndPersistOrders((prev) => [masterOrder, ...prev]);
     setCart([]);
     setCheckoutModalVisible(false);
     setCartModalVisible(false);
     if (selectedStore) setSelectedStore(null);
-    if (createdOrders.length > 0) {
-      setLastPlacedOrderId(createdOrders[0].id);
-      setOrdersFilterTab('active');
-    }
+    setLastPlacedOrderId(masterOrder.id);
+    setOrdersFilterTab('active');
     setActiveTab('orders');
 
     if (isMultiStore) {
       Alert.alert(
         '🎉 Multi-Store Order Confirmed!',
-        `Your basket was split into ${createdOrders.length} sequenced pickup tickets:\n\n` +
-          createdOrders.map((o) => `• Stop ${o.stopNumber}: ${o.storeName} (${formatNaira(o.total)})\n   Pickup PIN: ${o.pickupPin}`).join('\n\n') +
-          `\n\nYour courier will visit each shop in sequence to collect your provisions before delivering to your destination.`
+        `Your multi-store order (${masterOrder.id}) with ${stops.length} pickup hubs is confirmed!\n\n` +
+          stops.map((s) => `• Stop ${s.stopNumber}: ${s.storeName} (${formatNaira(s.subtotal)})\n   Pickup PIN: ${s.pickupPin}`).join('\n\n') +
+          `\n\nYour courier Musa Ibrahim will pick up each shop's provisions in sequence and deliver everything directly to your door in one trip.`
       );
     } else {
       Alert.alert(
         'Order Confirmed! ⚡',
-        `Your order ${createdOrders[0].id} for ${createdOrders[0].storeName} has been placed via ${
+        `Your order ${masterOrder.id} for ${stops[0]?.storeName} has been placed via ${
           selectedDeliveryTier === 'bolt' ? 'Bolt Express' : 'GETIT Concierge'
         }.`
       );
     }
 
-    // Sync all split orders to Supabase Cloud Database
-    createdOrders.forEach((ord) => {
-      createDatabaseOrder({
-        ...ord,
-        storeId: ord.storeId,
-        customerPhone: currentUser?.phone || '+234 803 000 1234',
-        deliveryLat: pinnedLocation.latitude,
-        deliveryLng: pinnedLocation.longitude,
-        courierNotes: riderDeliveryNote || pinnedLocation.notes,
-      }).catch((e) => console.log('Supabase order upload notice:', e?.message));
-    });
+    createDatabaseOrder({
+      id: masterOrder.id,
+      customer_id: currentUser?.id || 'guest',
+      store_id: stops[0]?.storeId || 's1',
+      status: masterOrder.status,
+      total: masterOrder.total,
+      delivery_address: masterOrder.customerAddress,
+      delivery_lat: masterOrder.deliveryLocation?.latitude,
+      delivery_lng: masterOrder.deliveryLocation?.longitude,
+      delivery_pin: masterOrder.deliveryPin,
+      pickup_pin: stops[0]?.pickupPin,
+      vendor_payout: stops.reduce((s, st) => s + st.vendorPayout, 0),
+      delivery_fee: masterOrder.deliveryFee,
+      concierge_fee: masterOrder.conciergeFee,
+      delivery_partner: masterOrder.deliveryPartner,
+      items: masterOrder.items,
+    }).catch((e) => console.log('Supabase order upload notice:', e?.message));
   };
 
   // Merchant Helper Computations & Actions
@@ -5622,11 +5723,11 @@ export default function App() {
                     </View>
                   )}
 
-                  {/* Multi-Store Batch Tag */}
-                  {ord.batchId && (
+                  {/* Multi-Store Package Tag */}
+                  {ord.isMultiStore && (
                     <View style={styles.orderBatchBadge}>
                       <Text style={styles.orderBatchBadgeText}>
-                        🔗 MULTI-STORE BATCH • {ord.batchId} • STOP {ord.stopNumber || 1} OF {ord.totalStops || 1}
+                        🔗 MULTI-STORE CONCIERGE PACKAGE • {ord.stops?.length || 2} SHOPS
                       </Text>
                     </View>
                   )}
@@ -5658,25 +5759,164 @@ export default function App() {
                     </View>
                   </View>
 
-                  {/* Multi-Stop Sequence Progress Bar */}
-                  {ord.batchId && ord.status !== 'Cancelled' && (
-                    <View style={styles.orderMultiStopProgressBox}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <Text style={{ fontSize: 13 }}>🛵</Text>
-                          <Text style={styles.orderMultiStopProgressTitle}>
-                            COURIER STOP {ord.stopNumber || 1} OF {ord.totalStops || 1}
-                          </Text>
-                        </View>
-                        <View style={styles.orderMultiStopPinBadge}>
-                          <Text style={styles.orderMultiStopPinBadgeText}>
-                            Shop Pickup PIN: {ord.pickupPin || '----'}
-                          </Text>
-                        </View>
+                  {/* Multi-Store Journey Alert Banner */}
+                  {ord.journeyAlert && ord.status !== 'Cancelled' && (
+                    <View style={styles.multiStopJourneyAlertCard}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <Text style={{ fontSize: 13 }}>🛵</Text>
+                        <Text style={styles.multiStopJourneyAlertTitle}>LIVE COURIER PROGRESS</Text>
                       </View>
-                      <Text style={styles.orderMultiStopProgressSub}>
-                        {ord.stopItineraryText || `Stop ${ord.stopNumber}: Pickup at ${ord.storeName}`}
+                      <Text style={styles.multiStopJourneyAlertMsg}>
+                        {ord.journeyAlert}
                       </Text>
+                    </View>
+                  )}
+
+                  {/* Multi-Store Pickup Sequence Milestones Timeline */}
+                  {ord.stops && ord.stops.length > 0 && ord.status !== 'Cancelled' && (
+                    <View style={styles.stopsTimelineContainer}>
+                      <Text style={styles.stopsTimelineTitle}>
+                        PICKUP & DELIVERY SEQUENCE ({ord.stops.length} HUBS)
+                      </Text>
+
+                      {ord.stops.map((stop, sIdx) => {
+                        const isCurrentStop = ord.currentStopIndex === sIdx;
+                        const isCompleted = stop.pickupStatus === 'picked_up' || (ord.currentStopIndex || 0) > sIdx;
+
+                        return (
+                          <View
+                            key={sIdx}
+                            style={[
+                              styles.stopTimelineCard,
+                              isCurrentStop && styles.stopTimelineCardActive,
+                            ]}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <View
+                                  style={[
+                                    styles.stopTimelineIcon,
+                                    isCompleted
+                                      ? styles.stopTimelineIconDone
+                                      : isCurrentStop
+                                      ? styles.stopTimelineIconCurrent
+                                      : styles.stopTimelineIconQueued,
+                                  ]}
+                                >
+                                  <Text style={{ fontSize: 10, fontWeight: '900', color: '#FFFFFF' }}>
+                                    {isCompleted ? '✓' : stop.stopNumber}
+                                  </Text>
+                                </View>
+                                <Text style={styles.stopTimelineStoreName}>{stop.storeName}</Text>
+                              </View>
+                              <View
+                                style={[
+                                  styles.stopStatusBadge,
+                                  isCompleted
+                                    ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
+                                    : isCurrentStop
+                                    ? { backgroundColor: '#FEF3C7' }
+                                    : { backgroundColor: '#F3F4F6' },
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.stopStatusBadgeText,
+                                    isCompleted
+                                      ? { color: '#056B4B' }
+                                      : isCurrentStop
+                                      ? { color: '#B45309' }
+                                      : { color: '#6B7280' },
+                                  ]}
+                                >
+                                  {isCompleted ? '✅ Picked Up' : isCurrentStop ? '🛵 Collecting Now' : '⏳ Queued'}
+                                </Text>
+                              </View>
+                            </View>
+
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
+                              <Text style={styles.stopItemsSummaryText}>
+                                {stop.itemsCount} items • {formatNaira(stop.subtotal)}
+                              </Text>
+                              <View style={styles.stopPickupPinBadge}>
+                                <Text style={styles.stopPickupPinBadgeText}>
+                                  Shop PIN: {stop.pickupPin}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+
+                      {/* Final Delivery Destination Milestone */}
+                      <View
+                        style={[
+                          styles.stopTimelineCard,
+                          ord.currentStopIndex >= ord.stops.length && styles.stopTimelineCardActive,
+                          { borderLeftColor: '#056B4B' },
+                        ]}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <View
+                              style={[
+                                styles.stopTimelineIcon,
+                                ord.status === 'Delivered'
+                                  ? styles.stopTimelineIconDone
+                                  : ord.currentStopIndex >= ord.stops.length
+                                  ? styles.stopTimelineIconCurrent
+                                  : styles.stopTimelineIconQueued,
+                              ]}
+                            >
+                              <Text style={{ fontSize: 10 }}>🏠</Text>
+                            </View>
+                            <Text style={styles.stopTimelineStoreName}>Your Delivery Destination</Text>
+                          </View>
+                          <View
+                            style={[
+                              styles.stopStatusBadge,
+                              ord.status === 'Delivered'
+                                ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
+                                : ord.currentStopIndex >= ord.stops.length
+                                ? { backgroundColor: '#DCFCE7' }
+                                : { backgroundColor: '#F3F4F6' },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.stopStatusBadgeText,
+                                ord.status === 'Delivered'
+                                  ? { color: '#056B4B' }
+                                  : ord.currentStopIndex >= ord.stops.length
+                                  ? { color: '#166534' }
+                                  : { color: '#6B7280' },
+                              ]}
+                            >
+                              {ord.status === 'Delivered'
+                                ? '✅ Delivered'
+                                : ord.currentStopIndex >= ord.stops.length
+                                ? '🛵 Heading to You'
+                                : '⏳ Waiting for Shops'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={[styles.stopItemsSummaryText, { marginTop: 4 }]} numberOfLines={1}>
+                          📍 {ord.customerAddress || 'Your Delivery Address'}
+                        </Text>
+                      </View>
+
+                      {/* Interactive Courier Step Simulation Button */}
+                      {ord.status !== 'Delivered' && ord.status !== 'Cancelled' && (
+                        <TouchableOpacity
+                          style={styles.simulateCourierBtn}
+                          onPress={() => advanceMultiStopJourney(ord.id)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.simulateCourierBtnText}>
+                            ⚡ Advance Courier to Next Step / Alert ➔
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   )}
 
@@ -13575,6 +13815,121 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#B45309',
+  },
+  multiStopJourneyAlertCard: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.5,
+    borderColor: '#6EE7B7',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 12,
+  },
+  multiStopJourneyAlertTitle: {
+    fontSize: 10.5,
+    fontWeight: '900',
+    color: '#065F46',
+    letterSpacing: 0.5,
+  },
+  multiStopJourneyAlertMsg: {
+    fontSize: 12,
+    color: '#047857',
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  stopsTimelineContainer: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  stopsTimelineTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.textMuted,
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  stopTimelineCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderLeftWidth: 4,
+    borderLeftColor: '#D1D5DB',
+  },
+  stopTimelineCardActive: {
+    borderColor: COLORS.emeraldPrimary,
+    borderLeftColor: COLORS.emeraldPrimary,
+    backgroundColor: '#F0FDF4',
+  },
+  stopTimelineIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stopTimelineIconDone: {
+    backgroundColor: '#056B4B',
+  },
+  stopTimelineIconCurrent: {
+    backgroundColor: '#D97706',
+  },
+  stopTimelineIconQueued: {
+    backgroundColor: '#9CA3AF',
+  },
+  stopTimelineStoreName: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  stopStatusBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  stopStatusBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  stopItemsSummaryText: {
+    fontSize: 10.5,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+  },
+  stopPickupPinBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  stopPickupPinBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  simulateCourierBtn: {
+    backgroundColor: '#056B4B',
+    borderRadius: 8,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+  },
+  simulateCourierBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   buyerCancelOrderBtn: {
     paddingHorizontal: 12,

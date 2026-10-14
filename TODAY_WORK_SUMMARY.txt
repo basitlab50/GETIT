@@ -205,6 +205,19 @@ Status:     All changes synced, verified, and pushed to origin/main
     - Expandable Live Courier Map: Replaced the overwhelming static 400px MapView with a compact courier bar (`🛵 Musa Ibrahim 4.95★`)
       and a 1-tap `🗺️ Live Map` toggle to show maps only on demand, preventing performance lag and visual clutter.
     - Order History Management: Added `🗑️ Clean List` button with options to remove demo/cancelled orders or wipe all past test orders.
+  - Unified Single Multi-Store Order & Live Journey Tracker:
+    - Instead of splitting multi-store checkouts into fragmented separate order cards, checkouts are unified into
+      ONE single master order package card for the buyer.
+    - Inside that single order card, all participating shops are displayed as sequential milestones:
+      (Stop 1: H-Medix ➔ Stop 2: Abdul Basit Store ➔ Final Stop: 🏠 Home Destination).
+    - Dynamic Courier Progress Alerts: Real-time alert banner updates automatically as the rider progresses:
+      - Stage 1: `🛵 Courier assigned! Heading to Stop 1 (H-Medix) to collect your provisions.`
+      - Stage 2: `🔔 Picked up from Stop 1 (H-Medix)! Courier is now en route to Stop 2 (Abdul Basit Store).`
+      - Stage 3: `🎉 All shops collected! Courier has all your packages and is on the way to your pinned address.`
+      - Stage 4: `✅ Order Delivered successfully! Thank you for choosing GETIT.`
+    - Interactive Stepper Simulation: Added a 1-tap `[ ⚡ Advance Courier to Next Step / Alert ➔ ]` button inside the
+      card so the user can test the transition and watch alerts and checkmarks update live in real time.
+    - Single Master Security PIN: Buyer gives one single 4-digit Delivery Security PIN to the courier upon final handover.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
