@@ -1561,11 +1561,11 @@ export default function App() {
 
   const [ordersFilterTab, setOrdersFilterTab] = useState('active'); // 'active' | 'all' | 'completed' | 'cancelled'
   const [lastPlacedOrderId, setLastPlacedOrderId] = useState(null);
-  const [expandedBoltMapOrderIds, setExpandedBoltMapOrderIds] = useState([]);
+  const [collapsedBoltMapOrderIds, setCollapsedBoltMapOrderIds] = useState([]);
   const [expandedItemsOrderIds, setExpandedItemsOrderIds] = useState([]);
 
-  const toggleBoltMapExpand = (orderId) => {
-    setExpandedBoltMapOrderIds((prev) =>
+  const toggleBoltMapCollapse = (orderId) => {
+    setCollapsedBoltMapOrderIds((prev) =>
       prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
     );
   };
@@ -5819,7 +5819,7 @@ export default function App() {
           ) : (
             sortedAndFilteredOrders.map((ord) => {
               const isJustPlaced = ord.id === lastPlacedOrderId || (ord.timestamp && Date.now() - ord.timestamp < 1800000);
-              const isBoltMapOpen = expandedBoltMapOrderIds.includes(ord.id);
+              const isBoltMapOpen = !collapsedBoltMapOrderIds.includes(ord.id);
               const isItemsOpen = expandedItemsOrderIds.includes(ord.id);
 
               return (
@@ -6079,8 +6079,8 @@ export default function App() {
                     </View>
                   )}
 
-                  {/* --- BOLT COURIER TRACKING (CLEAN COMPACT BAR WITH ON-DEMAND EXPANDABLE MAP) --- */}
-                  {ord.deliveryPartner === 'bolt' && ord.status !== 'Cancelled' && (
+                  {/* --- LIVE COURIER ROUTE NAVIGATION MAP (ALWAYS SHOWN FOR ACTIVE ORDERS) --- */}
+                  {ord.status !== 'Cancelled' && (
                     <View style={styles.boltTrackingSummaryCard}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
@@ -6089,7 +6089,7 @@ export default function App() {
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={styles.boltRiderNameSmall}>
-                              {ord.boltRider?.name || 'Musa Ibrahim'} (Bolt Courier)
+                              {ord.boltRider?.name || 'Musa Ibrahim'} (Courier)
                             </Text>
                             <Text style={styles.boltEtaPillTextSmall}>
                               ⚡ Arrival: {ord.eta || '12 mins'} • {ord.boltRider?.rating || '4.95'}★
@@ -6099,7 +6099,7 @@ export default function App() {
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                           <TouchableOpacity
                             style={styles.boltToggleMapBtn}
-                            onPress={() => toggleBoltMapExpand(ord.id)}
+                            onPress={() => toggleBoltMapCollapse(ord.id)}
                             activeOpacity={0.7}
                           >
                             <Text style={styles.boltToggleMapBtnText}>
@@ -16831,11 +16831,11 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   boltTrackingMapWrap: {
-    height: 160,
-    borderRadius: 12,
+    height: 240,
+    borderRadius: 14,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
+    borderWidth: 1.5,
+    borderColor: '#6EE7B7',
     marginBottom: 12,
   },
   boltTrackingMap: {
