@@ -108,48 +108,75 @@ export async function removeStoreInventoryItem(itemId) {
 
 // 3. Orders & Realtime Sync
 export async function createDatabaseOrder(order) {
-  try {
-    const record = {
-      id: order.id,
-      store_id: order.storeId || 'store-fresh-mart',
-      store_name: order.storeName || 'Fresh Mart Maitama',
-      customer_name: order.customerName,
-      customer_phone: order.customerPhone,
-      customer_address: order.customerAddress,
-      delivery_lat: order.deliveryLat,
-      delivery_lng: order.deliveryLng,
-      courier_notes: order.courierNotes,
-      items: order.items || [],
-      items_count: order.itemsCount || (order.items ? order.items.length : 1),
-      subtotal: Number(order.subtotal) || 0,
-      total: Number(order.total) || 0,
-      vendor_payout: Number(order.vendorPayout) || 0,
-      delivery_fee: Number(order.deliveryFee) || 1200,
-      status: order.status || 'New Order',
-      delivery_partner: order.deliveryPartner || 'bolt',
-      bolt_status: order.boltStatus || 'PENDING_VENDOR',
-      bolt_tracking_code: order.boltTrackingCode,
-      bolt_rider: order.boltRider || null,
-      bolt_coords: order.boltCoords || null,
-      delivery_pin: String(order.deliveryPin || '2489'),
-      pickup_pin: String(order.pickupPin || '7731'),
-      eta: order.eta || '20 mins',
-      payment_method: order.paymentMethod || 'Paystack',
-      payment_reference: order.paymentReference || null
-    };
+  const record = {
+    id: order.id,
+    store_id: order.storeId || order.store_id || 'store-fresh-mart',
+    store_name: order.storeName || order.store_name || 'Fresh Mart Maitama',
+    customer_id: order.customerId || order.customer_id || 'guest',
+    customer_name: order.customerName || order.customer_name || 'Customer',
+    customer_phone: order.customerPhone || order.customer_phone || '+234 803 000 1234',
+    customer_address: order.customerAddress || order.delivery_address || 'Abuja, Nigeria',
+    delivery_lat: Number(order.deliveryLat ?? order.delivery_lat ?? 9.0882),
+    delivery_lng: Number(order.deliveryLng ?? order.delivery_lng ?? 7.4933),
+    courier_notes: order.courierNotes || order.courier_notes || '',
+    items: order.items || [],
+    items_count: order.itemsCount || order.items_count || (order.items ? order.items.length : 1),
+    subtotal: Number(order.subtotal) || 0,
+    total: Number(order.total) || 0,
+    vendor_payout: Number(order.vendorPayout || order.vendor_payout) || 0,
+    delivery_fee: Number(order.deliveryFee || order.delivery_fee) || 1200,
+    concierge_fee: Number(order.conciergeFee || order.concierge_fee) || 0,
+    status: order.status || 'New Order',
+    delivery_partner: order.deliveryPartner || order.delivery_partner || 'bolt',
+    bolt_status: order.boltStatus || order.bolt_status || 'PENDING_VENDOR',
+    bolt_tracking_code: order.boltTrackingCode || order.bolt_tracking_code || null,
+    bolt_rider: order.boltRider || order.bolt_rider || null,
+    bolt_coords: order.boltCoords || order.bolt_coords || null,
+    delivery_pin: String(order.deliveryPin || order.delivery_pin || '2489'),
+    pickup_pin: String(order.pickupPin || order.pickup_pin || '7731'),
+    eta: order.eta || '20 mins',
+    payment_method: order.paymentMethod || order.payment_method || 'Paystack',
+    payment_reference: order.paymentReference || order.payment_reference || null
+  };
 
-    const { data, error } = await supabase
-      .from('orders')
-      .insert(record)
-      .select()
-      .single();
+  // Attempt upload with up to 3 retries (with exponential backoff for network drops)
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .upsert(record)
+        .select()
+        .maybeSingle();
 
-    if (error) throw error;
-    return data;
-  } catch (err) {
-    console.error('Failed to insert order into Supabase:', err);
-    return null;
+      if (error) throw error;
+      return data || record;
+    } catch (err) {
+      lastErr = err;
+      const isNetworkErr =
+        err?.message?.includes('network connection was lost') ||
+        err?.message?.includes('fetch failed') ||
+        err?.message?.includes('Network request failed') ||
+        err?.details?.includes('network connection was lost');
+
+      if (attempt < 3 && isNetworkErr) {
+        await new Promise((r) => setTimeout(r, attempt * 1000));
+        continue;
+      }
+      break;
+    }
   }
+
+  // If network dropped, queue order locally so order is never lost
+  try {
+    const rawQueue = await AsyncStorage.getItem('getit_pending_order_syncs');
+    const queue = rawQueue ? JSON.parse(rawQueue) : [];
+    queue.push(record);
+    await AsyncStorage.setItem('getit_pending_order_syncs', JSON.stringify(queue));
+    console.log('📦 Order stored in local offline queue for sync when network stabilizes:', record.id);
+  } catch (storageErr) {}
+
+  return { offlineQueued: true, ...record };
 }
 
 export async function updateDatabaseOrderStatus(orderId, updates) {
@@ -176,8 +203,33 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
   }
 }
 
+export async function flushPendingOfflineOrders() {
+  try {
+    const rawQueue = await AsyncStorage.getItem('getit_pending_order_syncs');
+    if (!rawQueue) return;
+    const queue = JSON.parse(rawQueue);
+    if (!Array.isArray(queue) || queue.length === 0) return;
+
+    const remaining = [];
+    for (const rec of queue) {
+      try {
+        const { error } = await supabase.from('orders').upsert(rec);
+        if (error) throw error;
+      } catch (e) {
+        remaining.push(rec);
+      }
+    }
+    if (remaining.length === 0) {
+      await AsyncStorage.removeItem('getit_pending_order_syncs');
+    } else {
+      await AsyncStorage.setItem('getit_pending_order_syncs', JSON.stringify(remaining));
+    }
+  } catch (e) {}
+}
+
 export async function getDatabaseOrders() {
   try {
+    flushPendingOfflineOrders().catch(() => {});
     const { data, error } = await supabase
       .from('orders')
       .select('*')

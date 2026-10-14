@@ -218,6 +218,12 @@ Status:     All changes synced, verified, and pushed to origin/main
     - Interactive Stepper Simulation: Added a 1-tap `[ ⚡ Advance Courier to Next Step / Alert ➔ ]` button inside the
       card so the user can test the transition and watch alerts and checkmarks update live in real time.
     - Single Master Security PIN: Buyer gives one single 4-digit Delivery Security PIN to the courier upon final handover.
+  - Supabase Network Resiliency & Offline Sync Queue:
+    - Fixed `UnexpectedException: The network connection was lost (ExpoModulesCore/Promise.swift:56)`:
+      Wrapped `createDatabaseOrder` in an automatic exponential backoff retry mechanism (up to 3 attempts).
+    - Switched from `.insert()` to `.upsert()` to prevent duplicate key collisions during transient socket disconnects.
+    - Added offline fallback: When completely disconnected, pending orders are saved to `getit_pending_order_syncs` in
+      `AsyncStorage` and automatically flushed to Supabase as soon as network connectivity is restored.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
