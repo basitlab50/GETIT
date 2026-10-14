@@ -2407,10 +2407,12 @@ export default function App() {
   // Group cart items by store for multi-store basket display and split dispatch
   const cartGroupedByStore = useMemo(() => {
     const groups = {};
+    const storeOrder = [];
     cart.forEach((item) => {
       const storeId = item.storeId || 's1';
       const storeName = item.storeName || 'GETIT Store';
       if (!groups[storeId]) {
+        storeOrder.push(storeId);
         const storeObj = storesList.find(
           (s) => s.id === storeId || s.name === storeName
         );
@@ -2428,7 +2430,7 @@ export default function App() {
       groups[storeId].items.push(item);
       groups[storeId].subtotal += item.price * item.qty;
     });
-    return Object.values(groups);
+    return storeOrder.map((id) => groups[id]);
   }, [cart, storesList]);
 
   // Multi-Stop Courier Fee Calculation
@@ -2552,29 +2554,50 @@ export default function App() {
   }, [multiStopWaypoints, cartDistanceKm]);
 
   // Sequential Route Line Segments for Map Rendering
+  // Guarantees: Store 1 -> Store 2 -> Store 3 ... -> Last Store -> Buyer Destination
+  // Store 1 NEVER connects to the buyer when multiple stores are present.
   const multiStopRouteSegments = useMemo(() => {
-    if (multiStopWaypoints.length < 2) return [];
+    if (!participatingStores || participatingStores.length === 0) return [];
     const segments = [];
-    for (let i = 0; i < multiStopWaypoints.length - 1; i++) {
-      const from = multiStopWaypoints[i];
-      const to = multiStopWaypoints[i + 1];
-      const isFinalLeg = i === multiStopWaypoints.length - 2;
+
+    // 1. Shop-to-Shop Pickup Hops (Store 1 -> Store 2 -> Store 3 ...)
+    // Only connects Store i to Store i+1 in exact order
+    for (let i = 0; i < participatingStores.length - 1; i++) {
+      const currentStore = participatingStores[i];
+      const nextStore = participatingStores[i + 1];
       segments.push({
-        id: `seg-${from.id}-${to.id}`,
-        from,
-        to,
+        id: `seg-shop-hop-${currentStore.id}-${nextStore.id}`,
+        from: currentStore,
+        to: nextStore,
         coordinates: [
-          { latitude: from.latitude, longitude: from.longitude },
-          { latitude: to.latitude, longitude: to.longitude },
+          { latitude: Number(currentStore.latitude) || 9.0882, longitude: Number(currentStore.longitude) || 7.4933 },
+          { latitude: Number(nextStore.latitude) || 9.0882, longitude: Number(nextStore.longitude) || 7.4933 },
         ],
-        strokeColor: isFinalLeg ? COLORS.emeraldPrimary : '#D97706', // Amber/gold for shop-to-shop pickups, emerald for final dropoff
+        strokeColor: '#D97706', // Amber gold dashed line for shop pickups
         strokeWidth: 3.5,
-        lineDashPattern: isFinalLeg ? [6, 4] : [8, 4],
-        legLabel: `Leg ${i + 1}: ${from.storeName} ➔ ${to.storeName}`,
+        lineDashPattern: [8, 5],
+        legLabel: `Stop ${i + 1} to Stop ${i + 2}: ${currentStore.name} ➔ ${nextStore.name}`,
       });
     }
+
+    // 2. Final Delivery Leg: ONLY from the VERY LAST store in the chain to the Buyer's Delivery Destination!
+    const lastStore = participatingStores[participatingStores.length - 1];
+    segments.push({
+      id: `seg-final-dropoff-${lastStore.id}-to-customer`,
+      from: lastStore,
+      to: { name: 'Customer Destination', latitude: deliveryDestLat, longitude: deliveryDestLng },
+      coordinates: [
+        { latitude: Number(lastStore.latitude) || 9.0882, longitude: Number(lastStore.longitude) || 7.4933 },
+        { latitude: deliveryDestLat, longitude: deliveryDestLng },
+      ],
+      strokeColor: COLORS.emeraldPrimary, // Emerald green dashed line for final dropoff
+      strokeWidth: 4,
+      lineDashPattern: [6, 4],
+      legLabel: `Final Delivery Leg: ${lastStore.name} ➔ Pinned Destination`,
+    });
+
     return segments;
-  }, [multiStopWaypoints]);
+  }, [participatingStores, deliveryDestLat, deliveryDestLng]);
 
   // Proximity check: Difference between buyer's real-time phone GPS and their pinned delivery address
   const liveDiffDistanceKm = useMemo(() => {
