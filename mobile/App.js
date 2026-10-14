@@ -1806,10 +1806,15 @@ export default function App() {
                 alertMsg = `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin}) to collect packages.`;
               }
 
+              const safeCoord =
+                nextCoord && nextCoord.latitude && !isNaN(nextCoord.latitude)
+                  ? nextCoord
+                  : ord.boltCoords || ord.riderOrigin;
+
               return {
                 ...ord,
                 roadPointIndex: nextIdx,
-                boltCoords: nextCoord,
+                boltCoords: safeCoord,
                 currentStopIndex: updatedStopIdx,
                 stops: updatedStops,
                 journeyAlert: alertMsg,
@@ -1820,18 +1825,24 @@ export default function App() {
           }
 
           // Case B: Fallback smooth interpolation if road points are loading
-          if (!ord.boltCoords) return ord;
+          const currentRider =
+            ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
+              ? ord.boltCoords
+              : ord.riderOrigin || {
+                  latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
+                  longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
+                };
           const targetLat = ord.deliveryLocation.latitude;
           const targetLng = ord.deliveryLocation.longitude;
-          const distLat = targetLat - ord.boltCoords.latitude;
-          const distLng = targetLng - ord.boltCoords.longitude;
+          const distLat = targetLat - currentRider.latitude;
+          const distLng = targetLng - currentRider.longitude;
 
           return {
             ...ord,
             status: ord.status === 'Preparing' ? 'Preparing' : 'On the Way',
             boltCoords: {
-              latitude: ord.boltCoords.latitude + distLat * 0.12,
-              longitude: ord.boltCoords.longitude + distLng * 0.12,
+              latitude: currentRider.latitude + distLat * 0.08,
+              longitude: currentRider.longitude + distLng * 0.08,
             },
           };
         })
@@ -6267,87 +6278,136 @@ export default function App() {
                             scrollEnabled={true}
                             zoomEnabled={true}
                           >
-                            {/* 1. Sequential Turn-by-Turn Real Street Road Network Routing */}
-                            {ord.roadLegs && ord.roadLegs.length > 0 ? (
-                              <>
-                                {ord.roadLegs.map((legPts, lIdx) => {
-                                  const isCompletedLeg = (ord.currentStopIndex || 0) > lIdx;
-                                  const isActiveLeg = (ord.currentStopIndex || 0) === lIdx;
-                                  const isUpcomingLeg = (ord.currentStopIndex || 0) < lIdx;
+                            {/* 1. Real Street Road Network Routing & Resilient Blue Lines */}
+                            {(() => {
+                              const currentRiderPos =
+                                ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
+                                  ? ord.boltCoords
+                                  : ord.riderOrigin || {
+                                      latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
+                                      longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
+                                    };
 
-                                  if (isCompletedLeg && legPts.length > 0) {
-                                    return (
-                                      <Polyline
-                                        key={`leg-done-${lIdx}`}
-                                        coordinates={legPts}
-                                        strokeColor="rgba(16, 185, 129, 0.55)"
-                                        strokeWidth={3.5}
-                                      />
-                                    );
-                                  }
+                              const hasValidLegs =
+                                ord.roadLegs &&
+                                Array.isArray(ord.roadLegs) &&
+                                ord.roadLegs.length > 0 &&
+                                ord.roadLegs.some((l) => Array.isArray(l) && l.length > 1);
 
-                                  if (isActiveLeg && legPts.length > 0) {
-                                    return (
-                                      <React.Fragment key={`leg-active-${lIdx}`}>
-                                        {/* Outer high-contrast boundary for active street route */}
-                                        <Polyline
-                                          coordinates={legPts}
-                                          strokeColor="#1D4ED8"
-                                          strokeWidth={7}
-                                        />
-                                        {/* Vibrant Google Maps Blue interior road lane */}
-                                        <Polyline
-                                          coordinates={legPts}
-                                          strokeColor="#2563EB"
-                                          strokeWidth={4.5}
-                                        />
-                                      </React.Fragment>
-                                    );
-                                  }
+                              if (hasValidLegs) {
+                                return (
+                                  <>
+                                    {ord.roadLegs.map((legPts, lIdx) => {
+                                      if (!Array.isArray(legPts) || legPts.length < 2) return null;
+                                      const isCompletedLeg = (ord.currentStopIndex || 0) > lIdx;
+                                      const isActiveLeg = (ord.currentStopIndex || 0) === lIdx;
+                                      const isUpcomingLeg = (ord.currentStopIndex || 0) < lIdx;
 
-                                  if (isUpcomingLeg && legPts.length > 0) {
-                                    return (
-                                      <Polyline
-                                        key={`leg-upcoming-${lIdx}`}
-                                        coordinates={legPts}
-                                        strokeColor="rgba(148, 163, 184, 0.6)"
-                                        strokeWidth={3}
-                                        lineDashPattern={[6, 5]}
-                                      />
-                                    );
-                                  }
-                                  return null;
-                                })}
-                              </>
-                            ) : ord.roadRouteCoordinates && ord.roadRouteCoordinates.length > 0 ? (
-                              <>
-                                <Polyline
-                                  coordinates={ord.roadRouteCoordinates}
-                                  strokeColor="#1D4ED8"
-                                  strokeWidth={6}
-                                />
-                                <Polyline
-                                  coordinates={ord.roadRouteCoordinates}
-                                  strokeColor="#3B82F6"
-                                  strokeWidth={4}
-                                />
-                              </>
-                            ) : (
-                              <Polyline
-                                coordinates={[
-                                  ord.boltCoords || {
-                                    latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
-                                    longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
-                                  },
-                                  {
-                                    latitude: ord.deliveryLocation?.latitude || 9.0882,
-                                    longitude: ord.deliveryLocation?.longitude || 7.4933,
-                                  },
-                                ]}
-                                strokeColor="#2563EB"
-                                strokeWidth={4}
-                              />
-                            )}
+                                      if (isCompletedLeg) {
+                                        return (
+                                          <Polyline
+                                            key={`leg-done-${lIdx}`}
+                                            coordinates={legPts}
+                                            strokeColor="rgba(16, 185, 129, 0.6)"
+                                            strokeWidth={3.5}
+                                          />
+                                        );
+                                      }
+
+                                      if (isActiveLeg) {
+                                        return (
+                                          <React.Fragment key={`leg-active-${lIdx}`}>
+                                            <Polyline
+                                              coordinates={legPts}
+                                              strokeColor="#1D4ED8"
+                                              strokeWidth={7}
+                                            />
+                                            <Polyline
+                                              coordinates={legPts}
+                                              strokeColor="#2563EB"
+                                              strokeWidth={4.5}
+                                            />
+                                          </React.Fragment>
+                                        );
+                                      }
+
+                                      if (isUpcomingLeg) {
+                                        return (
+                                          <Polyline
+                                            key={`leg-upcoming-${lIdx}`}
+                                            coordinates={legPts}
+                                            strokeColor="rgba(148, 163, 184, 0.65)"
+                                            strokeWidth={3}
+                                            lineDashPattern={[6, 5]}
+                                          />
+                                        );
+                                      }
+                                      return null;
+                                    })}
+                                  </>
+                                );
+                              }
+
+                              if (
+                                ord.roadRouteCoordinates &&
+                                Array.isArray(ord.roadRouteCoordinates) &&
+                                ord.roadRouteCoordinates.length > 1
+                              ) {
+                                return (
+                                  <>
+                                    <Polyline
+                                      coordinates={ord.roadRouteCoordinates}
+                                      strokeColor="#1D4ED8"
+                                      strokeWidth={7}
+                                    />
+                                    <Polyline
+                                      coordinates={ord.roadRouteCoordinates}
+                                      strokeColor="#2563EB"
+                                      strokeWidth={4.5}
+                                    />
+                                  </>
+                                );
+                              }
+
+                              // Guaranteed fallback multi-stop sequence (ALWAYS displays bright blue lines!)
+                              const stopPoints = (ord.stops || []).map((s) => ({
+                                latitude: Number(s.latitude) || 9.0882,
+                                longitude: Number(s.longitude) || 7.4933,
+                              }));
+                              const fullSeq = [
+                                currentRiderPos,
+                                ...stopPoints,
+                                {
+                                  latitude: ord.deliveryLocation?.latitude || 9.0882,
+                                  longitude: ord.deliveryLocation?.longitude || 7.4933,
+                                },
+                              ];
+
+                              const targetIdx = Math.min(
+                                (ord.currentStopIndex || 0) + 1,
+                                fullSeq.length - 1
+                              );
+
+                              return (
+                                <>
+                                  {/* Active Leg to Current Target in Bold Google Blue */}
+                                  <Polyline
+                                    coordinates={[currentRiderPos, fullSeq[targetIdx]]}
+                                    strokeColor="#2563EB"
+                                    strokeWidth={5}
+                                  />
+                                  {/* Remaining sequence connections in dashed amber line */}
+                                  {fullSeq.length > 2 && (
+                                    <Polyline
+                                      coordinates={fullSeq.slice(targetIdx)}
+                                      strokeColor="#F59E0B"
+                                      strokeWidth={3.5}
+                                      lineDashPattern={[6, 4]}
+                                    />
+                                  )}
+                                </>
+                              );
+                            })()}
 
                             {/* 2. On-Road Snapped Store Stop Pinpoints (Marked Directly On The Blue Line) */}
                             {ord.stops && ord.stops.length > 0 ? (
@@ -6447,25 +6507,30 @@ export default function App() {
                               </View>
                             </Marker>
 
-                            {/* 4. Real-Time Moving Motorbike Courier Marker */}
-                            {ord.boltCoords && (
-                              <Marker
-                                coordinate={ord.boltCoords}
-                                title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Bolt Courier)`}
-                                description={ord.journeyAlert || 'Live courier tracking'}
-                                anchor={{ x: 0.5, y: 0.5 }}
-                              >
-                                <View style={styles.riderLiveMarkerPill}>
-                                  <Text style={{ fontSize: 18 }}>🛵</Text>
-                                  <View style={styles.riderPillLabelBox}>
-                                    <Text style={styles.riderPillName}>
-                                      {ord.boltRider?.name || 'Musa Ibrahim'}
-                                    </Text>
-                                    <Text style={styles.riderPillSpeed}>42 km/h • Live</Text>
-                                  </View>
+                            {/* 4. Real-Time Moving Motorbike Courier Marker (ALWAYS VISIBLE ON MAP) */}
+                            <Marker
+                              coordinate={
+                                ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
+                                  ? ord.boltCoords
+                                  : ord.riderOrigin || {
+                                      latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
+                                      longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
+                                    }
+                              }
+                              title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Courier)`}
+                              description={ord.journeyAlert || 'Live courier tracking'}
+                              anchor={{ x: 0.5, y: 0.5 }}
+                            >
+                              <View style={styles.riderLiveMarkerPill}>
+                                <Text style={{ fontSize: 18 }}>🛵</Text>
+                                <View style={styles.riderPillLabelBox}>
+                                  <Text style={styles.riderPillName}>
+                                    {ord.boltRider?.name || 'Musa Ibrahim'}
+                                  </Text>
+                                  <Text style={styles.riderPillSpeed}>42 km/h • Live</Text>
                                 </View>
-                              </Marker>
-                            )}
+                              </View>
+                            </Marker>
                           </MapView>
                         </View>
                       )}

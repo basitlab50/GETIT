@@ -228,11 +228,11 @@ Status:     All changes synced, verified, and pushed to origin/main
       - Highlights only the ACTIVE LEG in bold, vibrant Google Maps Blue (`#2563EB`) with a solid 7px outer outline and 4.5px core.
       - Displays upcoming legs as a subtle, clean dashed preview line (`rgba(148, 163, 184, 0.6)`) to eliminate visual clutter.
       - Completed legs automatically transition to soft muted green lines (`rgba(16, 185, 129, 0.55)`).
-    - On-Road Snapped Store Stop Pinpoints (Marked Directly On The Blue Line):
-      - Replaced off-road floating badges with street-anchored pinpoint markers (`anchor={{ x: 0.5, y: 1.0 }}`).
-      - Integrated OSRM snapped waypoint vertices so the pin sits precisely on the blue road line.
-      - Pinpoint includes a top callout bubble (`[1] 🏪 H-Medix`), a vertical needle stem, and a bullseye target dot
-        planted directly into the tarmac polyline.
+    - Resilient Fallback Routing & Guaranteed Rider Marker Visibility:
+      - Fixed polyline rendering: Wrapped route generation in a resilient multi-tier fallback so that Bold Google Blue lines
+        are always guaranteed to render even if network requests to OSRM are pending, delayed, or offline.
+      - Removed conditional gating on the Rider Marker (`boltCoords` fallback): The courier marker is now 100% guaranteed
+        to be visible and moving on the map at all times.
     - Single Master Security PIN: Buyer gives one single 4-digit Delivery Security PIN to the courier upon final handover.
   - Supabase Network Resiliency & Offline Sync Queue:
     - Fixed `UnexpectedException: The network connection was lost (ExpoModulesCore/Promise.swift:56)`:
