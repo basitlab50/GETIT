@@ -112,7 +112,6 @@ export async function createDatabaseOrder(order) {
     id: order.id,
     store_id: order.storeId || order.store_id || 'store-fresh-mart',
     store_name: order.storeName || order.store_name || 'Fresh Mart Maitama',
-    customer_id: order.customerId || order.customer_id || 'guest',
     customer_name: order.customerName || order.customer_name || 'Customer',
     customer_phone: order.customerPhone || order.customer_phone || '+234 803 000 1234',
     customer_address: order.customerAddress || order.delivery_address || 'Abuja, Nigeria',
@@ -125,7 +124,6 @@ export async function createDatabaseOrder(order) {
     total: Number(order.total) || 0,
     vendor_payout: Number(order.vendorPayout || order.vendor_payout) || 0,
     delivery_fee: Number(order.deliveryFee || order.delivery_fee) || 1200,
-    concierge_fee: Number(order.conciergeFee || order.concierge_fee) || 0,
     status: order.status || 'New Order',
     delivery_partner: order.deliveryPartner || order.delivery_partner || 'bolt',
     bolt_status: order.boltStatus || order.bolt_status || 'PENDING_VENDOR',
@@ -217,7 +215,10 @@ export async function flushPendingOfflineOrders() {
     const remaining = [];
     for (const rec of queue) {
       try {
-        const { error } = await supabase.from('orders').upsert(rec);
+        const cleanRec = { ...rec };
+        delete cleanRec.customer_id;
+        delete cleanRec.concierge_fee;
+        const { error } = await supabase.from('orders').upsert(cleanRec);
         if (error) throw error;
       } catch (e) {
         remaining.push(rec);

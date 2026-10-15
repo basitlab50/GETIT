@@ -33,6 +33,7 @@ import {
   getDatabaseOrders,
   updateDatabaseOrderStatus,
   subscribeToOrders,
+  flushPendingOfflineOrders,
   getStores,
   createDatabaseStore,
   subscribeToStores,
@@ -1651,16 +1652,33 @@ export default function App() {
 
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
 
-  // Cross-device order synchronization with Supabase
+  // Cross-device order synchronization with Supabase (Bidirectional)
   const syncOrdersFromCloud = async () => {
     setIsRefreshingOrders(true);
     try {
+      // 1. Flush any pending offline orders
+      await flushPendingOfflineOrders().catch(() => {});
+
+      // 2. Fetch current cloud orders
       const cloudOrders = await getDatabaseOrders();
-      if (cloudOrders && cloudOrders.length > 0) {
+      const cloudOrderIds = new Set((cloudOrders || []).map((o) => o.id));
+
+      // 3. Bidirectional Push: If this device has any locally placed orders
+      // that are not yet in Supabase, upload them now!
+      for (const localOrd of orders) {
+        if (!localOrd.isDemo && !cloudOrderIds.has(localOrd.id)) {
+          console.log('🔄 Uploading local order to Supabase:', localOrd.id);
+          await createDatabaseOrder(localOrd).catch(console.warn);
+        }
+      }
+
+      // 4. Re-fetch freshest combined cloud orders
+      const freshest = await getDatabaseOrders();
+      if (freshest && freshest.length > 0) {
         updateAndPersistOrders((prev) => {
           const orderMap = new Map();
           prev.forEach((o) => orderMap.set(o.id, o));
-          cloudOrders.forEach((co) => {
+          freshest.forEach((co) => {
             const existing = orderMap.get(co.id);
             orderMap.set(co.id, existing ? { ...existing, ...co, status: co.status || existing.status } : co);
           });
@@ -3486,34 +3504,12 @@ export default function App() {
   };
 
   // Cleanly sorted & filtered buyer orders list:
-  // - Filters to current user's orders across all devices
+  // - Shows all orders synced across devices from Supabase
   // - Latest placed order is pinned at the top with 🔥 highlight badge
   // - Chronologically sorted (newest orders first)
   // - Filterable by Active, All, Delivered, Cancelled
   const sortedAndFilteredOrders = useMemo(() => {
-    let userOrders = orders;
-    if (currentUser) {
-      const userPhoneClean = (currentUser.phone || '').replace(/\D/g, '');
-      const userMatching = orders.filter((o) => {
-        const orderPhoneClean = (o.customerPhone || '').replace(/\D/g, '');
-        const phoneMatch =
-          userPhoneClean.length >= 7 &&
-          orderPhoneClean.length >= 7 &&
-          (userPhoneClean.endsWith(orderPhoneClean) || orderPhoneClean.endsWith(userPhoneClean));
-        const nameMatch =
-          currentUser.fullName &&
-          o.customerName &&
-          o.customerName.toLowerCase() === currentUser.fullName.toLowerCase();
-        const idMatch = currentUser.id && o.customerId && o.customerId === currentUser.id;
-        return phoneMatch || nameMatch || idMatch;
-      });
-
-      if (userMatching.length > 0) {
-        userOrders = userMatching;
-      }
-    }
-
-    const sorted = [...userOrders].sort((a, b) => {
+    const sorted = [...orders].sort((a, b) => {
       if (lastPlacedOrderId && a.id === lastPlacedOrderId) return -1;
       if (lastPlacedOrderId && b.id === lastPlacedOrderId) return 1;
       return (b.timestamp || 0) - (a.timestamp || 0);
