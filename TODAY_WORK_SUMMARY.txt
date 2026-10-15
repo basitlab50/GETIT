@@ -313,8 +313,47 @@ Status:     All changes synced, verified, and pushed to origin/main
   - Map Route Rendering: Enhanced the order tracking map to display both the full roadmap path connecting all
     stores to the home destination, as well as the active courier transit leg with fallback geometry.
 
+[19:25:00] Live Supabase Database Health Check & Automated Test Suite (Commit 3d82827)
+  - Created standalone test script `mobile/scripts/test_supabase_health.js` for on-demand database diagnostics.
+  - Tested and verified 100% active status and full CRUD across all 6 live production tables:
+    1. `orders`: 13 rows, all 27 columns verified (JSONB `bolt_rider` with `stops` and `roadRouteCoordinates`).
+    2. `stores`: 6 rows, all 13 columns verified (GPS coordinates, open status, delivery fees).
+    3. `store_inventory`: 85 rows, all 9 columns verified (prices, icons, `out_of_stock` flags).
+    4. `users`: 3 accounts verified (shopper & merchant profiles, phone numbers, password hashes).
+    5. `riders`: 33 riders verified (vehicles, license plates, ratings, GPS tracking).
+    6. `audit_logs`: 27 events verified (authentication success/failure tracking, timestamps).
+  - Verified that all client-side triggers in `mobile/App.js` hook directly into these Supabase operations.
+
+--------------------------------------------------------------------------------
+2. WHAT IS LEFT TO DO (STRICT ROADMAP ORDER COMMITTED BY USER)
+--------------------------------------------------------------------------------
+The user explicitly specified the exact order of remaining tasks:
+
+  ▶ STEP 1 (NEXT SESSION): Number 7 - Customer Reviews & Post-Order Feedback
+    - Trigger dual-scorecard review modal automatically on delivery completion (handover PIN verification),
+      or on-demand via the persistent "⭐ Rate Order" button on delivered orders.
+    - Rate both Merchant (Food/Product quality, packaging) and Courier (Speed, courtesy, handling) with 1-5 stars.
+    - Add quick-tag pills ("Fast Delivery", "Hot & Fresh", "Polite Courier", "Well Packaged").
+    - Prevent duplicate ratings with a "✅ Rated ★ 5.0" badge.
+    - Recalculate store rating averages and total review counts dynamically in Supabase and app state.
+    - Add verified customer reviews modal to store profile pages.
+
+  ▶ STEP 2 (AFTER NUMBER 7): Number 4 - Push Notifications (Expo Push & Dual-Mode Audio Alerts)
+    - Guaranteed alerts whether app is foregrounded, backgrounded, or locked with screen off.
+    - Android High-Priority Channels: `order_updates` and `merchant_orders` with `AndroidImportance.MAX`,
+      vibration patterns, sound, `bypassDnd: true`, and public lockscreen visibility.
+    - iOS Notification Handler with sounds, banners, and badge count.
+    - In-app Web Audio API dual-tone chimes:
+      - Loud multi-tone cash register chime for merchants on new orders (C5 ➔ E5 ➔ G5 ➔ C6).
+      - Luxury 2-tone concierge chime for customer order milestones.
+    - Floating animated drop-down glass banner for in-app alert visibility.
+    - 5 Core Lifecycle Triggers: Order Placed/Paid, Rider Dispatched, Order Picked Up, Courier at Gate, Handover Completed.
+
+--------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 14, 2026)
 --------------------------------------------------------------------------------
+- 3d82827  test(supabase): add comprehensive live database health & CRUD diagnostic script
+- 89d3d84  docs: log cross-device Supabase multi-stop sync in work summary
 - fc6b624  fix(sync): persist full multi-store stops, road route coordinates, and sequence in Supabase JSONB for identical cross-device tracking
 - 2c64de3  fix(sync): fix Supabase orders schema rejection and implement bidirectional cloud order sync
 - 943c1b1  fix(sync): sync cloud orders across devices on login, tab switch, and add pull-to-refresh
