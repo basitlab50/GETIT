@@ -6884,13 +6884,29 @@ export default function App() {
                         {ord.status === 'Cancelled' ? 'Status: Cancelled' : `Est. Arrival: ${ord.eta || '15-25 min'}`}
                       </Text>
                     </View>
-                    {(ord.status === 'New Order' || ord.status === 'Preparing') && (
+                    {ord.status !== 'Cancelled' && ord.status !== 'Delivered' && (
                       <TouchableOpacity
-                        style={styles.buyerCancelOrderBtn}
-                        onPress={() => cancelBuyerOrder(ord.id)}
+                        style={styles.buyerOrderSupportBtn}
+                        onPress={() => {
+                          Alert.alert(
+                            'GETIT Concierge Support',
+                            `Need assistance with order ${ord.id}?\n\nOur concierge dispatch team is monitoring your order in real-time. For address updates or inquiries, reach out directly:`,
+                            [
+                              {
+                                text: '💬 WhatsApp Support',
+                                onPress: () => Linking.openURL('https://wa.me/2348032941194?text=' + encodeURIComponent(`Hello GETIT Support, I need assistance with my active Order ${ord.id}.`)),
+                              },
+                              {
+                                text: '📞 Call Concierge',
+                                onPress: () => Linking.openURL('tel:+2348032941194'),
+                              },
+                              { text: 'Close', style: 'cancel' },
+                            ]
+                          );
+                        }}
                         activeOpacity={0.8}
                       >
-                        <Text style={styles.buyerCancelOrderBtnText}>✕ Cancel Order</Text>
+                        <Text style={styles.buyerOrderSupportBtnText}>💬 Need Help?</Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -14930,18 +14946,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.45,
     shadowRadius: 3,
   },
-  buyerCancelOrderBtn: {
+  buyerOrderSupportBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: '#F3F4F6',
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderColor: '#E5E7EB',
   },
-  buyerCancelOrderBtnText: {
+  buyerOrderSupportBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#EF4444',
+    color: '#374151',
   },
   orderCancelledBanner: {
     backgroundColor: 'rgba(239, 68, 68, 0.08)',

@@ -268,7 +268,10 @@ Status:     All changes synced, verified, and pushed to origin/main
     - Added `calculateInboundFunnelDispatch` and active courier fleet pool `FLEET_COURIERS` across Abuja zones (Maitama, Wuse 2, CBD, Garki/Asokoro).
     - Identifies the Outermost Anchor Store (furthest store from buyer's home address) and automatically assigns a courier stationed nearest to that outer store.
     - Sequences all remaining stops inward along the corridor toward the buyer's home destination, ensuring the courier moves in one continuous forward direction towards the customer with zero reverse travel.
-    - Added `funnelRouteBadge` (`⚡ INBOUND FUNNEL DISPATCH`) on Order Card, showing Outermost Shop first, matched courier details, and proximity approach distance.
+  - Cancellation Policy & Merchant Protection Update:
+    - Removed the self-serve "Cancel Order" button for buyers after payment/order confirmation. Protects merchants from wasted food/provisions and couriers from deadhead trips.
+    - Replaced with a dedicated "💬 Need Help?" button on active orders, providing instant one-tap access to WhatsApp Concierge Support and direct phone assistance.
+    - Order cancellation authority remains strictly reserved for merchants (e.g., out-of-stock items) and GETIT Admins.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
