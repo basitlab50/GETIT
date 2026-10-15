@@ -1753,6 +1753,172 @@ export default function App() {
     return ordered;
   }
 
+  // Active Dispatch Courier Fleet stationed across Abuja zones
+  const FLEET_COURIERS = [
+    {
+      id: 'rider-musa',
+      name: 'Musa Ibrahim',
+      phone: '+234 803 294 1194',
+      rating: '4.95',
+      vehicle: 'Bajaj Boxer 150 (Red)',
+      plate: 'ABJ-492-KW',
+      latitude: 9.0882, // Maitama Zone
+      longitude: 7.4933,
+      zone: 'Maitama',
+      isAvailable: true,
+    },
+    {
+      id: 'rider-emeka',
+      name: 'Emeka Nwosu',
+      phone: '+234 802 118 4421',
+      rating: '4.92',
+      vehicle: 'TVS Neo 110 (Blue)',
+      plate: 'RBC-318-AX',
+      latitude: 9.0655, // Wuse 2 Zone
+      longitude: 7.4680,
+      zone: 'Wuse 2',
+      isAvailable: true,
+    },
+    {
+      id: 'rider-usman',
+      name: 'Usman Danladi',
+      phone: '+234 814 772 9012',
+      rating: '4.89',
+      vehicle: 'Yamaha Crux 110 (Black)',
+      plate: 'ABJ-805-TR',
+      latitude: 9.0720, // Central Business District
+      longitude: 7.4910,
+      zone: 'CBD',
+      isAvailable: true,
+    },
+    {
+      id: 'rider-tunde',
+      name: 'Babatunde Adeleke',
+      phone: '+234 809 334 5510',
+      rating: '4.96',
+      vehicle: 'Honda Ace 125 (Silver)',
+      plate: 'KJA-512-MC',
+      latitude: 9.0550, // Garki / Asokoro
+      longitude: 7.5020,
+      zone: 'Garki / Asokoro',
+      isAvailable: true,
+    },
+  ];
+
+  // Inbound Funnel Dispatch: Finds the store furthest from the buyer (Anchor Store),
+  // matches the closest courier to that store, and sequences remaining stores inward toward the customer's home.
+  function calculateInboundFunnelDispatch(stores, buyerLocation, courierFleet = FLEET_COURIERS) {
+    if (!stores || stores.length === 0) return null;
+    const bLat = Number(buyerLocation?.latitude) || 9.0882;
+    const bLng = Number(buyerLocation?.longitude) || 7.4933;
+
+    if (stores.length === 1) {
+      const singleStore = stores[0];
+      let bestRider = courierFleet[0];
+      let minRiderDist = Infinity;
+      courierFleet.forEach((r) => {
+        const d = calculateDistanceKm(r.latitude, r.longitude, singleStore.latitude, singleStore.longitude) ?? Infinity;
+        if (d < minRiderDist) {
+          minRiderDist = d;
+          bestRider = r;
+        }
+      });
+      return {
+        anchorStore: singleStore,
+        matchedRider: bestRider,
+        orderedStops: stores,
+        approachDistKm: minRiderDist !== Infinity ? minRiderDist.toFixed(1) : '0.8',
+        isInboundFunnel: false,
+      };
+    }
+
+    // 1. Identify the Outermost Anchor Store (furthest from buyer's home)
+    let anchorStore = stores[0];
+    let maxDistToBuyer = -1;
+
+    stores.forEach((st) => {
+      const dist = calculateDistanceKm(st.latitude, st.longitude, bLat, bLng) ?? 0;
+      if (dist > maxDistToBuyer) {
+        maxDistToBuyer = dist;
+        anchorStore = st;
+      }
+    });
+
+    // 2. Find the Courier closest to the Outermost Anchor Store
+    let matchedRider = courierFleet[0];
+    let minRiderToAnchorDist = Infinity;
+
+    courierFleet.forEach((rider) => {
+      const d = calculateDistanceKm(rider.latitude, rider.longitude, anchorStore.latitude, anchorStore.longitude) ?? Infinity;
+      if (d < minRiderToAnchorDist) {
+        minRiderToAnchorDist = d;
+        matchedRider = rider;
+      }
+    });
+
+    // 3. Sequence remaining stores inward toward the buyer
+    const orderedStops = [
+      {
+        ...anchorStore,
+        distanceFromPrevKm: minRiderToAnchorDist !== Infinity ? minRiderToAnchorDist.toFixed(1) : '1.0',
+        isAnchorStore: true,
+      },
+    ];
+
+    const remaining = stores.filter((s) => (s.storeId || s.id) !== (anchorStore.storeId || anchorStore.id));
+    let currentPoint = {
+      latitude: Number(anchorStore.latitude) || 9.0882,
+      longitude: Number(anchorStore.longitude) || 7.4933,
+    };
+
+    while (remaining.length > 0) {
+      let nextIdx = 0;
+      let minInboundCost = Infinity;
+
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i];
+        const distFromCurrent = calculateDistanceKm(
+          currentPoint.latitude,
+          currentPoint.longitude,
+          candidate.latitude,
+          candidate.longitude
+        ) ?? 0;
+        const distToBuyer = calculateDistanceKm(
+          candidate.latitude,
+          candidate.longitude,
+          bLat,
+          bLng
+        ) ?? 0;
+
+        const cost = distFromCurrent + distToBuyer * 0.4;
+        if (cost < minInboundCost) {
+          minInboundCost = cost;
+          nextIdx = i;
+        }
+      }
+
+      const [selected] = remaining.splice(nextIdx, 1);
+      const hopDist = calculateDistanceKm(currentPoint.latitude, currentPoint.longitude, selected.latitude, selected.longitude);
+      orderedStops.push({
+        ...selected,
+        distanceFromPrevKm: hopDist !== null ? hopDist.toFixed(1) : '1.5',
+        isAnchorStore: false,
+      });
+      currentPoint = {
+        latitude: Number(selected.latitude) || 9.0882,
+        longitude: Number(selected.longitude) || 7.4933,
+      };
+    }
+
+    return {
+      anchorStore,
+      matchedRider,
+      orderedStops,
+      approachDistKm: minRiderToAnchorDist !== Infinity ? minRiderToAnchorDist.toFixed(1) : '1.0',
+      isInboundFunnel: true,
+    };
+  }
+
   // Build sequential connection legs directly between actual order waypoints
   const buildDirectLegsBetweenWaypoints = (waypoints) => {
     if (!waypoints || waypoints.length < 2) return { roadPoints: [], legs: [], snappedWaypoints: waypoints || [] };
@@ -3378,16 +3544,29 @@ export default function App() {
     const masterOrderId = `ORD-${Math.floor(10000 + Math.random() * 90000)}`;
     const masterDeliveryPin = `${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // Smart Nearest-Neighbor Logistics Optimization:
-    // Route to the store closest to the rider first, then sequentially to the nearest store
-    const assignedCourierPoint = {
-      latitude: Number(pinnedLocation?.latitude ? pinnedLocation.latitude - 0.012 : 9.0765),
-      longitude: Number(pinnedLocation?.longitude ? pinnedLocation.longitude - 0.010 : 7.4880),
+    // Inbound Funnel Dispatch Engine:
+    // 1. Calculates distance of all stores from the Buyer's Home destination
+    // 2. Selects the furthest store as the Outbound Anchor (Stop 1)
+    // 3. Automatically queries the courier fleet to find a rider already near that outer shop!
+    // 4. Sequences remaining stores inward toward the buyer's home so courier travels in one continuous forward funnel!
+    const funnelDispatch = calculateInboundFunnelDispatch(
+      participatingStores,
+      pinnedLocation,
+      FLEET_COURIERS
+    );
+
+    const assignedRider = funnelDispatch?.matchedRider || {
+      name: 'Musa Ibrahim',
+      phone: '+234 803 294 1194',
+      rating: '4.95',
+      vehicle: 'Bajaj Boxer 150 (Red)',
+      plate: 'ABJ-492-KW',
+      latitude: 9.0882,
+      longitude: 7.4933,
     };
 
-    const sequencedStores = isMultiStore
-      ? optimizeMultiStopSequence(participatingStores, assignedCourierPoint)
-      : participatingStores;
+    const sequencedStores = funnelDispatch?.orderedStops || participatingStores;
+    const anchorStore = funnelDispatch?.anchorStore || sequencedStores[0];
 
     const stops = sequencedStores.map((grp, index) => {
       const storeSubtotal = grp.subtotal;
@@ -3403,6 +3582,7 @@ export default function App() {
         latitude: Number(grp.latitude) || 9.0882,
         longitude: Number(grp.longitude) || 7.4933,
         distanceFromPrevKm: grp.distanceFromPrevKm || null,
+        isAnchorStore: grp.isAnchorStore || index === 0,
         itemsCount: grp.items.reduce((sum, i) => sum + i.qty, 0),
         items: grp.items.map((i) => ({
           id: i.id,
@@ -3424,11 +3604,14 @@ export default function App() {
       id: masterOrderId,
       isMultiStore,
       isRouteOptimized: isMultiStore,
+      isInboundFunnel: isMultiStore && funnelDispatch?.isInboundFunnel,
+      anchorStoreName: anchorStore?.storeName,
+      approachDistanceKm: funnelDispatch?.approachDistKm || '1.1',
       stopsCount: stops.length,
       currentStopIndex: 0,
       journeyAlert: isMultiStore
-        ? `⚡ Smart Dispatch: Courier assigned to closest shop first (${stops[0].storeName}) to minimize delivery time.`
-        : `🛵 Courier assigned! Heading to ${stops[0].storeName}.`,
+        ? `⚡ Inbound Dispatch: Courier ${assignedRider.name} matched near outermost shop (${stops[0].storeName}). Progressing inward to your door!`
+        : `🛵 Courier ${assignedRider.name} assigned! Heading to ${stops[0].storeName}.`,
       status: 'Preparing',
       storeName: isMultiStore
         ? `Multi-Store Order (${stops.map((s) => s.storeName).join(' ➔ ')})`
@@ -3457,13 +3640,7 @@ export default function App() {
         apartment: pinnedLocation.apartment,
         notes: riderDeliveryNote || pinnedLocation.notes,
       },
-      boltRider: {
-        name: 'Musa Ibrahim',
-        phone: '+234 803 294 1194',
-        rating: '4.95',
-        vehicle: 'Bajaj Boxer 150 (Red)',
-        plate: 'ABJ-492-KW',
-      },
+      boltRider: assignedRider,
       riderOrigin: {
         latitude: Number(stops[0]?.latitude) || 9.0882,
         longitude: Number(stops[0]?.longitude) || 7.4933,
@@ -3533,8 +3710,12 @@ export default function App() {
       Alert.alert(
         '🎉 Multi-Store Order Confirmed!',
         `Your multi-store order (${masterOrder.id}) with ${stops.length} pickup hubs is confirmed!\n\n` +
+          `⚡ Inbound Funnel Dispatch:\n` +
+          `• Outermost Hub: ${stops[0].storeName} (Stop 1)\n` +
+          `• Matched Courier: ${assignedRider.name} (${assignedRider.vehicle})\n` +
+          `• Proximity to Hub 1: ~${funnelDispatch?.approachDistKm || '1.0'} km\n\n` +
           stops.map((s) => `• Stop ${s.stopNumber}: ${s.storeName} (${formatNaira(s.subtotal)})\n   Pickup PIN: ${s.pickupPin}`).join('\n\n') +
-          `\n\nYour courier Musa Ibrahim will pick up each shop's provisions in sequence and deliver everything directly to your door in one trip.`
+          `\n\nYour courier ${assignedRider.name} will pick up from the outer shop and sweep inward toward your home in one continuous trip!`
       );
     } else {
       Alert.alert(
@@ -6133,14 +6314,20 @@ export default function App() {
                     </View>
                   )}
 
-                  {/* Smart Nearest-Shop First Route Optimizer Badge */}
-                  {ord.isRouteOptimized && ord.stops && ord.stops.length > 1 && (
+                  {/* Inbound Funnel Route Optimizer Badge */}
+                  {ord.isInboundFunnel && ord.stops && ord.stops.length > 1 ? (
+                    <View style={styles.funnelRouteBadge}>
+                      <Text style={styles.funnelRouteBadgeText}>
+                        ⚡ INBOUND FUNNEL DISPATCH • Outermost shop first ({ord.stops[0]?.storeName}) ➔ Progressing to home
+                      </Text>
+                    </View>
+                  ) : ord.isRouteOptimized && ord.stops && ord.stops.length > 1 ? (
                     <View style={styles.smartRouteBadge}>
                       <Text style={styles.smartRouteBadgeText}>
                         ⚡ NEAREST-SHOP FIRST • Sequence optimized to minimize courier travel
                       </Text>
                     </View>
-                  )}
+                  ) : null}
 
                   {/* Order Card Header */}
                   <View style={styles.orderCardHeader}>
@@ -6251,7 +6438,11 @@ export default function App() {
                                 </Text>
                                 {stop.distanceFromPrevKm && (
                                   <Text style={styles.stopProximityDistanceText}>
-                                    📍 {sIdx === 0 ? `Closest Hub (${stop.distanceFromPrevKm} km from courier)` : `Next nearest (${stop.distanceFromPrevKm} km)`}
+                                    📍 {sIdx === 0 && stop.isAnchorStore
+                                      ? `Outermost Shop (${stop.distanceFromPrevKm} km from matched courier)`
+                                      : sIdx === 0
+                                      ? `Closest Hub (${stop.distanceFromPrevKm} km from courier)`
+                                      : `Next inward hop (${stop.distanceFromPrevKm} km)`}
                                   </Text>
                                 )}
                               </View>
@@ -14379,6 +14570,22 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: COLORS.roseGold,
     letterSpacing: 0.5,
+  },
+  funnelRouteBadge: {
+    backgroundColor: 'rgba(5, 107, 75, 0.08)',
+    borderColor: 'rgba(5, 107, 75, 0.28)',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  funnelRouteBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#056B4B',
+    letterSpacing: 0.4,
   },
   smartRouteBadge: {
     backgroundColor: 'rgba(37, 99, 235, 0.08)',
