@@ -109,6 +109,24 @@ CREATE TABLE IF NOT EXISTS public.users (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 7. ORDER REVIEWS & POST-ORDER FEEDBACK TABLE
+CREATE TABLE IF NOT EXISTS public.order_reviews (
+    id TEXT PRIMARY KEY,
+    order_id TEXT REFERENCES public.orders(id) ON DELETE CASCADE,
+    customer_id TEXT,
+    customer_name TEXT NOT NULL,
+    store_id TEXT REFERENCES public.stores(id),
+    store_name TEXT NOT NULL,
+    store_rating NUMERIC(2, 1) NOT NULL DEFAULT 5.0,
+    store_tags JSONB DEFAULT '[]'::jsonb,
+    store_comment TEXT,
+    rider_name TEXT,
+    rider_rating NUMERIC(2, 1) DEFAULT 5.0,
+    rider_tags JSONB DEFAULT '[]'::jsonb,
+    rider_tip NUMERIC(10, 2) DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- =========================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- Ensures open access for the GETIT customer & merchant apps using anon key
@@ -120,6 +138,7 @@ ALTER TABLE public.store_inventory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.riders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_reviews ENABLE ROW LEVEL SECURITY;
 
 -- Allow anon public full read/write for seamless app operations
 DO $$
@@ -141,6 +160,9 @@ BEGIN
 
     DROP POLICY IF EXISTS "Public users access" ON public.users;
     CREATE POLICY "Public users access" ON public.users FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public order_reviews access" ON public.order_reviews;
+    CREATE POLICY "Public order_reviews access" ON public.order_reviews FOR ALL USING (true) WITH CHECK (true);
 END $$;
 
 -- Enable Real-time publications for live order & inventory updates

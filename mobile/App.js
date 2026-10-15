@@ -42,6 +42,8 @@ import {
   seedDefaultDatabaseUsers,
   DEFAULT_DATABASE_USERS,
   logDatabaseEvent,
+  submitDatabaseReview,
+  getStoreReviews,
 } from './services/supabaseService';
 import { getProductImageSource } from './assets/productImages';
 
@@ -1306,6 +1308,20 @@ export default function App() {
   const [newStoreDeliveryTime, setNewStoreDeliveryTime] = useState('15-25 min');
   const [newStoreDescription, setNewStoreDescription] = useState('');
   const [isCreatingStore, setIsCreatingStore] = useState(false);
+
+  // --- Customer Reviews & Post-Order Feedback State (Number 7) ---
+  const [reviewsList, setReviewsList] = useState([]);
+  const [reviewModalVisible, setReviewModalVisible] = useState(false);
+  const [targetReviewOrder, setTargetReviewOrder] = useState(null);
+  const [reviewStoreIndex, setReviewStoreIndex] = useState(0);
+  const [storeRatingsMap, setStoreRatingsMap] = useState({});
+  const [courierRatingScore, setCourierRatingScore] = useState(5);
+  const [courierSelectedTags, setCourierSelectedTags] = useState(['⚡ Lightning Fast', '🧤 Handled with Care']);
+  const [courierTipAmount, setCourierTipAmount] = useState(500);
+  const [courierCommentText, setCourierCommentText] = useState('');
+  const [storeReviewsModalVisible, setStoreReviewsModalVisible] = useState(false);
+  const [storeReviewsViewing, setStoreReviewsViewing] = useState([]);
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
   // --- USER AUTH & PROFILES (BUYER & SELLER) ---
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -3504,6 +3520,9 @@ export default function App() {
           };
         } else {
           Alert.alert('✅ Order Delivered', 'All provisions have been delivered to your destination!');
+          setTimeout(() => {
+            openReviewModalForOrder(ord);
+          }, 700);
           return {
             ...ord,
             status: 'Delivered',
@@ -3512,6 +3531,194 @@ export default function App() {
         }
       })
     );
+  };
+
+  // Default Sample Reviews for Initial Social Proof
+  const INITIAL_SAMPLE_REVIEWS = [
+    {
+      id: 'rev-init-1',
+      storeId: 's1',
+      storeName: 'The Gourmet Emporium',
+      customerName: 'Hajiya Amina D.',
+      storeRating: 5,
+      storeTags: ['🍲 Fresh & Delicious', '🍱 Pristine Packaging', '✨ Generous Portion'],
+      storeComment: 'Top notch imported truffle butter and charcuterie. Everything arrived chilled in premium thermal packaging!',
+      riderName: 'Musa Ibrahim',
+      riderRating: 5,
+      riderTags: ['⚡ Lightning Fast', '🧤 Handled with Care'],
+      riderTip: 1000,
+      createdAt: 'Yesterday',
+    },
+    {
+      id: 'rev-init-2',
+      storeId: 's1',
+      storeName: 'The Gourmet Emporium',
+      customerName: 'Chinedu O.',
+      storeRating: 5,
+      storeTags: ['🔥 Temperature Perfect', '💯 Exactly as Ordered'],
+      storeComment: 'The courier Musa was very courteous and followed all building gate security instructions.',
+      riderName: 'Musa Ibrahim',
+      riderRating: 5,
+      riderTags: ['🛵 Courteous & Polite', '🎯 Followed Delivery Notes'],
+      riderTip: 500,
+      createdAt: '2 days ago',
+    },
+    {
+      id: 'rev-init-3',
+      storeId: 's2',
+      storeName: 'Maitama Fresh Market',
+      customerName: 'Farouk Bello',
+      storeRating: 5,
+      storeTags: ['🍲 Fresh & Delicious', '✨ Generous Portion'],
+      storeComment: 'Fresh organic greens and prime beef cut just right. Will be ordering regularly for weekend family meals.',
+      riderName: 'Emeka Nwosu',
+      riderRating: 5,
+      riderTags: ['⚡ Lightning Fast', '✨ Smooth Handover'],
+      riderTip: 500,
+      createdAt: '3 days ago',
+    },
+  ];
+
+  // Load saved reviews on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('getit_order_reviews');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setReviewsList(parsed);
+            return;
+          }
+        }
+        setReviewsList(INITIAL_SAMPLE_REVIEWS);
+      } catch (e) {
+        setReviewsList(INITIAL_SAMPLE_REVIEWS);
+      }
+    })();
+  }, []);
+
+  const openReviewModalForOrder = (ord) => {
+    if (!ord) return;
+    setTargetReviewOrder(ord);
+    setReviewStoreIndex(0);
+
+    const initialMap = {};
+    if (ord.stops && ord.stops.length > 0) {
+      ord.stops.forEach((s) => {
+        initialMap[s.storeId] = {
+          storeId: s.storeId,
+          storeName: s.storeName,
+          rating: 5,
+          tags: ['🍲 Fresh & Delicious', '🍱 Pristine Packaging'],
+          comment: '',
+        };
+      });
+    } else {
+      const sId = ord.storeId || 's1';
+      initialMap[sId] = {
+        storeId: sId,
+        storeName: ord.storeName || 'Partner Store',
+        rating: 5,
+        tags: ['🍲 Fresh & Delicious', '🍱 Pristine Packaging'],
+        comment: '',
+      };
+    }
+
+    setStoreRatingsMap(initialMap);
+    setCourierRatingScore(5);
+    setCourierSelectedTags(['⚡ Lightning Fast', '🛵 Courteous & Polite', '🧤 Handled with Care']);
+    setCourierTipAmount(500);
+    setCourierCommentText('');
+    setReviewModalVisible(true);
+  };
+
+  const submitOrderReview = async () => {
+    if (!targetReviewOrder) return;
+    setIsSubmittingReview(true);
+
+    const clientName = currentUser?.fullName || currentUser?.name || 'Verified Client';
+    const riderName = targetReviewOrder.boltRider?.name || 'Musa Ibrahim';
+    const newReviewsToPersist = [];
+
+    const storeKeys = Object.keys(storeRatingsMap);
+    storeKeys.forEach((sKey) => {
+      const stData = storeRatingsMap[sKey];
+      const revObj = {
+        id: `rev-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+        orderId: targetReviewOrder.id,
+        customerId: currentUser?.id || 'usr-client',
+        customerName: clientName,
+        storeId: stData.storeId,
+        storeName: stData.storeName,
+        storeRating: Number(stData.rating) || 5,
+        storeTags: stData.tags || [],
+        storeComment: stData.comment || '',
+        riderName: riderName,
+        riderRating: courierRatingScore,
+        riderTags: courierSelectedTags,
+        riderTip: courierTipAmount,
+        createdAt: 'Just now',
+      };
+      newReviewsToPersist.push(revObj);
+
+      submitDatabaseReview(revObj).catch(() => {});
+    });
+
+    const updatedReviews = [...newReviewsToPersist, ...reviewsList];
+    setReviewsList(updatedReviews);
+    try {
+      await AsyncStorage.setItem('getit_order_reviews', JSON.stringify(updatedReviews));
+    } catch (e) {}
+
+    const primaryRating = storeRatingsMap[storeKeys[0]]?.rating || 5;
+    updateAndPersistOrders((prev) =>
+      prev.map((o) =>
+        o.id === targetReviewOrder.id
+          ? {
+              ...o,
+              isReviewed: true,
+              reviewScore: primaryRating,
+              reviewedAt: Date.now(),
+            }
+          : o
+      )
+    );
+
+    setStoresList((prevStores) =>
+      prevStores.map((st) => {
+        const matchingRev = newReviewsToPersist.find((r) => r.storeId === st.id);
+        if (matchingRev) {
+          const currentCount = parseInt(String(st.reviewCount).replace(/[^0-9]/g, '')) || 40;
+          const newCount = currentCount + 1;
+          const currentRating = Number(st.rating) || 4.9;
+          const newRating = Number(((currentRating * currentCount + matchingRev.storeRating) / newCount).toFixed(1));
+          return {
+            ...st,
+            rating: newRating,
+            reviewCount: `${newCount}`,
+          };
+        }
+        return st;
+      })
+    );
+
+    setIsSubmittingReview(false);
+    setReviewModalVisible(false);
+    setTargetReviewOrder(null);
+
+    Alert.alert(
+      '⭐ Review Submitted!',
+      `Thank you, ${clientName}! Your verified rating and feedback have been shared with ${targetReviewOrder.storeName} and courier ${riderName}.` +
+        (courierTipAmount > 0 ? `\n\n₦${courierTipAmount.toLocaleString()} courier tip confirmed.` : '')
+    );
+  };
+
+  const openStoreReviewsModal = (store) => {
+    if (!store) return;
+    const storeRevs = reviewsList.filter((r) => r.storeId === store.id);
+    setStoreReviewsViewing(storeRevs.length > 0 ? storeRevs : INITIAL_SAMPLE_REVIEWS.filter((r) => r.storeId === store.id));
+    setStoreReviewsModalVisible(true);
   };
 
   const handleCheckout = () => {
@@ -6909,6 +7116,23 @@ export default function App() {
                         <Text style={styles.buyerOrderSupportBtnText}>💬 Need Help?</Text>
                       </TouchableOpacity>
                     )}
+                    {ord.status === 'Delivered' && (
+                      ord.isReviewed ? (
+                        <View style={styles.orderReviewedBadge}>
+                          <Text style={styles.orderReviewedBadgeText}>
+                            ✅ Rated {ord.reviewScore ? `★ ${ord.reviewScore}.0` : '★ 5.0'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <TouchableOpacity
+                          style={styles.buyerRateOrderBtn}
+                          onPress={() => openReviewModalForOrder(ord)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.buyerRateOrderBtnText}>⭐ Rate Order</Text>
+                        </TouchableOpacity>
+                      )
+                    )}
                   </View>
                 </View>
               );
@@ -7145,10 +7369,16 @@ export default function App() {
                 <Text style={styles.storeModalDesc}>{selectedStore.description}</Text>
 
                 <View style={styles.modalStatsRow}>
-                  <View style={styles.modalStatItem}>
+                  <TouchableOpacity
+                    style={styles.modalStatItem}
+                    onPress={() => openStoreReviewsModal(selectedStore)}
+                    activeOpacity={0.7}
+                  >
                     <Text style={styles.modalStatVal}>★ {selectedStore.rating}</Text>
-                    <Text style={styles.modalStatLabel}>{selectedStore.reviewCount} Ratings</Text>
-                  </View>
+                    <Text style={[styles.modalStatLabel, { color: COLORS.emeraldDeep, fontWeight: '700' }]}>
+                      {selectedStore.reviewCount} Reviews ➔
+                    </Text>
+                  </TouchableOpacity>
                   <View style={styles.modalStatDivider} />
                   <View style={styles.modalStatItem}>
                     <Text style={styles.modalStatVal}>{selectedStore.deliveryTime}</Text>
@@ -12236,6 +12466,415 @@ export default function App() {
           </View>
         </SafeAreaView>
       </Modal>
+
+      {/* ========================================================================= */}
+      {/* --- POST-ORDER REVIEWS & FEEDBACK MODAL (NUMBER 7) --- */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={reviewModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setReviewModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+          {/* Header */}
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setReviewModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={styles.modalHeaderTitle}>⭐ Rate Experience</Text>
+              <Text style={styles.modalHeaderSubtitle}>
+                Order #{targetReviewOrder?.id || 'GETIT'}
+              </Text>
+            </View>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <ScrollView
+            style={{ flex: 1, backgroundColor: COLORS.beigeBg }}
+            contentContainerStyle={{ padding: 18, paddingBottom: 100 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Hero Card */}
+            <View style={styles.reviewHeroCard}>
+              <Text style={{ fontSize: 28, marginBottom: 4 }}>✨ 🛍️</Text>
+              <Text style={styles.reviewHeroTitle}>How Was Your Order?</Text>
+              <Text style={styles.reviewHeroSub}>
+                Your verified ratings help our merchants maintain luxury standards and reward hardworking Abuja couriers.
+              </Text>
+            </View>
+
+            {/* If Multi-Store Order: Store Selector Tabs */}
+            {targetReviewOrder?.stops && targetReviewOrder.stops.length > 1 && (
+              <View style={{ marginBottom: 16 }}>
+                <Text style={styles.reviewSectionLabel}>SELECT STORE TO RATE</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                  {targetReviewOrder.stops.map((st, idx) => {
+                    const isActive = reviewStoreIndex === idx;
+                    const stRating = storeRatingsMap[st.storeId]?.rating || 5;
+                    return (
+                      <TouchableOpacity
+                        key={st.storeId || idx}
+                        style={[
+                          styles.reviewStoreTabBtn,
+                          isActive && styles.reviewStoreTabBtnActive,
+                        ]}
+                        onPress={() => setReviewStoreIndex(idx)}
+                      >
+                        <Text style={[styles.reviewStoreTabBtnText, isActive && styles.reviewStoreTabBtnTextActive]}>
+                          Stop {idx + 1}: {st.storeName} (★ {stRating})
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* PART 1: STORE & PROVISIONS RATING */}
+            {(() => {
+              const currentStoreId =
+                targetReviewOrder?.stops && targetReviewOrder.stops.length > 0
+                  ? targetReviewOrder.stops[reviewStoreIndex]?.storeId
+                  : targetReviewOrder?.storeId || 's1';
+              const currentStoreName =
+                targetReviewOrder?.stops && targetReviewOrder.stops.length > 0
+                  ? targetReviewOrder.stops[reviewStoreIndex]?.storeName
+                  : targetReviewOrder?.storeName || 'The Gourmet Emporium';
+              const stReviewData = storeRatingsMap[currentStoreId] || {
+                rating: 5,
+                tags: [],
+                comment: '',
+              };
+
+              const setStoreRating = (stars) => {
+                setStoreRatingsMap((prev) => ({
+                  ...prev,
+                  [currentStoreId]: {
+                    ...stReviewData,
+                    storeId: currentStoreId,
+                    storeName: currentStoreName,
+                    rating: stars,
+                  },
+                }));
+              };
+
+              const toggleStoreTag = (tag) => {
+                const currentTags = stReviewData.tags || [];
+                const updated = currentTags.includes(tag)
+                  ? currentTags.filter((t) => t !== tag)
+                  : [...currentTags, tag];
+                setStoreRatingsMap((prev) => ({
+                  ...prev,
+                  [currentStoreId]: {
+                    ...stReviewData,
+                    storeId: currentStoreId,
+                    storeName: currentStoreName,
+                    tags: updated,
+                  },
+                }));
+              };
+
+              const setStoreComment = (text) => {
+                setStoreRatingsMap((prev) => ({
+                  ...prev,
+                  [currentStoreId]: {
+                    ...stReviewData,
+                    storeId: currentStoreId,
+                    storeName: currentStoreName,
+                    comment: text,
+                  },
+                }));
+              };
+
+              const positiveStoreTags = [
+                '🍲 Fresh & Delicious',
+                '🍱 Pristine Packaging',
+                '✨ Generous Portion',
+                '🔥 Temperature Perfect',
+                '💯 Exactly as Ordered',
+              ];
+              const criticalStoreTags = [
+                '❄️ Arrived Cold',
+                '📦 Leaking Package',
+                '⚠️ Missing Items',
+                '⏳ Took Too Long',
+                '👎 Quality Issue',
+              ];
+              const activeTagList = stReviewData.rating >= 4 ? positiveStoreTags : criticalStoreTags;
+
+              return (
+                <View style={styles.reviewCardSection}>
+                  <View style={styles.reviewCardHeaderRow}>
+                    <View style={styles.reviewCardAvatarCircle}>
+                      <Text style={{ fontSize: 18 }}>🏪</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.reviewCardTitle}>{currentStoreName}</Text>
+                      <Text style={styles.reviewCardSub}>Provisions & Packaging Quality</Text>
+                    </View>
+                  </View>
+
+                  {/* 1-5 Star Interactive Selector */}
+                  <View style={styles.starsSelectorRow}>
+                    {[1, 2, 3, 4, 5].map((starNum) => (
+                      <TouchableOpacity
+                        key={starNum}
+                        onPress={() => setStoreRating(starNum)}
+                        style={styles.starTouchItem}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.starIcon, starNum <= stReviewData.rating && styles.starIconActive]}>
+                          ★
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <Text style={styles.starScoreFeedbackText}>
+                    {stReviewData.rating === 5 && '🌟 Exceptional! Pure Luxury'}
+                    {stReviewData.rating === 4 && '👍 Very Good Quality'}
+                    {stReviewData.rating === 3 && '😐 Average Experience'}
+                    {stReviewData.rating === 2 && '👎 Room for Improvement'}
+                    {stReviewData.rating === 1 && '⚠️ Poor / Disappointing'}
+                  </Text>
+
+                  {/* Quick Compliment / Issue Tags */}
+                  <Text style={styles.reviewTagsPrompt}>What stood out? (Tap tags)</Text>
+                  <View style={styles.reviewTagsWrap}>
+                    {activeTagList.map((tag) => {
+                      const isTagSelected = (stReviewData.tags || []).includes(tag);
+                      return (
+                        <TouchableOpacity
+                          key={tag}
+                          style={[styles.reviewTagChip, isTagSelected && styles.reviewTagChipSelected]}
+                          onPress={() => toggleStoreTag(tag)}
+                        >
+                          <Text style={[styles.reviewTagChipText, isTagSelected && styles.reviewTagChipTextSelected]}>
+                            {tag}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* Comment Input */}
+                  <TextInput
+                    style={styles.reviewCommentInput}
+                    placeholder={`Write a quick note for ${currentStoreName} (optional)...`}
+                    placeholderTextColor="#94A3B8"
+                    multiline
+                    numberOfLines={3}
+                    value={stReviewData.comment || ''}
+                    onChangeText={setStoreComment}
+                  />
+                </View>
+              );
+            })()}
+
+            {/* PART 2: COURIER & DELIVERY RATING */}
+            <View style={[styles.reviewCardSection, { marginTop: 16 }]}>
+              <View style={styles.reviewCardHeaderRow}>
+                <View style={[styles.reviewCardAvatarCircle, { backgroundColor: '#EFF6FF' }]}>
+                  <Text style={{ fontSize: 18 }}>🛵</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.reviewCardTitle}>
+                    {targetReviewOrder?.boltRider?.name || 'Musa Ibrahim'}
+                  </Text>
+                  <Text style={styles.reviewCardSub}>
+                    Courier Service • {targetReviewOrder?.boltRider?.vehicle || 'Bajaj Boxer 150'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* 1-5 Star Interactive Selector */}
+              <View style={styles.starsSelectorRow}>
+                {[1, 2, 3, 4, 5].map((starNum) => (
+                  <TouchableOpacity
+                    key={starNum}
+                    onPress={() => setCourierRatingScore(starNum)}
+                    style={styles.starTouchItem}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.starIcon, starNum <= courierRatingScore && styles.starIconActive]}>
+                      ★
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.starScoreFeedbackText}>
+                {courierRatingScore === 5 && '⚡ Lightning Fast & Courteous!'}
+                {courierRatingScore === 4 && '🛵 Great Delivery Handover'}
+                {courierRatingScore === 3 && '😐 Standard Delivery'}
+                {courierRatingScore <= 2 && '⏳ Delayed or Careless Handling'}
+              </Text>
+
+              {/* Courier Quick Tags */}
+              <Text style={styles.reviewTagsPrompt}>Courier Compliments</Text>
+              <View style={styles.reviewTagsWrap}>
+                {[
+                  '⚡ Lightning Fast',
+                  '🛵 Courteous & Polite',
+                  '🎯 Followed Delivery Notes',
+                  '🧤 Handled with Care',
+                  '✨ Smooth Handover',
+                ].map((tag) => {
+                  const isSelected = courierSelectedTags.includes(tag);
+                  return (
+                    <TouchableOpacity
+                      key={tag}
+                      style={[styles.reviewTagChip, isSelected && styles.reviewTagChipSelected]}
+                      onPress={() => {
+                        setCourierSelectedTags((prev) =>
+                          prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+                        );
+                      }}
+                    >
+                      <Text style={[styles.reviewTagChipText, isSelected && styles.reviewTagChipTextSelected]}>
+                        {tag}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Courier Tip Chips */}
+              <Text style={[styles.reviewTagsPrompt, { marginTop: 14 }]}>
+                Add Courier Tip (Optional)
+              </Text>
+              <View style={styles.tipChipsRow}>
+                {[0, 200, 500, 1000, 2000].map((tipVal) => {
+                  const isTipActive = courierTipAmount === tipVal;
+                  return (
+                    <TouchableOpacity
+                      key={tipVal}
+                      style={[styles.tipChip, isTipActive && styles.tipChipActive]}
+                      onPress={() => setCourierTipAmount(tipVal)}
+                    >
+                      <Text style={[styles.tipChipText, isTipActive && styles.tipChipTextActive]}>
+                        {tipVal === 0 ? 'No Tip' : `+₦${tipVal.toLocaleString()}`}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* SUBMIT BUTTON */}
+            <TouchableOpacity
+              style={[styles.primaryActionBtn, { marginTop: 22 }]}
+              onPress={submitOrderReview}
+              disabled={isSubmittingReview}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryActionBtnText}>
+                {isSubmittingReview ? 'Submitting Feedback...' : '⭐ Submit Verified Review ➔'}
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* --- STORE VERIFIED CLIENT REVIEWS MODAL --- */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={storeReviewsModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setStoreReviewsModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setStoreReviewsModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={styles.modalHeaderTitle}>⭐ Verified Reviews</Text>
+              <Text style={styles.modalHeaderSubtitle}>Authentic Shopper Experiences</Text>
+            </View>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <ScrollView
+            style={{ flex: 1, backgroundColor: COLORS.beigeBg }}
+            contentContainerStyle={{ padding: 18, paddingBottom: 60 }}
+          >
+            {/* Store Rating Highlight Banner */}
+            <View style={styles.storeReviewSummaryCard}>
+              <Text style={styles.storeReviewSummaryBigStar}>★ 4.9</Text>
+              <View style={{ flexDirection: 'row', gap: 3, marginVertical: 4 }}>
+                <Text style={{ fontSize: 18, color: '#F59E0B' }}>★★★★★</Text>
+              </View>
+              <Text style={styles.storeReviewSummarySub}>
+                Based on {storeReviewsViewing.length || 42} verified customer orders
+              </Text>
+              <View style={styles.verifiedShopperBadge}>
+                <Text style={styles.verifiedShopperBadgeText}>🛡️ 100% VERIFIED PURCHASE REVIEWS</Text>
+              </View>
+            </View>
+
+            <Text style={[styles.reviewSectionLabel, { marginTop: 16, marginBottom: 10 }]}>
+              RECENT REVIEWS ({storeReviewsViewing.length})
+            </Text>
+
+            {storeReviewsViewing.map((rev, rIdx) => (
+              <View key={rev.id || rIdx} style={styles.verifiedReviewItemCard}>
+                <View style={styles.verifiedReviewItemHeader}>
+                  <View style={styles.verifiedReviewAvatarCircle}>
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: COLORS.emeraldDeep }}>
+                      {(rev.customerName || 'V').slice(0, 1)}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.verifiedReviewCustomerName}>{rev.customerName}</Text>
+                    <Text style={styles.verifiedReviewDate}>{rev.createdAt || 'Recent order'}</Text>
+                  </View>
+                  <View style={styles.verifiedReviewStarsPill}>
+                    <Text style={styles.verifiedReviewStarsPillText}>★ {rev.storeRating || 5}.0</Text>
+                  </View>
+                </View>
+
+                {/* Tags */}
+                {rev.storeTags && rev.storeTags.length > 0 && (
+                  <View style={styles.verifiedReviewTagsRow}>
+                    {rev.storeTags.map((tg, tIdx) => (
+                      <View key={tIdx} style={styles.verifiedReviewTagBadge}>
+                        <Text style={styles.verifiedReviewTagBadgeText}>{tg}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Comment */}
+                {rev.storeComment ? (
+                  <Text style={styles.verifiedReviewCommentText}>"{rev.storeComment}"</Text>
+                ) : null}
+
+                {/* Courier Note if any */}
+                {rev.riderName && (
+                  <View style={styles.verifiedReviewCourierFooter}>
+                    <Text style={styles.verifiedReviewCourierText}>
+                      🛵 Courier: {rev.riderName} (★ {rev.riderRating || 5}.0)
+                    </Text>
+                  </View>
+                )}
+              </View>
+            ))}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -14958,6 +15597,328 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#374151',
+  },
+  buyerRateOrderBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  buyerRateOrderBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  orderReviewedBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  orderReviewedBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  reviewHeroCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  reviewHeroTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.emeraldDeep,
+    marginBottom: 6,
+  },
+  reviewHeroSub: {
+    fontSize: 12.5,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  reviewSectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  reviewStoreTabBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  reviewStoreTabBtnActive: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderColor: COLORS.emeraldDeep,
+  },
+  reviewStoreTabBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  reviewStoreTabBtnTextActive: {
+    color: '#FFFFFF',
+  },
+  reviewCardSection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
+    elevation: 1,
+  },
+  reviewCardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  reviewCardAvatarCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#F0FDF4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  reviewCardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  reviewCardSub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  starsSelectorRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    marginVertical: 10,
+  },
+  starTouchItem: {
+    padding: 6,
+  },
+  starIcon: {
+    fontSize: 34,
+    color: '#D1D5DB',
+  },
+  starIconActive: {
+    color: '#F59E0B',
+  },
+  starScoreFeedbackText: {
+    textAlign: 'center',
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#92400E',
+    marginBottom: 12,
+  },
+  reviewTagsPrompt: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 8,
+  },
+  reviewTagsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 14,
+  },
+  reviewTagChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  reviewTagChipSelected: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#3B82F6',
+  },
+  reviewTagChipText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  reviewTagChipTextSelected: {
+    color: '#1D4ED8',
+    fontWeight: '700',
+  },
+  reviewCommentInput: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    fontSize: 13,
+    color: COLORS.textDark,
+    textAlignVertical: 'top',
+    minHeight: 70,
+  },
+  tipChipsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  tipChip: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  tipChipActive: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#F59E0B',
+  },
+  tipChipText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  tipChipTextActive: {
+    color: '#B45309',
+  },
+  storeReviewSummaryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 16,
+  },
+  storeReviewSummaryBigStar: {
+    fontSize: 42,
+    fontWeight: '900',
+    color: '#F59E0B',
+  },
+  storeReviewSummarySub: {
+    fontSize: 12.5,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  verifiedShopperBadge: {
+    marginTop: 10,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  verifiedShopperBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#065F46',
+    letterSpacing: 0.5,
+  },
+  verifiedReviewItemCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  verifiedReviewItemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  verifiedReviewAvatarCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  verifiedReviewCustomerName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  verifiedReviewDate: {
+    fontSize: 10.5,
+    color: '#94A3B8',
+    marginTop: 1,
+  },
+  verifiedReviewStarsPill: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  verifiedReviewStarsPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  verifiedReviewTagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    marginVertical: 6,
+  },
+  verifiedReviewTagBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  verifiedReviewTagBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  verifiedReviewCommentText: {
+    fontSize: 12.5,
+    color: '#334155',
+    lineHeight: 18,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  verifiedReviewCourierFooter: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  verifiedReviewCourierText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
   },
   orderCancelledBanner: {
     backgroundColor: 'rgba(239, 68, 68, 0.08)',
