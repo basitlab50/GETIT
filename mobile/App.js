@@ -2187,13 +2187,16 @@ export default function App() {
               pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             }));
 
-            // 🔔 Audio Beep & Push: Courier arrived outside gate!
-            notifyCourierArrived(ord);
+            // 🔔 Audio Beep & Push: Courier arrived outside gate (ONLY ONCE!)
+            if (!ord.hasNotifiedArrived) {
+              notifyCourierArrived(ord);
+            }
 
             return {
               ...ord,
               stops: updatedStops,
               status: 'On the Way',
+              hasNotifiedArrived: true,
               journeyAlert: `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin}) to collect packages.`,
             };
           }
@@ -2208,15 +2211,15 @@ export default function App() {
     const unsubscribe = subscribeToOrders((payload) => {
       if (payload.eventType === 'INSERT' && payload.new) {
         const item = payload.new;
-        // 🔔 Audio Beep & Push: New order synced from Supabase cloud
-        notifyOrderPlaced({
-          id: item.id,
-          storeName: item.store_name,
-          itemsCount: item.items_count,
-          total: item.total,
-        });
         updateAndPersistOrders((prev) => {
           if (prev.some((o) => o.id === item.id)) return prev;
+          // 🔔 Audio Beep & Push: Only notify on truly brand-new external orders
+          notifyOrderPlaced({
+            id: item.id,
+            storeName: item.store_name,
+            itemsCount: item.items_count,
+            total: item.total,
+          });
           return [
             {
               id: item.id,

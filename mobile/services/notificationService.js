@@ -27,19 +27,25 @@ export function subscribeToInAppNotifications(listener) {
   return () => inAppNotificationListeners.delete(listener);
 }
 
+// Rate-limiting and deduplication shield to prevent repetitive buzzing
+const recentNotificationTimestamps = new Map();
+let lastVibrationTime = 0;
+
 // =========================================================================
 // 2. AUDIO SYNTHESIZER (INSTANT LUXURY BEEP & CHIME)
 // Works seamlessly in web, hybrid, and native without missing audio files
 // =========================================================================
 export function playAudioBeep(type = 'default') {
   try {
-    // 1. Native / Web Vibration
-    if (type === 'merchant_new_order') {
-      Vibration.vibrate([0, 400, 150, 400, 150, 600]);
-    } else if (type === 'arrived') {
-      Vibration.vibrate([0, 250, 100, 250]);
-    } else {
-      Vibration.vibrate([0, 200, 100, 200]);
+    const now = Date.now();
+    // Throttle vibration so phone never buzzes continuously
+    if (now - lastVibrationTime > 6000) {
+      lastVibrationTime = now;
+      if (type === 'merchant_new_order') {
+        Vibration.vibrate([0, 250, 100, 250]);
+      } else {
+        Vibration.vibrate(200);
+      }
     }
 
     // 2. Web Audio API Synthesis (Browser & Hybrid Web View)
@@ -167,6 +173,16 @@ export async function triggerNotification({
   type = 'default',
   data = {},
 }) {
+  const notifKey = `${type}_${data.orderId || title}`;
+  const now = Date.now();
+  const lastFired = recentNotificationTimestamps.get(notifKey) || 0;
+
+  // Suppress duplicate notification if already sent recently
+  if (now - lastFired < 60000) {
+    return;
+  }
+  recentNotificationTimestamps.set(notifKey, now);
+
   // 1. Play immediate audio beep & vibration
   playAudioBeep(type);
 
