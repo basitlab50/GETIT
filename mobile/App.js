@@ -18,6 +18,7 @@ import {
   Animated,
   Easing,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, Polyline } from 'react-native-maps';
@@ -1648,6 +1649,31 @@ export default function App() {
     });
   };
 
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
+
+  // Cross-device order synchronization with Supabase
+  const syncOrdersFromCloud = async () => {
+    setIsRefreshingOrders(true);
+    try {
+      const cloudOrders = await getDatabaseOrders();
+      if (cloudOrders && cloudOrders.length > 0) {
+        updateAndPersistOrders((prev) => {
+          const orderMap = new Map();
+          prev.forEach((o) => orderMap.set(o.id, o));
+          cloudOrders.forEach((co) => {
+            const existing = orderMap.get(co.id);
+            orderMap.set(co.id, existing ? { ...existing, ...co, status: co.status || existing.status } : co);
+          });
+          return Array.from(orderMap.values());
+        });
+      }
+    } catch (err) {
+      console.warn('Sync orders from cloud error:', err);
+    } finally {
+      setIsRefreshingOrders(false);
+    }
+  };
+
   const updateAndPersistStores = (updater) => {
     setStoresList((prev) => {
       const updated = typeof updater === 'function' ? updater(prev) : updater;
@@ -2206,6 +2232,13 @@ export default function App() {
     }, 2000);
     return () => clearInterval(timer);
   }, []);
+
+  // Auto-sync freshest cloud orders whenever the user switches to Orders tab
+  useEffect(() => {
+    if (activeTab === 'orders') {
+      syncOrdersFromCloud();
+    }
+  }, [activeTab]);
 
   // Supabase Real-time Cloud Orders Subscription (Persisted)
   useEffect(() => {
@@ -3453,11 +3486,34 @@ export default function App() {
   };
 
   // Cleanly sorted & filtered buyer orders list:
+  // - Filters to current user's orders across all devices
   // - Latest placed order is pinned at the top with 🔥 highlight badge
   // - Chronologically sorted (newest orders first)
   // - Filterable by Active, All, Delivered, Cancelled
   const sortedAndFilteredOrders = useMemo(() => {
-    const sorted = [...orders].sort((a, b) => {
+    let userOrders = orders;
+    if (currentUser) {
+      const userPhoneClean = (currentUser.phone || '').replace(/\D/g, '');
+      const userMatching = orders.filter((o) => {
+        const orderPhoneClean = (o.customerPhone || '').replace(/\D/g, '');
+        const phoneMatch =
+          userPhoneClean.length >= 7 &&
+          orderPhoneClean.length >= 7 &&
+          (userPhoneClean.endsWith(orderPhoneClean) || orderPhoneClean.endsWith(userPhoneClean));
+        const nameMatch =
+          currentUser.fullName &&
+          o.customerName &&
+          o.customerName.toLowerCase() === currentUser.fullName.toLowerCase();
+        const idMatch = currentUser.id && o.customerId && o.customerId === currentUser.id;
+        return phoneMatch || nameMatch || idMatch;
+      });
+
+      if (userMatching.length > 0) {
+        userOrders = userMatching;
+      }
+    }
+
+    const sorted = [...userOrders].sort((a, b) => {
       if (lastPlacedOrderId && a.id === lastPlacedOrderId) return -1;
       if (lastPlacedOrderId && b.id === lastPlacedOrderId) return 1;
       return (b.timestamp || 0) - (a.timestamp || 0);
@@ -3473,7 +3529,7 @@ export default function App() {
       return sorted.filter((o) => o.status === 'Cancelled');
     }
     return sorted;
-  }, [orders, ordersFilterTab, lastPlacedOrderId]);
+  }, [orders, ordersFilterTab, lastPlacedOrderId, currentUser]);
 
   // Advance multi-stop courier journey: Step 1 -> Step 2 -> Dropoff Destination
   const advanceMultiStopJourney = (orderId) => {
@@ -3914,7 +3970,9 @@ export default function App() {
       total: cartTotal,
       deliveryPartner: selectedDeliveryTier,
       deliveryPin: masterDeliveryPin,
-      customerName: currentUser?.fullName || currentUser?.name || 'Alhaji Farouk Bello',
+      customerId: currentUser?.id || 'guest',
+      customerName: currentUser?.fullName || currentUser?.name || 'Customer',
+      customerPhone: currentUser?.phone || '08032941194',
       customerAddress: pinnedLocation.name,
       deliveryLocation: {
         latitude: pinnedLocation.latitude,
@@ -4018,7 +4076,7 @@ export default function App() {
       storeName: masterOrder.storeName,
       customerId: currentUser?.id || 'guest',
       customerName: masterOrder.customerName,
-      customerPhone: currentUser?.phone || '+234 803 000 1234',
+      customerPhone: masterOrder.customerPhone || currentUser?.phone || '08032941194',
       customerAddress: masterOrder.customerAddress,
       deliveryLat: masterOrder.deliveryLocation?.latitude,
       deliveryLng: masterOrder.deliveryLocation?.longitude,
@@ -4511,6 +4569,7 @@ export default function App() {
     setCurrentUser(existingUser);
     setAppMode('customer');
     setIsLoggedIn(true);
+    syncOrdersFromCloud();
     if (existingUser.storeId) {
       setMerchantStoreId(existingUser.storeId);
     }
@@ -4652,6 +4711,7 @@ export default function App() {
     setMerchantStoreId(activeStoreId);
     setAppMode('merchant');
     setIsLoggedIn(true);
+    syncOrdersFromCloud();
     setAuthLoginInput(existingSeller.phone || existingSeller.email || input);
     setAuthLoginPassword(pass);
     try {
@@ -6547,6 +6607,14 @@ export default function App() {
         <ScrollView
           style={styles.mainScrollView}
           contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshingOrders}
+              onRefresh={syncOrdersFromCloud}
+              tintColor={COLORS.emeraldPrimary}
+              colors={[COLORS.emeraldPrimary]}
+            />
+          }
         >
           {/* Top Title and History Manager Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -6554,15 +6622,26 @@ export default function App() {
               <Text style={styles.sectionHeading}>My Orders</Text>
               <Text style={styles.sectionSubheading}>Live delivery tracking & security PINs</Text>
             </View>
-            {orders.length > 0 && (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <TouchableOpacity
-                onPress={clearAllOrdersHistory}
-                style={styles.ordersClearHistoryBtn}
+                onPress={syncOrdersFromCloud}
+                style={[styles.ordersClearHistoryBtn, { marginRight: 6, backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}
                 activeOpacity={0.7}
               >
-                <Text style={styles.ordersClearHistoryBtnText}>🗑️ Clean List</Text>
+                <Text style={[styles.ordersClearHistoryBtnText, { color: '#065F46' }]}>
+                  {isRefreshingOrders ? '⏳ Syncing...' : '🔄 Sync'}
+                </Text>
               </TouchableOpacity>
-            )}
+              {orders.length > 0 && (
+                <TouchableOpacity
+                  onPress={clearAllOrdersHistory}
+                  style={styles.ordersClearHistoryBtn}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.ordersClearHistoryBtnText}>🗑️ Clean</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
 
           {/* Clean Categorized Status Filter Tabs */}

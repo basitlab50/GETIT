@@ -246,12 +246,18 @@ export async function getDatabaseOrders() {
       id: item.id,
       storeId: item.store_id,
       storeName: item.store_name,
+      customerId: item.customer_id,
+      customerName: item.customer_name || 'Customer',
+      customerPhone: item.customer_phone || '',
+      customerAddress: item.customer_address || 'Abuja, Nigeria',
       itemsCount: item.items_count || (item.items ? item.items.length : 1),
       items: item.items || [],
+      subtotal: Number(item.subtotal) || 0,
       total: Number(item.total) || 0,
       vendorPayout: Number(item.vendor_payout) || Math.round((Number(item.total) || 0) * 0.9),
       deliveryPartner: item.delivery_partner || 'bolt',
       deliveryFee: Number(item.delivery_fee) || 1200,
+      conciergeFee: Number(item.concierge_fee) || 0,
       boltStatus: item.bolt_status,
       boltTrackingCode: item.bolt_tracking_code,
       boltRider: item.bolt_rider,
@@ -260,15 +266,17 @@ export async function getDatabaseOrders() {
       eta: item.eta || '20 mins',
       deliveryPin: item.delivery_pin || '2489',
       pickupPin: item.pickup_pin || '7731',
-      customerName: item.customer_name || 'Customer',
-      customerAddress: item.customer_address || 'Abuja, Nigeria',
       deliveryLocation: {
         latitude: item.delivery_lat || 9.0882,
         longitude: item.delivery_lng || 7.4933,
+        notes: item.courier_notes || '',
       },
+      timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
       createdAt: item.created_at
         ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : '12:00 PM',
+      dateStr: item.created_at ? new Date(item.created_at).toLocaleDateString() : 'Today',
+      isMultiStore: item.items && Array.isArray(item.items) && item.items.some(i => i.storeName && i.storeName !== item.store_name),
     }));
   } catch (err) {
     console.warn('Failed to fetch orders from Supabase:', err);
