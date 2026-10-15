@@ -297,8 +297,28 @@ Status:     All changes synced, verified, and pushed to origin/main
       5. Delivery Completed: Handover confirmation + review prompt chime.
 
 --------------------------------------------------------------------------------
-3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
+[19:15:00] Complete Cross-Device Cloud Sync via Supabase JSONB (Commit fc6b624)
+  - Root Cause Diagnosed: Orders in Supabase previously only held basic top-level fields (items, total, name),
+    while `stops` (pickup sequence checklist), `roadRouteCoordinates` (blue road polyline), and `roadLegs`
+    were only held in local device memory on the placing device. As a result, Device 2 (e.g. phone) could
+    not render the pickup stops timeline, the shop markers, or the blue road routes.
+  - Supabase JSONB Persistence: Bundled `stops`, `roadRouteCoordinates`, `roadLegs`, `isMultiStore`,
+    `currentStopIndex`, and `journeyAlert` inside the native `bolt_rider` JSONB column in Supabase.
+  - Resilient Auto-Reconstruction: Updated `getDatabaseOrders` so that if an older order was saved without
+    explicit stops, it dynamically reconstructs the multi-store `stops` array from item metadata and store coordinates.
+  - Direction Points Cloud Sync: Updated `fetchRealRoadDirections` so that once snapped road coordinates are
+    computed, they are immediately persisted to Supabase via `updateDatabaseOrderStatus`.
+  - Bidirectional Cloud Sync: Updated `syncOrdersFromCloud` so that when Device 1 syncs, it uploads all local
+    orders with their full stops and route geometry to Supabase; Device 2 then downloads them completely.
+  - Map Route Rendering: Enhanced the order tracking map to display both the full roadmap path connecting all
+    stores to the home destination, as well as the active courier transit leg with fallback geometry.
+
+3. GIT COMMIT RECORD (OCTOBER 11 - 14, 2026)
 --------------------------------------------------------------------------------
+- fc6b624  fix(sync): persist full multi-store stops, road route coordinates, and sequence in Supabase JSONB for identical cross-device tracking
+- 2c64de3  fix(sync): fix Supabase orders schema rejection and implement bidirectional cloud order sync
+- 943c1b1  fix(sync): sync cloud orders across devices on login, tab switch, and add pull-to-refresh
+- 20e2a20  feat(basket): implement multi-store cart grouping, split checkout tickets, and order cancellation flow
 - fix(store-closed): ensure door animation runs smoothly across web and native with top banner placement
 - 71c3967  feat(store-closed): add luxury animated double storefront doors with swinging closed sign and interactive door knock
 - ab26bc3  fix(store-timing): enforce operating days schedule so weekends-only stores are closed on weekdays
@@ -322,3 +342,4 @@ Status:     All changes synced, verified, and pushed to origin/main
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
+
