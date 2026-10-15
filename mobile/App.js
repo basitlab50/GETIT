@@ -1663,11 +1663,10 @@ export default function App() {
       const cloudOrders = await getDatabaseOrders();
       const cloudOrderIds = new Set((cloudOrders || []).map((o) => o.id));
 
-      // 3. Bidirectional Push: If this device has any locally placed orders
-      // that are not yet in Supabase, upload them now!
+      // 3. Bidirectional Push: If this device has any local orders with stops/routes,
+      // upload or update them in Supabase so all other devices receive them!
       for (const localOrd of orders) {
-        if (!localOrd.isDemo && !cloudOrderIds.has(localOrd.id)) {
-          console.log('🔄 Uploading local order to Supabase:', localOrd.id);
+        if (!localOrd.isDemo && (!cloudOrderIds.has(localOrd.id) || (localOrd.stops && localOrd.stops.length > 0))) {
           await createDatabaseOrder(localOrd).catch(console.warn);
         }
       }
@@ -1680,7 +1679,19 @@ export default function App() {
           prev.forEach((o) => orderMap.set(o.id, o));
           freshest.forEach((co) => {
             const existing = orderMap.get(co.id);
-            orderMap.set(co.id, existing ? { ...existing, ...co, status: co.status || existing.status } : co);
+            orderMap.set(
+              co.id,
+              existing
+                ? {
+                    ...existing,
+                    ...co,
+                    status: co.status || existing.status,
+                    stops: (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []),
+                    roadRouteCoordinates: (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []),
+                    roadLegs: (co.roadLegs && co.roadLegs.length > 0) ? co.roadLegs : (existing.roadLegs || []),
+                  }
+                : co
+            );
           });
           return Array.from(orderMap.values());
         });
@@ -4035,6 +4046,19 @@ export default function App() {
               : o
           )
         );
+
+        updateDatabaseOrderStatus(masterOrder.id, {
+          boltRider: {
+            ...masterOrder.boltRider,
+            stops: updatedStops,
+            roadRouteCoordinates: result.roadPoints,
+            roadLegs: result.legs,
+            isMultiStore: masterOrder.isMultiStore,
+            currentStopIndex: masterOrder.currentStopIndex || 0,
+            journeyAlert: masterOrder.journeyAlert,
+          },
+          boltCoords: result.roadPoints[0],
+        }).catch(console.warn);
       }
     });
 
@@ -4067,28 +4091,15 @@ export default function App() {
     }
 
     createDatabaseOrder({
-      id: masterOrder.id,
-      storeId: stops[0]?.storeId || 's1',
-      storeName: masterOrder.storeName,
-      customerId: currentUser?.id || 'guest',
-      customerName: masterOrder.customerName,
-      customerPhone: masterOrder.customerPhone || currentUser?.phone || '08032941194',
-      customerAddress: masterOrder.customerAddress,
-      deliveryLat: masterOrder.deliveryLocation?.latitude,
-      deliveryLng: masterOrder.deliveryLocation?.longitude,
-      courierNotes: masterOrder.deliveryLocation?.notes,
-      items: masterOrder.items,
-      itemsCount: masterOrder.itemsCount,
-      subtotal: masterOrder.subtotal,
-      total: masterOrder.total,
+      ...masterOrder,
+      stops: stops,
+      roadRouteCoordinates: masterOrder.roadRouteCoordinates || [],
+      roadLegs: masterOrder.roadLegs || [],
+      isMultiStore: isMultiStore,
+      currentStopIndex: 0,
+      journeyAlert: masterOrder.journeyAlert,
       vendorPayout: stops.reduce((s, st) => s + st.vendorPayout, 0),
-      deliveryFee: masterOrder.deliveryFee,
-      conciergeFee: masterOrder.conciergeFee,
-      deliveryPartner: masterOrder.deliveryPartner,
-      deliveryPin: masterOrder.deliveryPin,
       pickupPin: stops[0]?.pickupPin,
-      status: masterOrder.status,
-      eta: masterOrder.eta,
     }).catch((e) => console.log('Supabase order upload notice:', e?.message));
   };
 
@@ -7054,15 +7065,31 @@ export default function App() {
                               ];
                               const directFallback = buildDirectLegsBetweenWaypoints(wps);
 
+                              const fullRoutePoints =
+                                ord.roadRouteCoordinates && ord.roadRouteCoordinates.length > 1
+                                  ? ord.roadRouteCoordinates
+                                  : directFallback.allPoints || [];
+
                               const activeRoadPoints =
                                 ord.roadLegs &&
                                 ord.roadLegs[currentStopIdx] &&
                                 ord.roadLegs[currentStopIdx].length > 1
                                   ? ord.roadLegs[currentStopIdx]
+                                  : fullRoutePoints.length > 1
+                                  ? fullRoutePoints
                                   : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
 
                               return (
                                 <>
+                                  {/* Full route path connecting all pickup stores to home */}
+                                  {fullRoutePoints.length > 1 && (
+                                    <Polyline
+                                      coordinates={fullRoutePoints}
+                                      strokeColor="#93C5FD"
+                                      strokeWidth={4}
+                                      lineDashPattern={[6, 6]}
+                                    />
+                                  )}
                                   {/* Outer high-contrast boundary for active street route */}
                                   <Polyline
                                     coordinates={activeRoadPoints}

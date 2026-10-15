@@ -108,30 +108,55 @@ export async function removeStoreInventoryItem(itemId) {
 
 // 3. Orders & Realtime Sync
 export async function createDatabaseOrder(order) {
+  const baseRider = (typeof order.boltRider === 'object' && order.boltRider)
+    ? order.boltRider
+    : {
+        id: 'bolt-rider-01',
+        name: 'Musa Ibrahim',
+        phone: '+234 803 294 1194',
+        vehicle: 'Bajaj Boxer 150 (Red)',
+        plate: 'ABJ-492-KW',
+        rating: '4.95',
+        trips: 1420,
+        avatar: '🛵',
+      };
+
+  const riderPayload = {
+    ...baseRider,
+    stops: order.stops || [],
+    roadRouteCoordinates: order.roadRouteCoordinates || [],
+    roadLegs: order.roadLegs || [],
+    isMultiStore: Boolean(order.isMultiStore || (order.stops && order.stops.length > 1)),
+    currentStopIndex: Number(order.currentStopIndex) || 0,
+    journeyAlert: order.journeyAlert || null,
+  };
+
+  const firstStop = (order.stops && order.stops[0]) ? order.stops[0] : null;
+
   const record = {
     id: order.id,
-    store_id: order.storeId || order.store_id || 'store-fresh-mart',
-    store_name: order.storeName || order.store_name || 'Fresh Mart Maitama',
+    store_id: order.storeId || order.store_id || (firstStop ? firstStop.storeId : 'store-fresh-mart'),
+    store_name: order.storeName || order.store_name || (firstStop ? firstStop.storeName : 'Fresh Mart Maitama'),
     customer_name: order.customerName || order.customer_name || 'Customer',
     customer_phone: order.customerPhone || order.customer_phone || '+234 803 000 1234',
     customer_address: order.customerAddress || order.delivery_address || 'Abuja, Nigeria',
-    delivery_lat: Number(order.deliveryLat ?? order.delivery_lat ?? 9.0882),
-    delivery_lng: Number(order.deliveryLng ?? order.delivery_lng ?? 7.4933),
-    courier_notes: order.courierNotes || order.courier_notes || '',
+    delivery_lat: Number(order.deliveryLat ?? order.delivery_lat ?? order.deliveryLocation?.latitude ?? 9.0882),
+    delivery_lng: Number(order.deliveryLng ?? order.delivery_lng ?? order.deliveryLocation?.longitude ?? 7.4933),
+    courier_notes: order.courierNotes || order.courier_notes || order.deliveryLocation?.notes || '',
     items: order.items || [],
     items_count: order.itemsCount || order.items_count || (order.items ? order.items.length : 1),
     subtotal: Number(order.subtotal) || 0,
     total: Number(order.total) || 0,
-    vendor_payout: Number(order.vendorPayout || order.vendor_payout) || 0,
+    vendor_payout: Number(order.vendorPayout || order.vendor_payout) || Math.round((Number(order.total) || 0) * 0.9),
     delivery_fee: Number(order.deliveryFee || order.delivery_fee) || 1200,
     status: order.status || 'New Order',
     delivery_partner: order.deliveryPartner || order.delivery_partner || 'bolt',
-    bolt_status: order.boltStatus || order.bolt_status || 'PENDING_VENDOR',
-    bolt_tracking_code: order.boltTrackingCode || order.bolt_tracking_code || null,
-    bolt_rider: order.boltRider || order.bolt_rider || null,
-    bolt_coords: order.boltCoords || order.bolt_coords || null,
+    bolt_status: order.boltStatus || order.bolt_status || 'IN_TRANSIT',
+    bolt_tracking_code: order.boltTrackingCode || order.bolt_tracking_code || `BOLT-ABJ-${order.id ? String(order.id).replace(/\D/g, '').slice(-5) : '89412'}`,
+    bolt_rider: riderPayload,
+    bolt_coords: order.boltCoords || (firstStop ? { latitude: Number(firstStop.latitude) || 9.0882, longitude: Number(firstStop.longitude) || 7.4933 } : { latitude: 9.0882, longitude: 7.4933 }),
     delivery_pin: String(order.deliveryPin || order.delivery_pin || '2489'),
-    pickup_pin: String(order.pickupPin || order.pickup_pin || '7731'),
+    pickup_pin: String(order.pickupPin || order.pickup_pin || (firstStop ? firstStop.pickupPin : '7731')),
     eta: order.eta || '20 mins',
     payment_method: order.paymentMethod || order.payment_method || 'Paystack',
     payment_reference: order.paymentReference || order.payment_reference || null
@@ -243,42 +268,109 @@ export async function getDatabaseOrders() {
     if (error) throw error;
     if (!data) return [];
 
-    return data.map(item => ({
-      id: item.id,
-      storeId: item.store_id,
-      storeName: item.store_name,
-      customerId: item.customer_id,
-      customerName: item.customer_name || 'Customer',
-      customerPhone: item.customer_phone || '',
-      customerAddress: item.customer_address || 'Abuja, Nigeria',
-      itemsCount: item.items_count || (item.items ? item.items.length : 1),
-      items: item.items || [],
-      subtotal: Number(item.subtotal) || 0,
-      total: Number(item.total) || 0,
-      vendorPayout: Number(item.vendor_payout) || Math.round((Number(item.total) || 0) * 0.9),
-      deliveryPartner: item.delivery_partner || 'bolt',
-      deliveryFee: Number(item.delivery_fee) || 1200,
-      conciergeFee: Number(item.concierge_fee) || 0,
-      boltStatus: item.bolt_status,
-      boltTrackingCode: item.bolt_tracking_code,
-      boltRider: item.bolt_rider,
-      boltCoords: item.bolt_coords,
-      status: item.status || 'New Order',
-      eta: item.eta || '20 mins',
-      deliveryPin: item.delivery_pin || '2489',
-      pickupPin: item.pickup_pin || '7731',
-      deliveryLocation: {
-        latitude: item.delivery_lat || 9.0882,
-        longitude: item.delivery_lng || 7.4933,
-        notes: item.courier_notes || '',
-      },
-      timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
-      createdAt: item.created_at
-        ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : '12:00 PM',
-      dateStr: item.created_at ? new Date(item.created_at).toLocaleDateString() : 'Today',
-      isMultiStore: item.items && Array.isArray(item.items) && item.items.some(i => i.storeName && i.storeName !== item.store_name),
-    }));
+    return data.map(item => {
+      const riderMeta = (typeof item.bolt_rider === 'object' && item.bolt_rider) ? item.bolt_rider : {};
+
+      // 1. Unpack multi-store stops
+      let stops = riderMeta.stops && Array.isArray(riderMeta.stops) && riderMeta.stops.length > 0 ? riderMeta.stops : [];
+      
+      // If stops array was not stored in bolt_rider, reconstruct it from items and store info
+      if (stops.length === 0) {
+        if (item.items && Array.isArray(item.items) && item.items.length > 0) {
+          const storeMap = new Map();
+          item.items.forEach(it => {
+            const sName = it.storeName || item.store_name || 'GETIT Store';
+            if (!storeMap.has(sName)) {
+              storeMap.set(sName, {
+                stopNumber: storeMap.size + 1,
+                storeId: it.storeId || item.store_id || `s-${storeMap.size + 1}`,
+                storeName: sName,
+                latitude: Number(it.latitude || (storeMap.size === 0 ? 9.0882 : 9.0765)),
+                longitude: Number(it.longitude || (storeMap.size === 0 ? 7.4933 : 7.4772)),
+                pickupPin: String(item.pickup_pin || '7731'),
+                pickupStatus: storeMap.size === 0 ? 'in_progress' : 'queued',
+                subtotal: 0,
+                items: [],
+              });
+            }
+            const grp = storeMap.get(sName);
+            grp.items.push(it);
+            grp.subtotal += (Number(it.price) || 0) * (Number(it.qty) || 1);
+          });
+          stops = Array.from(storeMap.values());
+        } else {
+          stops = [
+            {
+              stopNumber: 1,
+              storeId: item.store_id || 's1',
+              storeName: item.store_name || 'GETIT Store',
+              latitude: Number(item.delivery_lat || 9.0882),
+              longitude: Number(item.delivery_lng || 7.4933),
+              pickupPin: String(item.pickup_pin || '7731'),
+              pickupStatus: 'in_progress',
+              subtotal: Number(item.subtotal) || Number(item.total) || 0,
+              items: [],
+            }
+          ];
+        }
+      }
+
+      const roadRouteCoordinates = (riderMeta.roadRouteCoordinates && Array.isArray(riderMeta.roadRouteCoordinates)) ? riderMeta.roadRouteCoordinates : [];
+      const roadLegs = (riderMeta.roadLegs && Array.isArray(riderMeta.roadLegs)) ? riderMeta.roadLegs : [];
+      const isMultiStore = riderMeta.isMultiStore !== undefined ? riderMeta.isMultiStore : (stops.length > 1);
+      const currentStopIndex = Number(riderMeta.currentStopIndex) || 0;
+      const journeyAlert = riderMeta.journeyAlert || null;
+
+      return {
+        id: item.id,
+        storeId: item.store_id,
+        storeName: item.store_name,
+        customerName: item.customer_name || 'Customer',
+        customerPhone: item.customer_phone || '',
+        customerAddress: item.customer_address || 'Abuja, Nigeria',
+        itemsCount: item.items_count || (item.items ? item.items.length : 1),
+        items: item.items || [],
+        subtotal: Number(item.subtotal) || 0,
+        total: Number(item.total) || 0,
+        vendorPayout: Number(item.vendor_payout) || Math.round((Number(item.total) || 0) * 0.9),
+        deliveryPartner: item.delivery_partner || 'bolt',
+        deliveryFee: Number(item.delivery_fee) || 1200,
+        conciergeFee: Number(item.concierge_fee) || 0,
+        boltStatus: item.bolt_status || 'IN_TRANSIT',
+        boltTrackingCode: item.bolt_tracking_code || `BOLT-ABJ-${item.id ? String(item.id).replace(/\D/g, '').slice(-5) : '89412'}`,
+        boltRider: {
+          id: riderMeta.id || 'bolt-rider-01',
+          name: riderMeta.name || 'Musa Ibrahim',
+          phone: riderMeta.phone || '+234 803 294 1194',
+          rating: riderMeta.rating || '4.95',
+          trips: riderMeta.trips || 1420,
+          vehicle: riderMeta.vehicle || 'Bajaj Boxer 150 (Red)',
+          plate: riderMeta.plate || 'ABJ-492-KW',
+          avatar: riderMeta.avatar || '🛵',
+        },
+        boltCoords: item.bolt_coords || (stops[0] ? { latitude: Number(stops[0].latitude) || 9.0882, longitude: Number(stops[0].longitude) || 7.4933 } : { latitude: 9.0882, longitude: 7.4933 }),
+        status: item.status || 'New Order',
+        eta: item.eta || '20 mins',
+        deliveryPin: item.delivery_pin || '2489',
+        pickupPin: item.pickup_pin || (stops[0]?.pickupPin) || '7731',
+        deliveryLocation: {
+          latitude: Number(item.delivery_lat) || 9.0882,
+          longitude: Number(item.delivery_lng) || 7.4933,
+          notes: item.courier_notes || '',
+        },
+        stops: stops,
+        roadRouteCoordinates: roadRouteCoordinates,
+        roadLegs: roadLegs,
+        isMultiStore: isMultiStore,
+        currentStopIndex: currentStopIndex,
+        journeyAlert: journeyAlert,
+        timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
+        createdAt: item.created_at
+          ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : '12:00 PM',
+        dateStr: item.created_at ? new Date(item.created_at).toLocaleDateString() : 'Today',
+      };
+    });
   } catch (err) {
     console.warn('Failed to fetch orders from Supabase:', err);
     return [];
