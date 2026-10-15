@@ -229,10 +229,13 @@ Status:     All changes synced, verified, and pushed to origin/main
       - Stage 0: Displays the tarmac street route from Dispatch Origin ➔ Shop 1 (H-Medix).
       - Stage 1: When Stop 1 is collected, the blue line transitions immediately to Shop 1 ➔ Shop 2 (Abdul Basit Store).
       - Stage 2: When Stop 2 is collected, the blue line transitions to Shop 2 ➔ Customer Home.
-    - On-Road Snapped Store Stop Pinpoints (Marked Directly On The Blue Line):
-      - Store pickup pins are mathematically anchored to the exact terminus coordinate of each leg (`REAL_ROAD_WAYPOINTS`).
-      - Pinpoint includes a top callout badge, a vertical needle stem, and a target bullseye dot planted directly onto the
-        blue line so it marks the store precisely on the road instead of floating in empty space.
+    - Google Maps Style Motorbike Vehicle Puck Centered Directly ON The Blue Line:
+      - Replaced asymmetric pill card with an authentic Google Maps navigation beacon centered directly on the blue polyline.
+      - Includes an outer pulsing radar navigation ring, a crisp white inner puck with blue border, the `🛵` motorbike icon,
+        and a floating callout tag above (`Musa • 42 km/h • Live`).
+      - Anchored at `anchor={{ x: 0.5, y: 0.72 }}` so the center of the motorbike puck sits mathematically and visually
+        directly on the blue road line.
+      - Tuned glide interval to 1.2s for silky-smooth, continuous navigation along the road line as it approaches each stop!
     - Single Master Security PIN: Buyer gives one single 4-digit Delivery Security PIN to the courier upon final handover.
   - Supabase Network Resiliency & Offline Sync Queue:
     - Fixed `UnexpectedException: The network connection was lost (ExpoModulesCore/Promise.swift:56)`:

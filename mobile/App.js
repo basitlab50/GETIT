@@ -1514,10 +1514,7 @@ export default function App() {
         vehicle: 'Bajaj Boxer 150 (Red)',
         plate: 'ABJ-492-KW',
       },
-      boltCoords: {
-        latitude: 9.0912,
-        longitude: 7.4912,
-      },
+      boltCoords: REAL_ROAD_LEGS[0][0],
       eta: '11 mins',
       deliveryPin: '4928',
       pickupPin: '7391',
@@ -3284,14 +3281,8 @@ export default function App() {
         vehicle: 'Bajaj Boxer 150 (Red)',
         plate: 'ABJ-492-KW',
       },
-      riderOrigin: {
-        latitude: (stops[0]?.latitude || 9.0882) - 0.0072,
-        longitude: (stops[0]?.longitude || 7.4933) - 0.0058,
-      },
-      boltCoords: {
-        latitude: (stops[0]?.latitude || 9.0882) - 0.0072,
-        longitude: (stops[0]?.longitude || 7.4933) - 0.0058,
-      },
+      riderOrigin: REAL_ROAD_LEGS[0][0],
+      boltCoords: REAL_ROAD_LEGS[0][0],
       eta: isMultiStore ? '25-35 mins' : '15-20 mins',
       timestamp: Date.now(),
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -6393,30 +6384,50 @@ export default function App() {
                               </View>
                             </Marker>
 
-                            {/* 4. Real-Time Moving Motorbike Courier Marker (ALWAYS VISIBLE ON MAP) */}
-                            <Marker
-                              coordinate={
+                            {/* 4. Real-Time Moving Motorbike Courier Marker (SNAPPED DIRECTLY ONTO THE BLUE ROAD LINE) */}
+                            {(() => {
+                              const currentStopIdx = ord.currentStopIndex || 0;
+                              const activeRoadPts =
+                                ord.roadLegs &&
+                                ord.roadLegs[currentStopIdx] &&
+                                ord.roadLegs[currentStopIdx].length > 1
+                                  ? ord.roadLegs[currentStopIdx]
+                                  : REAL_ROAD_LEGS[currentStopIdx] || REAL_ROAD_LEGS[0];
+
+                              const pointIdx = Math.min(ord.roadPointIndex || 0, activeRoadPts.length - 1);
+                              const riderOnBlueLine =
                                 ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
                                   ? ord.boltCoords
-                                  : ord.riderOrigin || {
-                                      latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
-                                      longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
-                                    }
-                              }
-                              title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Courier)`}
-                              description={ord.journeyAlert || 'Live courier tracking'}
-                              anchor={{ x: 0.5, y: 0.5 }}
-                            >
-                              <View style={styles.riderLiveMarkerPill}>
-                                <Text style={{ fontSize: 18 }}>🛵</Text>
-                                <View style={styles.riderPillLabelBox}>
-                                  <Text style={styles.riderPillName}>
-                                    {ord.boltRider?.name || 'Musa Ibrahim'}
-                                  </Text>
-                                  <Text style={styles.riderPillSpeed}>42 km/h • Live</Text>
-                                </View>
-                              </View>
-                            </Marker>
+                                  : activeRoadPts[pointIdx] || REAL_ROAD_LEGS[0][0];
+
+                              return (
+                                <Marker
+                                  coordinate={riderOnBlueLine}
+                                  title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Courier)`}
+                                  description={ord.journeyAlert || 'Live courier tracking'}
+                                  anchor={{ x: 0.5, y: 0.72 }}
+                                >
+                                  <View style={styles.googleMapsRiderMarkerContainer}>
+                                    {/* Floating ETA / Rider Tag above motorbike */}
+                                    <View style={styles.googleMapsRiderBadge}>
+                                      <View style={styles.googleMapsLiveBeaconDot} />
+                                      <Text style={styles.googleMapsRiderBadgeName}>
+                                        {ord.boltRider?.name?.split(' ')[0] || 'Musa'}
+                                      </Text>
+                                      <Text style={styles.googleMapsRiderBadgeSpeed}>• 42 km/h</Text>
+                                    </View>
+
+                                    {/* Symmetrical Motorbike Puck centered exactly on the Blue Line */}
+                                    <View style={styles.googleMapsMotorbikePuckWrap}>
+                                      <View style={styles.googleMapsMotorbikePulseRing} />
+                                      <View style={styles.googleMapsMotorbikeCorePuck}>
+                                        <Text style={{ fontSize: 16 }}>🛵</Text>
+                                      </View>
+                                    </View>
+                                  </View>
+                                </Marker>
+                              );
+                            })()}
                           </MapView>
                         </View>
                       )}
@@ -14400,6 +14411,71 @@ const styles = StyleSheet.create({
   roadPinDotDone: {
     borderColor: '#056B4B',
     backgroundColor: '#DCFCE7',
+  },
+  googleMapsRiderMarkerContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleMapsRiderBadge: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 2.5,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  googleMapsLiveBeaconDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  googleMapsRiderBadgeName: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  googleMapsRiderBadgeSpeed: {
+    fontSize: 8.5,
+    fontWeight: '700',
+    color: '#38BDF8',
+  },
+  googleMapsMotorbikePuckWrap: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleMapsMotorbikePulseRing: {
+    position: 'absolute',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(37, 99, 235, 0.25)',
+  },
+  googleMapsMotorbikeCorePuck: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2.5,
+    borderColor: '#2563EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 7,
+    shadowColor: '#1D4ED8',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 3,
   },
   buyerCancelOrderBtn: {
     paddingHorizontal: 12,
