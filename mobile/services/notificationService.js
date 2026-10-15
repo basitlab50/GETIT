@@ -1,29 +1,6 @@
 import { Platform, Vibration } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
-import { Audio } from 'expo-av';
-
-// Pre-load local audio assets for zero-latency instant playback
-const CHIME_SOUND = require('../assets/sounds/chime.wav');
-const MERCHANT_SOUND = require('../assets/sounds/merchant_order.wav');
-
-let isAudioModeConfigured = false;
-async function configureAudioMode() {
-  if (isAudioModeConfigured) return;
-  try {
-    await Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true, // Guarantees sound on iPad even if Silent Switch is ON!
-      staysActiveInBackground: false,
-      shouldDuckAndroid: true,
-    });
-    isAudioModeConfigured = true;
-  } catch (err) {
-    console.log('Audio mode config note:', err?.message);
-  }
-}
-
-// Immediately configure audio mode upon module import
-configureAudioMode().catch(() => {});
 
 // =========================================================================
 // 1. CONFIGURE FOREGROUND & BACKGROUND NOTIFICATION HANDLER
@@ -56,9 +33,9 @@ let lastVibrationTime = 0;
 
 // =========================================================================
 // 2. AUDIO SYNTHESIZER (INSTANT LUXURY BEEP & CHIME)
-// Works seamlessly in web, hybrid, and native without missing audio files
+// Works seamlessly across web, hybrid, and mobile devices
 // =========================================================================
-export async function playAudioBeep(type = 'default') {
+export function playAudioBeep(type = 'default') {
   try {
     const now = Date.now();
     // Throttle vibration so phone never buzzes continuously
@@ -71,27 +48,8 @@ export async function playAudioBeep(type = 'default') {
       }
     }
 
-    // 1. Native Mobile Audio via expo-av (Guaranteed on iPad & iPhone with Silent Mode override)
-    let nativePlayed = false;
-    try {
-      await configureAudioMode();
-      const soundAsset = type === 'merchant_new_order' ? MERCHANT_SOUND : CHIME_SOUND;
-      const { sound } = await Audio.Sound.createAsync(
-        soundAsset,
-        { shouldPlay: true, volume: 1.0 }
-      );
-      nativePlayed = true;
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.didJustFinish) {
-          sound.unloadAsync().catch(() => {});
-        }
-      });
-    } catch (nativeErr) {
-      // Fallback if expo-av is unavailable or running in pure Web
-    }
-
-    // 2. Web Audio API Synthesis fallback (Browser & Hybrid Web View)
-    if (!nativePlayed && typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
+    // Web Audio API Synthesis (Browser & Hybrid Web View)
+    if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const ctx = new AudioCtx();
 
@@ -138,9 +96,10 @@ export async function playAudioBeep(type = 'default') {
       }
     }
   } catch (err) {
-    console.log('Audio beep notice:', err.message);
+    console.log('Audio beep notice:', err?.message);
   }
 }
+
 
 // =========================================================================
 // 3. ANDROID HIGH-PRIORITY CHANNELS & PERMISSION REGISTRATION
@@ -225,8 +184,8 @@ export async function triggerNotification({
   const now = Date.now();
   const lastFired = recentNotificationTimestamps.get(notifKey) || 0;
 
-  // Suppress duplicate notification if already sent recently
-  if (now - lastFired < 60000) {
+  // Suppress duplicate notification if already sent recently (3s debounce)
+  if (now - lastFired < 3000) {
     return;
   }
   recentNotificationTimestamps.set(notifKey, now);
