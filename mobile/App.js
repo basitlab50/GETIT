@@ -3709,6 +3709,7 @@ export default function App() {
     registerForPushNotificationsAsync();
 
     const unsubscribe = subscribeToInAppNotifications((notif) => {
+      playAudioBeep(notif.type || 'default');
       setActiveToastNotification(notif);
       toastAnimY.setValue(-120);
       toastOpacity.setValue(0);

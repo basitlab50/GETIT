@@ -1,6 +1,29 @@
 import { Platform, Vibration } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
+import { Audio } from 'expo-av';
+
+// Pre-load local audio assets for zero-latency instant playback
+const CHIME_SOUND = require('../assets/sounds/chime.wav');
+const MERCHANT_SOUND = require('../assets/sounds/merchant_order.wav');
+
+let isAudioModeConfigured = false;
+async function configureAudioMode() {
+  if (isAudioModeConfigured) return;
+  try {
+    await Audio.setAudioModeAsync({
+      playsInSilentModeIOS: true, // Guarantees sound on iPad even if Silent Switch is ON!
+      staysActiveInBackground: false,
+      shouldDuckAndroid: true,
+    });
+    isAudioModeConfigured = true;
+  } catch (err) {
+    console.log('Audio mode config note:', err?.message);
+  }
+}
+
+// Immediately configure audio mode upon module import
+configureAudioMode().catch(() => {});
 
 // =========================================================================
 // 1. CONFIGURE FOREGROUND & BACKGROUND NOTIFICATION HANDLER
@@ -35,7 +58,7 @@ let lastVibrationTime = 0;
 // 2. AUDIO SYNTHESIZER (INSTANT LUXURY BEEP & CHIME)
 // Works seamlessly in web, hybrid, and native without missing audio files
 // =========================================================================
-export function playAudioBeep(type = 'default') {
+export async function playAudioBeep(type = 'default') {
   try {
     const now = Date.now();
     // Throttle vibration so phone never buzzes continuously
@@ -48,13 +71,32 @@ export function playAudioBeep(type = 'default') {
       }
     }
 
-    // 2. Web Audio API Synthesis (Browser & Hybrid Web View)
-    if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
+    // 1. Native Mobile Audio via expo-av (Guaranteed on iPad & iPhone with Silent Mode override)
+    let nativePlayed = false;
+    try {
+      await configureAudioMode();
+      const soundAsset = type === 'merchant_new_order' ? MERCHANT_SOUND : CHIME_SOUND;
+      const { sound } = await Audio.Sound.createAsync(
+        soundAsset,
+        { shouldPlay: true, volume: 1.0 }
+      );
+      nativePlayed = true;
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.didJustFinish) {
+          sound.unloadAsync().catch(() => {});
+        }
+      });
+    } catch (nativeErr) {
+      // Fallback if expo-av is unavailable or running in pure Web
+    }
+
+    // 2. Web Audio API Synthesis fallback (Browser & Hybrid Web View)
+    if (!nativePlayed && typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const ctx = new AudioCtx();
 
       if (type === 'merchant_new_order') {
-        // High-energy 3-note ascending chime: C5 (523Hz) -> E5 (659Hz) -> G5 (784Hz) -> C6 (1046Hz)
+        // High-energy 4-note ascending chime: C5 (523Hz) -> E5 (659Hz) -> G5 (784Hz) -> C6 (1046Hz)
         const notes = [523.25, 659.25, 783.99, 1046.5];
         notes.forEach((freq, idx) => {
           const osc = ctx.createOscillator();
@@ -138,7 +180,13 @@ export async function registerForPushNotificationsAsync() {
     let finalStatus = existingStatus;
 
     if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
+      const { status } = await Notifications.requestPermissionsAsync({
+        ios: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+        },
+      });
       finalStatus = status;
     }
 
