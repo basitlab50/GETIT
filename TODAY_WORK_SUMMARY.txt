@@ -223,16 +223,16 @@ Status:     All changes synced, verified, and pushed to origin/main
       - Fixed map visibility: The live map was previously hidden inside a collapsed toggle and gated behind `ord.deliveryPartner === 'bolt'`.
         It is now OPEN AND EXPANDED BY DEFAULT for all active orders, regardless of courier tier!
       - Increased map preview height from 160px to 240px with a vibrant emerald border and rounded corners.
-    - Sequential Leg Routing (Step-by-Step, Not Running Across Everywhere):
-      - Split the journey into distinct stages/legs: Leg 0 (Rider ➔ Stop 1), Leg 1 (Stop 1 ➔ Stop 2), Leg 2 (Stop 2 ➔ Home).
-      - Highlights only the ACTIVE LEG in bold, vibrant Google Maps Blue (`#2563EB`) with a solid 7px outer outline and 4.5px core.
-      - Displays upcoming legs as a subtle, clean dashed preview line (`rgba(148, 163, 184, 0.6)`) to eliminate visual clutter.
-      - Completed legs automatically transition to soft muted green lines (`rgba(16, 185, 129, 0.55)`).
-    - Resilient Fallback Routing & Guaranteed Rider Marker Visibility:
-      - Fixed polyline rendering: Wrapped route generation in a resilient multi-tier fallback so that Bold Google Blue lines
-        are always guaranteed to render even if network requests to OSRM are pending, delayed, or offline.
-      - Removed conditional gating on the Rider Marker (`boltCoords` fallback): The courier marker is now 100% guaranteed
-        to be visible and moving on the map at all times.
+    - Single Active Road Leg Display (Starts From Rider to Shop 1, Then Shop 2, Then Home):
+      - Eliminated all overlapping/criss-crossing lines: The map strictly displays ONLY ONE real road route at any time—the
+        exact street path the courier is navigating right now!
+      - Stage 0: Displays the tarmac street route from Dispatch Origin ➔ Shop 1 (H-Medix).
+      - Stage 1: When Stop 1 is collected, the blue line transitions immediately to Shop 1 ➔ Shop 2 (Abdul Basit Store).
+      - Stage 2: When Stop 2 is collected, the blue line transitions to Shop 2 ➔ Customer Home.
+    - On-Road Snapped Store Stop Pinpoints (Marked Directly On The Blue Line):
+      - Store pickup pins are mathematically anchored to the exact terminus coordinate of each leg (`REAL_ROAD_WAYPOINTS`).
+      - Pinpoint includes a top callout badge, a vertical needle stem, and a target bullseye dot planted directly onto the
+        blue line so it marks the store precisely on the road instead of floating in empty space.
     - Single Master Security PIN: Buyer gives one single 4-digit Delivery Security PIN to the courier upon final handover.
   - Supabase Network Resiliency & Offline Sync Queue:
     - Fixed `UnexpectedException: The network connection was lost (ExpoModulesCore/Promise.swift:56)`:

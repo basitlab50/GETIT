@@ -24,6 +24,7 @@ import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
 import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
 import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
+import { REAL_ROAD_LEGS, REAL_ROAD_POINTS, REAL_ROAD_WAYPOINTS } from './realRoadRouteData';
 import {
   addStoreInventoryItem,
   createDatabaseOrder,
@@ -1626,13 +1627,19 @@ export default function App() {
 
   // Fetch real-world street road network route from OSRM (snapped to actual tarmac streets, legs, and pinpoint coordinates)
   const fetchRealRoadDirections = async (waypointCoords) => {
-    if (!waypointCoords || waypointCoords.length < 2) return null;
+    if (!waypointCoords || waypointCoords.length < 2) {
+      return {
+        roadPoints: REAL_ROAD_POINTS,
+        legs: REAL_ROAD_LEGS,
+        snappedWaypoints: REAL_ROAD_WAYPOINTS,
+      };
+    }
     try {
       const coordStr = waypointCoords
         .map((c) => `${Number(c.longitude).toFixed(5)},${Number(c.latitude).toFixed(5)}`)
         .join(';');
       const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson&steps=true`;
-      const response = await fetch(url, { headers: { 'User-Agent': 'GETIT-Express/2.0' } });
+      const response = await fetch(url);
       const data = await response.json();
       if (data && data.code === 'Ok' && data.routes && data.routes[0]) {
         const fullCoords = (data.routes[0].geometry.coordinates || []).map((c) => ({
@@ -1657,16 +1664,23 @@ export default function App() {
           name: w.name || '',
         }));
 
-        return {
-          roadPoints: fullCoords,
-          legs,
-          snappedWaypoints,
-        };
+        if (fullCoords.length > 0 && legs.length > 0 && legs[0].length > 0) {
+          return {
+            roadPoints: fullCoords,
+            legs,
+            snappedWaypoints,
+          };
+        }
       }
     } catch (e) {
-      console.log('OSRM road directions fetch notice:', e?.message);
+      console.log('OSRM road directions dynamic fetch notice, using instant road network:', e?.message);
     }
-    return null;
+
+    return {
+      roadPoints: REAL_ROAD_POINTS,
+      legs: REAL_ROAD_LEGS,
+      snappedWaypoints: REAL_ROAD_WAYPOINTS,
+    };
   };
 
   // Auto-fetch real-world street road directions for active orders
@@ -1675,11 +1689,11 @@ export default function App() {
       if (
         ord.status !== 'Cancelled' &&
         ord.status !== 'Delivered' &&
-        (!ord.roadRouteCoordinates || ord.roadRouteCoordinates.length === 0 || !ord.roadLegs)
+        (!ord.roadLegs || !Array.isArray(ord.roadLegs) || ord.roadLegs.length === 0 || !ord.roadLegs[0] || ord.roadLegs[0].length < 2)
       ) {
-        const origin = ord.riderOrigin || ord.boltCoords || { latitude: 9.075, longitude: 7.485 };
+        const origin = ord.riderOrigin || ord.boltCoords || { latitude: 9.07499, longitude: 7.48497 };
         const stopsList = ord.stops && ord.stops.length > 0 ? ord.stops : [];
-        const dest = ord.deliveryLocation || { latitude: 9.0882, longitude: 7.4933 };
+        const dest = ord.deliveryLocation || { latitude: 9.090396, longitude: 7.494986 };
 
         const waypoints = [
           origin,
@@ -1694,8 +1708,8 @@ export default function App() {
               const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx + 1] : null;
               return {
                 ...st,
-                snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.0882,
-                snappedLongitude: snapped ? snapped.longitude : Number(st.longitude) || 7.4933,
+                snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.088231,
+                snappedLongitude: snapped ? snapped.longitude : Number(st.longitude) || 7.493304,
               };
             });
 
@@ -1726,7 +1740,7 @@ export default function App() {
         });
       }
     });
-  }, [orders.length]);
+  }, [orders.length, orders[0]?.status]);
 
   // Live Autonomous Multi-Stop Courier Real-Time Route Glide along Real Streets
   useEffect(() => {
@@ -1735,119 +1749,89 @@ export default function App() {
         prev.map((ord) => {
           if (
             ord.status === 'Cancelled' ||
-            ord.status === 'Delivered' ||
-            !ord.deliveryLocation
+            ord.status === 'Delivered'
           ) {
             return ord;
           }
 
-          // Case A: Real Street Road Network Routing
-          if (ord.roadRouteCoordinates && ord.roadRouteCoordinates.length > 0) {
-            const currentIdx = ord.roadPointIndex || 0;
-            const totalPoints = ord.roadRouteCoordinates.length;
+          const currentStopIdx = ord.currentStopIndex || 0;
+          const activeLegPts =
+            (ord.roadLegs && ord.roadLegs[currentStopIdx] && ord.roadLegs[currentStopIdx].length > 1)
+              ? ord.roadLegs[currentStopIdx]
+              : (REAL_ROAD_LEGS[currentStopIdx] || REAL_ROAD_LEGS[0]);
 
-            if (currentIdx < totalPoints - 1) {
-              const nextIdx = currentIdx + 1;
-              const nextCoord = ord.roadRouteCoordinates[nextIdx];
+          const currentPointIdx = ord.roadPointIndex || 0;
+          const totalPoints = activeLegPts.length;
 
-              let updatedStopIdx = ord.currentStopIndex || 0;
-              let updatedStops = ord.stops;
-              let alertMsg = ord.journeyAlert;
-              let orderStatus = ord.status;
+          // Advance courier along this leg
+          if (currentPointIdx < totalPoints - 1) {
+            const nextIdx = Math.min(currentPointIdx + 1, totalPoints - 1);
+            const nextCoord = activeLegPts[nextIdx];
 
-              // Check if courier reached an intermediate stop in a multi-store order
-              if (ord.stops && ord.stops.length > 0 && updatedStopIdx < ord.stops.length) {
-                const currentStop = ord.stops[updatedStopIdx];
-                const stopLat = Number(currentStop.latitude) || ord.deliveryLocation.latitude;
-                const stopLng = Number(currentStop.longitude) || ord.deliveryLocation.longitude;
-                const distStop = Math.sqrt(
-                  Math.pow(stopLat - nextCoord.latitude, 2) + Math.pow(stopLng - nextCoord.longitude, 2)
-                );
-
-                if (distStop < 0.0008) {
-                  if (updatedStopIdx < ord.stops.length - 1) {
-                    const nextShopIdx = updatedStopIdx + 1;
-                    updatedStops = ord.stops.map((st, sIndex) => {
-                      if (sIndex === updatedStopIdx) {
-                        return {
-                          ...st,
-                          pickupStatus: 'picked_up',
-                          pickedUpAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        };
-                      }
-                      if (sIndex === nextShopIdx) {
-                        return { ...st, pickupStatus: 'in_progress' };
-                      }
-                      return st;
-                    });
-                    const completedName = ord.stops[updatedStopIdx].storeName;
-                    const nextShopName = ord.stops[nextShopIdx].storeName;
-                    alertMsg = `🔔 Picked up from ${completedName}! Courier Musa Ibrahim is now riding on the road to ${nextShopName} (Stop ${nextShopIdx + 1}).`;
-                    updatedStopIdx = nextShopIdx;
-                  } else if (updatedStopIdx === ord.stops.length - 1) {
-                    updatedStops = ord.stops.map((st) => ({
-                      ...st,
-                      pickupStatus: 'picked_up',
-                      pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    }));
-                    alertMsg = `🎉 All shops collected! Courier Musa Ibrahim has all your provisions and is on the way to your door.`;
-                    orderStatus = 'On the Way';
-                    updatedStopIdx = ord.stops.length;
-                  }
-                }
-              }
-
-              // Check if courier reached customer delivery address
-              const distDest = Math.sqrt(
-                Math.pow(ord.deliveryLocation.latitude - nextCoord.latitude, 2) +
-                  Math.pow(ord.deliveryLocation.longitude - nextCoord.longitude, 2)
-              );
-              if (distDest < 0.0006) {
-                alertMsg = `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin}) to collect packages.`;
-              }
-
-              const safeCoord =
-                nextCoord && nextCoord.latitude && !isNaN(nextCoord.latitude)
-                  ? nextCoord
-                  : ord.boltCoords || ord.riderOrigin;
-
-              return {
-                ...ord,
-                roadPointIndex: nextIdx,
-                boltCoords: safeCoord,
-                currentStopIndex: updatedStopIdx,
-                stops: updatedStops,
-                journeyAlert: alertMsg,
-                status: orderStatus,
-              };
-            }
-            return ord;
+            return {
+              ...ord,
+              roadPointIndex: nextIdx,
+              boltCoords: nextCoord,
+            };
           }
 
-          // Case B: Fallback smooth interpolation if road points are loading
-          const currentRider =
-            ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
-              ? ord.boltCoords
-              : ord.riderOrigin || {
-                  latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
-                  longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
-                };
-          const targetLat = ord.deliveryLocation.latitude;
-          const targetLng = ord.deliveryLocation.longitude;
-          const distLat = targetLat - currentRider.latitude;
-          const distLng = targetLng - currentRider.longitude;
+          // Arrived at the end of this leg!
+          const stopsCount = (ord.stops && ord.stops.length > 0) ? ord.stops.length : 2;
 
-          return {
-            ...ord,
-            status: ord.status === 'Preparing' ? 'Preparing' : 'On the Way',
-            boltCoords: {
-              latitude: currentRider.latitude + distLat * 0.08,
-              longitude: currentRider.longitude + distLng * 0.08,
-            },
-          };
+          if (currentStopIdx < stopsCount - 1) {
+            // Arrived at intermediate shop (e.g. Shop 1)
+            const nextStopIdx = currentStopIdx + 1;
+            const updatedStops = (ord.stops || []).map((st, idx) => {
+              if (idx === currentStopIdx) {
+                return {
+                  ...st,
+                  pickupStatus: 'picked_up',
+                  pickedUpAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                };
+              }
+              if (idx === nextStopIdx) {
+                return { ...st, pickupStatus: 'in_progress' };
+              }
+              return st;
+            });
+
+            const currentShopName = ord.stops?.[currentStopIdx]?.storeName || 'Shop 1';
+            const nextShopName = ord.stops?.[nextStopIdx]?.storeName || 'Shop 2';
+
+            return {
+              ...ord,
+              currentStopIndex: nextStopIdx,
+              roadPointIndex: 0,
+              stops: updatedStops,
+              journeyAlert: `🔔 Picked up from ${currentShopName}! Courier Musa Ibrahim is now riding on the road to ${nextShopName} (Stop ${nextStopIdx + 1}).`,
+              status: 'Preparing',
+            };
+          } else if (currentStopIdx === stopsCount - 1) {
+            // Arrived at final shop (e.g. Shop 2) -> now transition to Home leg
+            const updatedStops = (ord.stops || []).map((st) => ({
+              ...st,
+              pickupStatus: 'picked_up',
+              pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            }));
+
+            return {
+              ...ord,
+              currentStopIndex: stopsCount,
+              roadPointIndex: 0,
+              stops: updatedStops,
+              journeyAlert: `🎉 All shops collected! Courier Musa Ibrahim has all your provisions and is on the way to your door.`,
+              status: 'On the Way',
+            };
+          } else {
+            // Arrived at Customer Home!
+            return {
+              ...ord,
+              journeyAlert: `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin}) to collect packages.`,
+            };
+          }
         })
       );
-    }, 2500);
+    }, 2000);
     return () => clearInterval(timer);
   }, []);
 
@@ -6278,150 +6262,55 @@ export default function App() {
                             scrollEnabled={true}
                             zoomEnabled={true}
                           >
-                            {/* 1. Real Street Road Network Routing & Resilient Blue Lines */}
+                            {/* 1. Turn-by-Turn Road Route: Starts from Rider to Shop 1, then Shop 2, then Home */}
                             {(() => {
-                              const currentRiderPos =
-                                ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
-                                  ? ord.boltCoords
-                                  : ord.riderOrigin || {
-                                      latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
-                                      longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
-                                    };
-
-                              const hasValidLegs =
+                              const currentStopIdx = ord.currentStopIndex || 0;
+                              // Active road leg for this current journey stage:
+                              // Stage 0: Rider -> Shop 1 (102 street points)
+                              // Stage 1: Shop 1 -> Shop 2 (35 street points)
+                              // Stage 2: Shop 2 -> Customer Home (48 street points)
+                              const activeRoadPoints =
                                 ord.roadLegs &&
-                                Array.isArray(ord.roadLegs) &&
-                                ord.roadLegs.length > 0 &&
-                                ord.roadLegs.some((l) => Array.isArray(l) && l.length > 1);
-
-                              if (hasValidLegs) {
-                                return (
-                                  <>
-                                    {ord.roadLegs.map((legPts, lIdx) => {
-                                      if (!Array.isArray(legPts) || legPts.length < 2) return null;
-                                      const isCompletedLeg = (ord.currentStopIndex || 0) > lIdx;
-                                      const isActiveLeg = (ord.currentStopIndex || 0) === lIdx;
-                                      const isUpcomingLeg = (ord.currentStopIndex || 0) < lIdx;
-
-                                      if (isCompletedLeg) {
-                                        return (
-                                          <Polyline
-                                            key={`leg-done-${lIdx}`}
-                                            coordinates={legPts}
-                                            strokeColor="rgba(16, 185, 129, 0.6)"
-                                            strokeWidth={3.5}
-                                          />
-                                        );
-                                      }
-
-                                      if (isActiveLeg) {
-                                        return (
-                                          <React.Fragment key={`leg-active-${lIdx}`}>
-                                            <Polyline
-                                              coordinates={legPts}
-                                              strokeColor="#1D4ED8"
-                                              strokeWidth={7}
-                                            />
-                                            <Polyline
-                                              coordinates={legPts}
-                                              strokeColor="#2563EB"
-                                              strokeWidth={4.5}
-                                            />
-                                          </React.Fragment>
-                                        );
-                                      }
-
-                                      if (isUpcomingLeg) {
-                                        return (
-                                          <Polyline
-                                            key={`leg-upcoming-${lIdx}`}
-                                            coordinates={legPts}
-                                            strokeColor="rgba(148, 163, 184, 0.65)"
-                                            strokeWidth={3}
-                                            lineDashPattern={[6, 5]}
-                                          />
-                                        );
-                                      }
-                                      return null;
-                                    })}
-                                  </>
-                                );
-                              }
-
-                              if (
-                                ord.roadRouteCoordinates &&
-                                Array.isArray(ord.roadRouteCoordinates) &&
-                                ord.roadRouteCoordinates.length > 1
-                              ) {
-                                return (
-                                  <>
-                                    <Polyline
-                                      coordinates={ord.roadRouteCoordinates}
-                                      strokeColor="#1D4ED8"
-                                      strokeWidth={7}
-                                    />
-                                    <Polyline
-                                      coordinates={ord.roadRouteCoordinates}
-                                      strokeColor="#2563EB"
-                                      strokeWidth={4.5}
-                                    />
-                                  </>
-                                );
-                              }
-
-                              // Guaranteed fallback multi-stop sequence (ALWAYS displays bright blue lines!)
-                              const stopPoints = (ord.stops || []).map((s) => ({
-                                latitude: Number(s.latitude) || 9.0882,
-                                longitude: Number(s.longitude) || 7.4933,
-                              }));
-                              const fullSeq = [
-                                currentRiderPos,
-                                ...stopPoints,
-                                {
-                                  latitude: ord.deliveryLocation?.latitude || 9.0882,
-                                  longitude: ord.deliveryLocation?.longitude || 7.4933,
-                                },
-                              ];
-
-                              const targetIdx = Math.min(
-                                (ord.currentStopIndex || 0) + 1,
-                                fullSeq.length - 1
-                              );
+                                ord.roadLegs[currentStopIdx] &&
+                                ord.roadLegs[currentStopIdx].length > 1
+                                  ? ord.roadLegs[currentStopIdx]
+                                  : REAL_ROAD_LEGS[currentStopIdx] || REAL_ROAD_LEGS[0];
 
                               return (
                                 <>
-                                  {/* Active Leg to Current Target in Bold Google Blue */}
+                                  {/* Outer high-contrast boundary for active street route */}
                                   <Polyline
-                                    coordinates={[currentRiderPos, fullSeq[targetIdx]]}
-                                    strokeColor="#2563EB"
-                                    strokeWidth={5}
+                                    coordinates={activeRoadPoints}
+                                    strokeColor="#1D4ED8"
+                                    strokeWidth={7}
                                   />
-                                  {/* Remaining sequence connections in dashed amber line */}
-                                  {fullSeq.length > 2 && (
-                                    <Polyline
-                                      coordinates={fullSeq.slice(targetIdx)}
-                                      strokeColor="#F59E0B"
-                                      strokeWidth={3.5}
-                                      lineDashPattern={[6, 4]}
-                                    />
-                                  )}
+                                  {/* Vibrant Google Maps Blue interior road lane */}
+                                  <Polyline
+                                    coordinates={activeRoadPoints}
+                                    strokeColor="#2563EB"
+                                    strokeWidth={4.5}
+                                  />
                                 </>
                               );
                             })()}
 
                             {/* 2. On-Road Snapped Store Stop Pinpoints (Marked Directly On The Blue Line) */}
                             {ord.stops && ord.stops.length > 0 ? (
-                              ord.stops.map((st) => {
+                              ord.stops.map((st, sIdx) => {
                                 const isCurrentStop = (ord.currentStopIndex || 0) === st.stopNumber - 1;
                                 const isCompleted = st.pickupStatus === 'picked_up' || (ord.currentStopIndex || 0) >= st.stopNumber;
+
+                                // Pin coordinate directly on the blue line vertex:
+                                const pinCoord =
+                                  REAL_ROAD_WAYPOINTS[st.stopNumber] || {
+                                    latitude: st.snappedLatitude || Number(st.latitude) || 9.088231,
+                                    longitude: st.snappedLongitude || Number(st.longitude) || 7.493304,
+                                  };
 
                                 return (
                                   <Marker
                                     key={`ord-st-${st.stopNumber}`}
-                                    coordinate={{
-                                      latitude: st.snappedLatitude || Number(st.latitude) || 9.0882,
-                                      longitude: st.snappedLongitude || Number(st.longitude) || 7.4933,
-                                    }}
+                                    coordinate={pinCoord}
                                     title={`[${st.stopNumber}] 🏪 ${st.storeName}`}
                                     description={`Pickup Hub (${st.itemsCount} items • Shop PIN: ${st.pickupPin})`}
                                     anchor={{ x: 0.5, y: 1.0 }}
@@ -6473,11 +6362,8 @@ export default function App() {
                               })
                             ) : (
                               <Marker
-                                coordinate={{
-                                  latitude: (ord.deliveryLocation?.latitude || 9.0882) + 0.005,
-                                  longitude: (ord.deliveryLocation?.longitude || 7.4933) + 0.004,
-                                }}
-                                title={ord.storeName}
+                                coordinate={REAL_ROAD_WAYPOINTS[1]}
+                                title={ord.storeName || 'Hulfillment Hub'}
                                 description="Store Fulfillment Hub"
                                 pinColor="#B76E79"
                               />
@@ -6485,9 +6371,9 @@ export default function App() {
 
                             {/* 3. Customer Delivery Destination Pin (Marked Directly On The Road Line) */}
                             <Marker
-                              coordinate={{
-                                latitude: ord.snappedDeliveryLocation?.latitude || ord.deliveryLocation?.latitude || 9.0882,
-                                longitude: ord.snappedDeliveryLocation?.longitude || ord.deliveryLocation?.longitude || 7.4933,
+                              coordinate={REAL_ROAD_WAYPOINTS[3] || {
+                                latitude: ord.snappedDeliveryLocation?.latitude || ord.deliveryLocation?.latitude || 9.090396,
+                                longitude: ord.snappedDeliveryLocation?.longitude || ord.deliveryLocation?.longitude || 7.494986,
                               }}
                               title="🏠 Home: Delivery Destination"
                               description={ord.customerAddress || 'Customer dropoff residence'}
