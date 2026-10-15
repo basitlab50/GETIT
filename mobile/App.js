@@ -45,6 +45,17 @@ import {
   submitDatabaseReview,
   getStoreReviews,
 } from './services/supabaseService';
+import {
+  registerForPushNotificationsAsync,
+  subscribeToInAppNotifications,
+  triggerNotification,
+  playAudioBeep,
+  notifyOrderPlaced,
+  notifyCourierDispatched,
+  notifyOrderOnTheWay,
+  notifyCourierArrived,
+  notifyOrderDelivered,
+} from './services/notificationService';
 import { getProductImageSource } from './assets/productImages';
 
 const { width } = Dimensions.get('window');
@@ -1323,6 +1334,11 @@ export default function App() {
   const [storeReviewsViewing, setStoreReviewsViewing] = useState([]);
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
+  // --- Push Notifications & In-App Floating Audio Chimes (Number 4) ---
+  const [activeToastNotification, setActiveToastNotification] = useState(null);
+  const toastAnimY = useRef(new Animated.Value(-120)).current;
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+
   // --- USER AUTH & PROFILES (BUYER & SELLER) ---
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authScreenRole, setAuthScreenRole] = useState('buyer'); // 'buyer' | 'seller'
@@ -2171,6 +2187,9 @@ export default function App() {
               pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             }));
 
+            // 🔔 Audio Beep & Push: Courier arrived outside gate!
+            notifyCourierArrived(ord);
+
             return {
               ...ord,
               stops: updatedStops,
@@ -2189,6 +2208,13 @@ export default function App() {
     const unsubscribe = subscribeToOrders((payload) => {
       if (payload.eventType === 'INSERT' && payload.new) {
         const item = payload.new;
+        // 🔔 Audio Beep & Push: New order synced from Supabase cloud
+        notifyOrderPlaced({
+          id: item.id,
+          storeName: item.store_name,
+          itemsCount: item.items_count,
+          total: item.total,
+        });
         updateAndPersistOrders((prev) => {
           if (prev.some((o) => o.id === item.id)) return prev;
           return [
@@ -3519,6 +3545,8 @@ export default function App() {
             status: 'On the Way',
           };
         } else {
+          // 🔔 Trigger delivery notification & audio chime!
+          notifyOrderDelivered(ord);
           Alert.alert('✅ Order Delivered', 'All provisions have been delivered to your destination!');
           setTimeout(() => {
             openReviewModalForOrder(ord);
@@ -3596,6 +3624,50 @@ export default function App() {
         setReviewsList(INITIAL_SAMPLE_REVIEWS);
       }
     })();
+  }, []);
+
+  // Register push notifications & subscribe to in-app audio toasts
+  useEffect(() => {
+    registerForPushNotificationsAsync();
+
+    const unsubscribe = subscribeToInAppNotifications((notif) => {
+      setActiveToastNotification(notif);
+      toastAnimY.setValue(-120);
+      toastOpacity.setValue(0);
+
+      Animated.parallel([
+        Animated.spring(toastAnimY, {
+          toValue: 20,
+          friction: 6,
+          tension: 40,
+          useNativeDriver: true,
+        }),
+        Animated.timing(toastOpacity, {
+          toValue: 1,
+          duration: 250,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(toastAnimY, {
+            toValue: -120,
+            duration: 350,
+            useNativeDriver: true,
+          }),
+          Animated.timing(toastOpacity, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          setActiveToastNotification(null);
+        });
+      }, 5000);
+    });
+
+    return unsubscribe;
   }, []);
 
   const openReviewModalForOrder = (ord) => {
@@ -3863,6 +3935,9 @@ export default function App() {
     };
 
     updateAndPersistOrders((prev) => [masterOrder, ...prev]);
+
+    // 🔔 Trigger immediate push notification + audio chime for buyer & merchant!
+    notifyOrderPlaced(masterOrder);
 
     // Fetch real road street network directions connecting strictly pinned stores to delivery home
     const roadWaypoints = [
@@ -5998,6 +6073,55 @@ export default function App() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+      {/* --- IN-APP FLOATING NOTIFICATION BANNER (AUDIO BEEP + SLIDE DOWN) --- */}
+      {activeToastNotification && (
+        <Animated.View
+          style={[
+            styles.floatingNotificationBanner,
+            {
+              transform: [{ translateY: toastAnimY }],
+              opacity: toastOpacity,
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={styles.floatingNotificationInner}
+            onPress={() => {
+              setActiveToastNotification(null);
+              setActiveTab('orders');
+            }}
+            activeOpacity={0.9}
+          >
+            <View style={styles.floatingNotificationIconBox}>
+              <Text style={{ fontSize: 20 }}>
+                {activeToastNotification.type === 'merchant_new_order'
+                  ? '💰'
+                  : activeToastNotification.type === 'arrived'
+                  ? '📍'
+                  : '🔔'}
+              </Text>
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={styles.floatingNotificationTitle} numberOfLines={1}>
+                  {activeToastNotification.title}
+                </Text>
+                <Text style={styles.floatingNotificationTime}>Just now</Text>
+              </View>
+              <Text style={styles.floatingNotificationBody} numberOfLines={2}>
+                {activeToastNotification.body}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setActiveToastNotification(null)}
+              style={styles.floatingNotificationClose}
+            >
+              <Text style={{ color: '#94A3B8', fontSize: 13, fontWeight: '700' }}>✕</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Animated.View>
+      )}
 
       {/* --- TOP LUXURY HEADER --- */}
       <View style={styles.header}>
@@ -15919,6 +16043,59 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: '#64748B',
+  },
+  floatingNotificationBanner: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 44 : 20,
+    left: 16,
+    right: 16,
+    zIndex: 99999,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 20,
+  },
+  floatingNotificationInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
+  },
+  floatingNotificationIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  floatingNotificationTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    flex: 1,
+  },
+  floatingNotificationTime: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#94A3B8',
+    marginLeft: 6,
+  },
+  floatingNotificationBody: {
+    fontSize: 12,
+    color: '#E2E8F0',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  floatingNotificationClose: {
+    padding: 6,
+    marginLeft: 6,
   },
   orderCancelledBanner: {
     backgroundColor: 'rgba(239, 68, 68, 0.08)',

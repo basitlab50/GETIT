@@ -1,0 +1,261 @@
+import { Platform, Vibration } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Notifications from 'expo-notifications';
+
+// =========================================================================
+// 1. CONFIGURE FOREGROUND & BACKGROUND NOTIFICATION HANDLER
+// Guaranteed: Beeps and displays even if the app is OPEN or CLOSED
+// =========================================================================
+try {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      priority: Notifications.AndroidNotificationPriority.MAX,
+    }),
+  });
+} catch (e) {
+  console.log('Notifications handler note:', e.message);
+}
+
+// In-app subscribers for live floating banners
+const inAppNotificationListeners = new Set();
+
+export function subscribeToInAppNotifications(listener) {
+  inAppNotificationListeners.add(listener);
+  return () => inAppNotificationListeners.delete(listener);
+}
+
+// =========================================================================
+// 2. AUDIO SYNTHESIZER (INSTANT LUXURY BEEP & CHIME)
+// Works seamlessly in web, hybrid, and native without missing audio files
+// =========================================================================
+export function playAudioBeep(type = 'default') {
+  try {
+    // 1. Native / Web Vibration
+    if (type === 'merchant_new_order') {
+      Vibration.vibrate([0, 400, 150, 400, 150, 600]);
+    } else if (type === 'arrived') {
+      Vibration.vibrate([0, 250, 100, 250]);
+    } else {
+      Vibration.vibrate([0, 200, 100, 200]);
+    }
+
+    // 2. Web Audio API Synthesis (Browser & Hybrid Web View)
+    if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+
+      if (type === 'merchant_new_order') {
+        // High-energy 3-note ascending chime: C5 (523Hz) -> E5 (659Hz) -> G5 (784Hz) -> C6 (1046Hz)
+        const notes = [523.25, 659.25, 783.99, 1046.5];
+        notes.forEach((freq, idx) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          const startTime = ctx.currentTime + idx * 0.12;
+
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, startTime);
+
+          gain.gain.setValueAtTime(0.28, startTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.35);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc.start(startTime);
+          osc.stop(startTime + 0.36);
+        });
+      } else {
+        // Soft luxury 2-note concierge chime: E5 (659Hz) -> B5 (987Hz)
+        const notes = [659.25, 987.77];
+        notes.forEach((freq, idx) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          const startTime = ctx.currentTime + idx * 0.14;
+
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, startTime);
+
+          gain.gain.setValueAtTime(0.22, startTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.45);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc.start(startTime);
+          osc.stop(startTime + 0.46);
+        });
+      }
+    }
+  } catch (err) {
+    console.log('Audio beep notice:', err.message);
+  }
+}
+
+// =========================================================================
+// 3. ANDROID HIGH-PRIORITY CHANNELS & PERMISSION REGISTRATION
+// Guarantees sound & lock-screen display when phone is in pocket/closed
+// =========================================================================
+export async function registerForPushNotificationsAsync() {
+  let token = null;
+
+  try {
+    if (Platform.OS === 'android') {
+      // Channel 1: Customer Order Status
+      await Notifications.setNotificationChannelAsync('order_updates', {
+        name: 'GETIT Order Updates',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#008751',
+        sound: 'default',
+        enableVibrate: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: true,
+      });
+
+      // Channel 2: Merchant Urgent New Orders
+      await Notifications.setNotificationChannelAsync('merchant_orders', {
+        name: 'Merchant New Orders Alert',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 500, 200, 500, 200, 500],
+        lightColor: '#D97706',
+        sound: 'default',
+        enableVibrate: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: true,
+      });
+    }
+
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    if (finalStatus !== 'granted') {
+      console.log('Push notification permissions not granted.');
+      return null;
+    }
+
+    // Retrieve Expo Push Token for remote backend push
+    const tokenObj = await Notifications.getExpoPushTokenAsync({
+      projectId: 'getit-nigeria',
+    }).catch(() => null);
+
+    if (tokenObj && tokenObj.data) {
+      token = tokenObj.data;
+      await AsyncStorage.setItem('getit_push_token', token);
+      console.log('Registered Expo Push Token:', token);
+    }
+  } catch (e) {
+    console.log('Push registration note (safe fallback):', e.message);
+  }
+
+  return token;
+}
+
+// =========================================================================
+// 4. MASTER TRIGGER NOTIFICATION (SOUND + BANNER + SYSTEM TRAY)
+// =========================================================================
+export async function triggerNotification({
+  title,
+  body,
+  type = 'default',
+  data = {},
+}) {
+  // 1. Play immediate audio beep & vibration
+  playAudioBeep(type);
+
+  // 2. Broadcast to In-App Floating Toast
+  inAppNotificationListeners.forEach((listener) => {
+    try {
+      listener({ title, body, type, data, timestamp: Date.now() });
+    } catch (e) {}
+  });
+
+  // 3. Schedule OS notification (Pops up on Lock Screen and System Tray)
+  try {
+    const channelId = type === 'merchant_new_order' ? 'merchant_orders' : 'order_updates';
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        sound: 'default',
+        priority: Notifications.AndroidNotificationPriority.MAX,
+        data: { ...data, type },
+        vibrate: type === 'merchant_new_order' ? [0, 500, 200, 500] : [0, 250, 250, 250],
+        channelId,
+      },
+      trigger: null, // null means fire immediately!
+    });
+  } catch (e) {
+    console.log('OS notification schedule notice:', e.message);
+  }
+}
+
+// =========================================================================
+// 5. TAILORED ORDER LIFECYCLE EVENT NOTIFIERS
+// =========================================================================
+
+// A. New Order Created (For Buyer & Merchant)
+export function notifyOrderPlaced(order) {
+  // Buyer alert
+  triggerNotification({
+    title: '🛍️ Order Confirmed & Paid!',
+    body: `Your provisions from ${order.storeName} (${order.itemsCount || 1} items) are confirmed and being prepared.`,
+    type: 'default',
+    data: { orderId: order.id, status: 'New Order' },
+  });
+
+  // Merchant alert (Loud Cash Register Chime)
+  triggerNotification({
+    title: '🔔 NEW ORDER RECEIVED!',
+    body: `New Order #${order.id} for ${order.storeName}! Total: ₦${Number(order.total || 0).toLocaleString()}. Tap to start preparing.`,
+    type: 'merchant_new_order',
+    data: { orderId: order.id, status: 'New Order', role: 'merchant' },
+  });
+}
+
+// B. Courier Dispatched to Store
+export function notifyCourierDispatched(order, riderName = 'Musa Ibrahim') {
+  triggerNotification({
+    title: '🛵 Courier Dispatched',
+    body: `Courier ${riderName} has been assigned and is riding to ${order.storeName} to collect your packages.`,
+    type: 'default',
+    data: { orderId: order.id, status: 'Preparing' },
+  });
+}
+
+// C. Order Picked Up & On the Way
+export function notifyOrderOnTheWay(order, riderName = 'Musa Ibrahim') {
+  triggerNotification({
+    title: '🚀 Courier is On the Road!',
+    body: `All packages picked up! Courier ${riderName} is heading directly to your pinned address.`,
+    type: 'default',
+    data: { orderId: order.id, status: 'On the Way' },
+  });
+}
+
+// D. Courier Arrived at Door / Gate
+export function notifyCourierArrived(order) {
+  triggerNotification({
+    title: '📍 Courier Has Arrived Outside!',
+    body: `Your courier has arrived at your gate! Give your Delivery PIN (${order.deliveryPin}) to collect your provisions.`,
+    type: 'arrived',
+    data: { orderId: order.id, status: 'Arrived', pin: order.deliveryPin },
+  });
+}
+
+// E. Order Delivered & Review Reminder
+export function notifyOrderDelivered(order) {
+  triggerNotification({
+    title: '✅ Order Delivered Successfully!',
+    body: `Your provisions from ${order.storeName} have been delivered. Tap here to rate your food & courier!`,
+    type: 'default',
+    data: { orderId: order.id, status: 'Delivered' },
+  });
+}

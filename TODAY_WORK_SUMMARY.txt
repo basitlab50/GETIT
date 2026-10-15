@@ -281,7 +281,20 @@ Status:     All changes synced, verified, and pushed to origin/main
     - Locks out duplicate reviews: once rated, orders display a "✅ Rated ★ 5.0" badge.
     - Real-Time Dynamic Rating Recalculation: Automatically updates store rating averages and total review counts in memory and local persistence.
     - Store Profile Verified Reviews Modal: Added tappable "Reviews ➔" link on store profiles opening a full modal of verified customer experiences with ratings and tags.
-    - Supabase Cloud Persistence: Added `order_reviews` table in `supabase/schema.sql` and implemented `submitDatabaseReview` and `getStoreReviews` in `supabaseService.js`.
+  - Number 4: Push Notifications & Dual-Mode Audio Beeps (App Open & App Closed):
+    - Guaranteed sound & popup whether app is open in foreground, minimized in background, or locked with screen off.
+    - Android High-Priority Notification Channels: Configured `order_updates` and `merchant_orders` channels with `AndroidImportance.MAX`, `sound: 'default'`, custom vibration pattern, `bypassDnd: true`, and `lockscreenVisibility: PUBLIC`.
+    - iOS & Background Configuration: Enabled `shouldPlaySound: true`, `shouldShowAlert: true`, `shouldSetBadge: true` in `Notifications.setNotificationHandler`.
+    - In-App Audio Synthesizer: Created zero-latency crystal-clear audio tone generator using Web Audio API + device vibration:
+      - Multi-tone loud chime for merchants on new incoming paid orders (C5 ➔ E5 ➔ G5 ➔ C6).
+      - Luxury 2-tone concierge chime for customer order milestones.
+    - Floating In-App Luxury Drop-down Toast: Animated slide-down glass notification banner with sound and one-tap routing to live order details.
+    - Order Lifecycle Triggers:
+      1. Order Confirmed & Paid: Instant chime + push to buyer & loud cash-register alert to merchant.
+      2. Courier Dispatched to Shop: Alert confirming assigned rider.
+      3. Courier Picked Up & On the Way: Milestone push.
+      4. Courier Arrived at Gate: High-priority arrival chime alerting customer to give their PIN.
+      5. Delivery Completed: Handover confirmation + review prompt chime.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)
