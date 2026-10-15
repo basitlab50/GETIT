@@ -1688,6 +1688,71 @@ export default function App() {
     }
   };
 
+  // Geodetic Haversine Distance Calculator between two points in km
+  function calculateDistanceKm(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return null;
+    const nLat1 = Number(lat1);
+    const nLon1 = Number(lon1);
+    const nLat2 = Number(lat2);
+    const nLon2 = Number(lon2);
+    if (isNaN(nLat1) || isNaN(nLon1) || isNaN(nLat2) || isNaN(nLon2)) return null;
+    const R = 6371; // Earth's radius in km
+    const dLat = ((nLat2 - nLat1) * Math.PI) / 180;
+    const dLon = ((nLon2 - nLon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((nLat1 * Math.PI) / 180) *
+        Math.cos((nLat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  // Smart Nearest-Neighbor Logistics Optimizer: Orders multiple stops starting with the closest shop to the rider
+  function optimizeMultiStopSequence(stores, startPoint) {
+    if (!stores || stores.length <= 1) return stores;
+
+    const remaining = [...stores];
+    const ordered = [];
+    let currentPoint = startPoint || {
+      latitude: Number(stores[0].latitude) || 9.0882,
+      longitude: Number(stores[0].longitude) || 7.4933,
+    };
+
+    while (remaining.length > 0) {
+      let nearestIdx = 0;
+      let minDistance = Infinity;
+
+      for (let i = 0; i < remaining.length; i++) {
+        const store = remaining[i];
+        const dist = calculateDistanceKm(
+          currentPoint.latitude,
+          currentPoint.longitude,
+          store.latitude,
+          store.longitude
+        ) ?? Infinity;
+
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestIdx = i;
+        }
+      }
+
+      const [selectedStore] = remaining.splice(nearestIdx, 1);
+      ordered.push({
+        ...selectedStore,
+        distanceFromPrevKm: minDistance !== Infinity ? minDistance.toFixed(1) : null,
+      });
+      currentPoint = {
+        latitude: Number(selectedStore.latitude) || 9.0882,
+        longitude: Number(selectedStore.longitude) || 7.4933,
+      };
+    }
+
+    return ordered;
+  }
+
   // Build sequential connection legs directly between actual order waypoints
   const buildDirectLegsBetweenWaypoints = (waypoints) => {
     if (!waypoints || waypoints.length < 2) return { roadPoints: [], legs: [], snappedWaypoints: waypoints || [] };
@@ -3313,9 +3378,20 @@ export default function App() {
     const masterOrderId = `ORD-${Math.floor(10000 + Math.random() * 90000)}`;
     const masterDeliveryPin = `${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const stops = participatingStores.map((grp, index) => {
+    // Smart Nearest-Neighbor Logistics Optimization:
+    // Route to the store closest to the rider first, then sequentially to the nearest store
+    const assignedCourierPoint = {
+      latitude: Number(pinnedLocation?.latitude ? pinnedLocation.latitude - 0.012 : 9.0765),
+      longitude: Number(pinnedLocation?.longitude ? pinnedLocation.longitude - 0.010 : 7.4880),
+    };
+
+    const sequencedStores = isMultiStore
+      ? optimizeMultiStopSequence(participatingStores, assignedCourierPoint)
+      : participatingStores;
+
+    const stops = sequencedStores.map((grp, index) => {
       const storeSubtotal = grp.subtotal;
-      const grpDeliveryFee = Math.round(deliveryFee / participatingStores.length);
+      const grpDeliveryFee = Math.round(deliveryFee / sequencedStores.length);
       const grpConciergeFee = Math.round(storeSubtotal * 0.04);
       const grpTotal = storeSubtotal + grpDeliveryFee + grpConciergeFee;
       const pickupPin = `${Math.floor(1000 + Math.random() * 9000)}`;
@@ -3326,6 +3402,7 @@ export default function App() {
         storeName: grp.storeName,
         latitude: Number(grp.latitude) || 9.0882,
         longitude: Number(grp.longitude) || 7.4933,
+        distanceFromPrevKm: grp.distanceFromPrevKm || null,
         itemsCount: grp.items.reduce((sum, i) => sum + i.qty, 0),
         items: grp.items.map((i) => ({
           id: i.id,
@@ -3346,14 +3423,15 @@ export default function App() {
     const masterOrder = {
       id: masterOrderId,
       isMultiStore,
+      isRouteOptimized: isMultiStore,
       stopsCount: stops.length,
       currentStopIndex: 0,
       journeyAlert: isMultiStore
-        ? `🛵 Courier assigned! Heading to Stop 1 (${stops[0].storeName}) to collect your provisions.`
+        ? `⚡ Smart Dispatch: Courier assigned to closest shop first (${stops[0].storeName}) to minimize delivery time.`
         : `🛵 Courier assigned! Heading to ${stops[0].storeName}.`,
       status: 'Preparing',
       storeName: isMultiStore
-        ? `Multi-Store Order (${stops.map((s) => s.storeName).join(' + ')})`
+        ? `Multi-Store Order (${stops.map((s) => s.storeName).join(' ➔ ')})`
         : stops[0]?.storeName || 'GETIT Store',
       stops: stops,
       itemsCount: cart.reduce((sum, i) => sum + i.qty, 0),
@@ -4916,22 +4994,6 @@ export default function App() {
     );
   };
 
-  // Precise geographical distance calculation between two coordinates (km)
-  function calculateDistanceKm(lat1, lon1, lat2, lon2) {
-    if (!lat1 || !lon1 || !lat2 || !lon2) return null;
-    const R = 6371; // Earth's radius in km
-    const dLat = ((Number(lat2) - Number(lat1)) * Math.PI) / 180;
-    const dLon = ((Number(lon2) - Number(lon1)) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((Number(lat1) * Math.PI) / 180) *
-        Math.cos((Number(lat2) * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  }
-
   // Filtered stores on homepage with dynamic distance from buyer pin
   const buyerActiveLat = pinnedLocation?.latitude || mapCoords?.latitude || 9.0882;
   const buyerActiveLng = pinnedLocation?.longitude || mapCoords?.longitude || 7.4933;
@@ -6071,6 +6133,15 @@ export default function App() {
                     </View>
                   )}
 
+                  {/* Smart Nearest-Shop First Route Optimizer Badge */}
+                  {ord.isRouteOptimized && ord.stops && ord.stops.length > 1 && (
+                    <View style={styles.smartRouteBadge}>
+                      <Text style={styles.smartRouteBadgeText}>
+                        ⚡ NEAREST-SHOP FIRST • Sequence optimized to minimize courier travel
+                      </Text>
+                    </View>
+                  )}
+
                   {/* Order Card Header */}
                   <View style={styles.orderCardHeader}>
                     <View style={{ flex: 1, marginRight: 8 }}>
@@ -6174,9 +6245,16 @@ export default function App() {
                             </View>
 
                             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
-                              <Text style={styles.stopItemsSummaryText}>
-                                {stop.itemsCount} items • {formatNaira(stop.subtotal)}
-                              </Text>
+                              <View>
+                                <Text style={styles.stopItemsSummaryText}>
+                                  {stop.itemsCount} items • {formatNaira(stop.subtotal)}
+                                </Text>
+                                {stop.distanceFromPrevKm && (
+                                  <Text style={styles.stopProximityDistanceText}>
+                                    📍 {sIdx === 0 ? `Closest Hub (${stop.distanceFromPrevKm} km from courier)` : `Next nearest (${stop.distanceFromPrevKm} km)`}
+                                  </Text>
+                                )}
+                              </View>
                               <View style={styles.stopPickupPinBadge}>
                                 <Text style={styles.stopPickupPinBadgeText}>
                                   Shop PIN: {stop.pickupPin}
@@ -14301,6 +14379,28 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: COLORS.roseGold,
     letterSpacing: 0.5,
+  },
+  smartRouteBadge: {
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+    borderColor: 'rgba(37, 99, 235, 0.25)',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  smartRouteBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#2563EB',
+    letterSpacing: 0.4,
+  },
+  stopProximityDistanceText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#2563EB',
+    marginTop: 1.5,
   },
   orderMultiStopProgressBox: {
     backgroundColor: '#FFFBEB',
