@@ -235,7 +235,14 @@ Status:     All changes synced, verified, and pushed to origin/main
         and a floating callout tag above (`Musa • 42 km/h • Live`).
       - Anchored at `anchor={{ x: 0.5, y: 0.72 }}` so the center of the motorbike puck sits mathematically and visually
         directly on the blue road line.
-      - Tuned glide interval to 1.2s for silky-smooth, continuous navigation along the road line as it approaches each stop!
+    - Accurate Store & Customer Pinned Home Locations in Order Tracking Map:
+      - Removed hardcoded test coordinate overrides that were placing stores and home destination at arbitrary Maitama coordinates.
+      - Store Pinpoints now pull the actual latitude and longitude where the merchant pinned their store on the main side.
+      - Home Destination Pin now pulls the customer's actual pinned delivery address (`ord.deliveryLocation` / `pinnedLocation`).
+      - Auto-Fitting Map Viewport (`getOrderRegion`): Dynamically calculates bounding box coordinates so all participating stores,
+        the customer's delivery home, and the courier are guaranteed to be fully visible inside the map screen.
+      - Dynamic Sequential Route Connection (`buildDirectLegsBetweenWaypoints`): Route and glider strictly connect the actual
+        merchant locations to the customer's actual home address!
     - Single Master Security PIN: Buyer gives one single 4-digit Delivery Security PIN to the courier upon final handover.
   - Supabase Network Resiliency & Offline Sync Queue:
     - Fixed `UnexpectedException: The network connection was lost (ExpoModulesCore/Promise.swift:56)`:

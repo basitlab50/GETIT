@@ -1622,14 +1622,90 @@ export default function App() {
     });
   };
 
+  // Auto-fit map viewport to encompass all participating stores, customer home, and rider
+  const getOrderRegion = (ord) => {
+    const points = [];
+    const homeLat = Number(ord?.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+    const homeLng = Number(ord?.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+    points.push({ latitude: homeLat, longitude: homeLng });
+
+    if (ord?.stops && ord.stops.length > 0) {
+      ord.stops.forEach((st) => {
+        const sLat = Number(st.latitude);
+        const sLng = Number(st.longitude);
+        if (sLat && sLng) points.push({ latitude: sLat, longitude: sLng });
+      });
+    } else if (ord?.storeLocation?.latitude && ord?.storeLocation?.longitude) {
+      points.push({
+        latitude: Number(ord.storeLocation.latitude),
+        longitude: Number(ord.storeLocation.longitude),
+      });
+    }
+
+    if (ord?.boltCoords?.latitude && ord?.boltCoords?.longitude) {
+      points.push({
+        latitude: Number(ord.boltCoords.latitude),
+        longitude: Number(ord.boltCoords.longitude),
+      });
+    }
+
+    let minLat = points[0].latitude;
+    let maxLat = points[0].latitude;
+    let minLng = points[0].longitude;
+    let maxLng = points[0].longitude;
+
+    points.forEach((p) => {
+      minLat = Math.min(minLat, p.latitude);
+      maxLat = Math.max(maxLat, p.latitude);
+      minLng = Math.min(minLng, p.longitude);
+      maxLng = Math.max(maxLng, p.longitude);
+    });
+
+    const latDelta = Math.max(0.018, (maxLat - minLat) * 1.6);
+    const lngDelta = Math.max(0.018, (maxLng - minLng) * 1.6);
+
+    return {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
+      latitudeDelta: latDelta,
+      longitudeDelta: lngDelta,
+    };
+  };
+
+  // Build sequential connection legs directly between actual order waypoints
+  const buildDirectLegsBetweenWaypoints = (waypoints) => {
+    if (!waypoints || waypoints.length < 2) return { roadPoints: [], legs: [], snappedWaypoints: waypoints || [] };
+    const legs = [];
+    const roadPoints = [];
+
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      const start = waypoints[i];
+      const end = waypoints[i + 1];
+      const leg = [];
+      const steps = 25;
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const pt = {
+          latitude: start.latitude + (end.latitude - start.latitude) * t,
+          longitude: start.longitude + (end.longitude - start.longitude) * t,
+        };
+        leg.push(pt);
+        if (i === 0 || s > 0) roadPoints.push(pt);
+      }
+      legs.push(leg);
+    }
+
+    return {
+      roadPoints,
+      legs,
+      snappedWaypoints: waypoints,
+    };
+  };
+
   // Fetch real-world street road network route from OSRM (snapped to actual tarmac streets, legs, and pinpoint coordinates)
   const fetchRealRoadDirections = async (waypointCoords) => {
     if (!waypointCoords || waypointCoords.length < 2) {
-      return {
-        roadPoints: REAL_ROAD_POINTS,
-        legs: REAL_ROAD_LEGS,
-        snappedWaypoints: REAL_ROAD_WAYPOINTS,
-      };
+      return buildDirectLegsBetweenWaypoints(waypointCoords);
     }
     try {
       const coordStr = waypointCoords
@@ -1670,14 +1746,10 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.log('OSRM road directions dynamic fetch notice, using instant road network:', e?.message);
+      console.log('OSRM road directions dynamic fetch notice, using direct route waypoints:', e?.message);
     }
 
-    return {
-      roadPoints: REAL_ROAD_POINTS,
-      legs: REAL_ROAD_LEGS,
-      snappedWaypoints: REAL_ROAD_WAYPOINTS,
-    };
+    return buildDirectLegsBetweenWaypoints(waypointCoords);
   };
 
   // Auto-fetch real-world street road directions for active orders
@@ -1688,14 +1760,24 @@ export default function App() {
         ord.status !== 'Delivered' &&
         (!ord.roadLegs || !Array.isArray(ord.roadLegs) || ord.roadLegs.length === 0 || !ord.roadLegs[0] || ord.roadLegs[0].length < 2)
       ) {
-        const origin = ord.riderOrigin || ord.boltCoords || { latitude: 9.07499, longitude: 7.48497 };
         const stopsList = ord.stops && ord.stops.length > 0 ? ord.stops : [];
-        const dest = ord.deliveryLocation || { latitude: 9.090396, longitude: 7.494986 };
+        const firstStore = stopsList[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
+        const origin = ord.riderOrigin || ord.boltCoords || {
+          latitude: (Number(firstStore.latitude) || 9.0882) - 0.005,
+          longitude: (Number(firstStore.longitude) || 7.4933) - 0.004,
+        };
+        const dest = ord.deliveryLocation || pinnedLocation || { latitude: 9.0882, longitude: 7.4933 };
 
         const waypoints = [
           origin,
-          ...stopsList.map((s) => ({ latitude: Number(s.latitude) || 9.0882, longitude: Number(s.longitude) || 7.4933 })),
-          dest,
+          ...stopsList.map((s) => ({
+            latitude: Number(s.latitude) || 9.0882,
+            longitude: Number(s.longitude) || 7.4933,
+          })),
+          {
+            latitude: Number(dest.latitude) || 9.0882,
+            longitude: Number(dest.longitude) || 7.4933,
+          },
         ];
 
         fetchRealRoadDirections(waypoints).then((result) => {
@@ -1705,8 +1787,8 @@ export default function App() {
               const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx + 1] : null;
               return {
                 ...st,
-                snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.088231,
-                snappedLongitude: snapped ? snapped.longitude : Number(st.longitude) || 7.493304,
+                snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.0882,
+                snappedLongitude: snapped ? snapped.longitude : Number(st.longitude) || 7.4933,
               };
             });
 
@@ -1752,10 +1834,32 @@ export default function App() {
           }
 
           const currentStopIdx = ord.currentStopIndex || 0;
-          const activeLegPts =
-            (ord.roadLegs && ord.roadLegs[currentStopIdx] && ord.roadLegs[currentStopIdx].length > 1)
+          let activeLegPts =
+            ord.roadLegs && ord.roadLegs[currentStopIdx] && ord.roadLegs[currentStopIdx].length > 1
               ? ord.roadLegs[currentStopIdx]
-              : (REAL_ROAD_LEGS[currentStopIdx] || REAL_ROAD_LEGS[0]);
+              : null;
+
+          if (!activeLegPts || activeLegPts.length === 0) {
+            const homeLat = Number(ord.deliveryLocation?.latitude || 9.0882);
+            const homeLng = Number(ord.deliveryLocation?.longitude || 7.4933);
+            const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
+            const origin = ord.riderOrigin || ord.boltCoords || {
+              latitude: (Number(firstStore.latitude) || 9.0882) - 0.005,
+              longitude: (Number(firstStore.longitude) || 7.4933) - 0.004,
+            };
+            const wps = [
+              origin,
+              ...(ord.stops && ord.stops.length > 0
+                ? ord.stops.map((s) => ({
+                    latitude: Number(s.latitude) || 9.0882,
+                    longitude: Number(s.longitude) || 7.4933,
+                  }))
+                : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
+              { latitude: homeLat, longitude: homeLng },
+            ];
+            const directFallback = buildDirectLegsBetweenWaypoints(wps);
+            activeLegPts = directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
+          }
 
           const currentPointIdx = ord.roadPointIndex || 0;
           const totalPoints = activeLegPts.length;
@@ -3281,8 +3385,14 @@ export default function App() {
         vehicle: 'Bajaj Boxer 150 (Red)',
         plate: 'ABJ-492-KW',
       },
-      riderOrigin: REAL_ROAD_LEGS[0][0],
-      boltCoords: REAL_ROAD_LEGS[0][0],
+      riderOrigin: {
+        latitude: (Number(stops[0]?.latitude) || 9.0882) - 0.005,
+        longitude: (Number(stops[0]?.longitude) || 7.4933) - 0.004,
+      },
+      boltCoords: {
+        latitude: (Number(stops[0]?.latitude) || 9.0882) - 0.005,
+        longitude: (Number(stops[0]?.longitude) || 7.4933) - 0.004,
+      },
       eta: isMultiStore ? '25-35 mins' : '15-20 mins',
       timestamp: Date.now(),
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -6244,28 +6354,38 @@ export default function App() {
                         <View style={[styles.boltTrackingMapWrap, { marginTop: 10 }]}>
                           <MapView
                             style={styles.boltTrackingMap}
-                            initialRegion={{
-                              latitude: ord.deliveryLocation?.latitude || 9.0882,
-                              longitude: ord.deliveryLocation?.longitude || 7.4933,
-                              latitudeDelta: 0.032,
-                              longitudeDelta: 0.032,
-                            }}
+                            initialRegion={getOrderRegion(ord)}
                             scrollEnabled={true}
                             zoomEnabled={true}
                           >
                             {/* 1. Turn-by-Turn Road Route: Starts from Rider to Shop 1, then Shop 2, then Home */}
                             {(() => {
                               const currentStopIdx = ord.currentStopIndex || 0;
-                              // Active road leg for this current journey stage:
-                              // Stage 0: Rider -> Shop 1 (102 street points)
-                              // Stage 1: Shop 1 -> Shop 2 (35 street points)
-                              // Stage 2: Shop 2 -> Customer Home (48 street points)
+                              const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+                              const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+                              const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
+                              const origin = ord.riderOrigin || ord.boltCoords || {
+                                latitude: (Number(firstStore.latitude) || 9.0882) - 0.005,
+                                longitude: (Number(firstStore.longitude) || 7.4933) - 0.004,
+                              };
+                              const wps = [
+                                origin,
+                                ...(ord.stops && ord.stops.length > 0
+                                  ? ord.stops.map((s) => ({
+                                      latitude: Number(s.latitude) || 9.0882,
+                                      longitude: Number(s.longitude) || 7.4933,
+                                    }))
+                                  : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
+                                { latitude: homeLat, longitude: homeLng },
+                              ];
+                              const directFallback = buildDirectLegsBetweenWaypoints(wps);
+
                               const activeRoadPoints =
                                 ord.roadLegs &&
                                 ord.roadLegs[currentStopIdx] &&
                                 ord.roadLegs[currentStopIdx].length > 1
                                   ? ord.roadLegs[currentStopIdx]
-                                  : REAL_ROAD_LEGS[currentStopIdx] || REAL_ROAD_LEGS[0];
+                                  : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
 
                               return (
                                 <>
@@ -6285,18 +6405,20 @@ export default function App() {
                               );
                             })()}
 
-                            {/* 2. On-Road Snapped Store Stop Pinpoints (Marked Directly On The Blue Line) */}
+                            {/* 2. On-Road Snapped Store Stop Pinpoints (Marked Directly At Actual Store Location) */}
                             {ord.stops && ord.stops.length > 0 ? (
                               ord.stops.map((st, sIdx) => {
                                 const isCurrentStop = (ord.currentStopIndex || 0) === st.stopNumber - 1;
                                 const isCompleted = st.pickupStatus === 'picked_up' || (ord.currentStopIndex || 0) >= st.stopNumber;
 
-                                // Pin coordinate directly on the blue line vertex:
-                                const pinCoord =
-                                  REAL_ROAD_WAYPOINTS[st.stopNumber] || {
-                                    latitude: st.snappedLatitude || Number(st.latitude) || 9.088231,
-                                    longitude: st.snappedLongitude || Number(st.longitude) || 7.493304,
-                                  };
+                                const stMatch = storesList.find((s) => s.id === st.storeId || s.name === st.storeName);
+                                const storeLat = Number(st.latitude) || Number(stMatch?.latitude) || 9.0882;
+                                const storeLng = Number(st.longitude) || Number(stMatch?.longitude) || 7.4933;
+
+                                const pinCoord = {
+                                  latitude: st.snappedLatitude || storeLat,
+                                  longitude: st.snappedLongitude || storeLng,
+                                };
 
                                 return (
                                   <Marker
@@ -6353,52 +6475,82 @@ export default function App() {
                               })
                             ) : (
                               <Marker
-                                coordinate={REAL_ROAD_WAYPOINTS[1]}
-                                title={ord.storeName || 'Hulfillment Hub'}
+                                coordinate={{
+                                  latitude: Number(ord.storeLocation?.latitude || ord.storeLatitude || 9.0882),
+                                  longitude: Number(ord.storeLocation?.longitude || ord.storeLongitude || 7.4933),
+                                }}
+                                title={ord.storeName || 'Store Hub'}
                                 description="Store Fulfillment Hub"
                                 pinColor="#B76E79"
                               />
                             )}
 
-                            {/* 3. Customer Delivery Destination Pin (Marked Directly On The Road Line) */}
-                            <Marker
-                              coordinate={REAL_ROAD_WAYPOINTS[3] || {
-                                latitude: ord.snappedDeliveryLocation?.latitude || ord.deliveryLocation?.latitude || 9.090396,
-                                longitude: ord.snappedDeliveryLocation?.longitude || ord.deliveryLocation?.longitude || 7.494986,
-                              }}
-                              title="🏠 Home: Delivery Destination"
-                              description={ord.customerAddress || 'Customer dropoff residence'}
-                              anchor={{ x: 0.5, y: 1.0 }}
-                            >
-                              <View style={styles.roadPinContainer}>
-                                <View style={[styles.roadPinCallout, { borderColor: '#DC2626' }]}>
-                                  <View style={[styles.roadPinBadgeNum, { backgroundColor: '#DC2626' }]}>
-                                    <Text style={{ fontSize: 9 }}>🏠</Text>
+                            {/* 3. Customer Delivery Destination Pin (Marked Directly At Pinned Home) */}
+                            {(() => {
+                              const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+                              const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+                              const homeCoord = {
+                                latitude: ord.snappedDeliveryLocation?.latitude || homeLat,
+                                longitude: ord.snappedDeliveryLocation?.longitude || homeLng,
+                              };
+
+                              return (
+                                <Marker
+                                  coordinate={homeCoord}
+                                  title="🏠 Home: Delivery Destination"
+                                  description={ord.customerAddress || pinnedLocation?.name || 'Customer dropoff residence'}
+                                  anchor={{ x: 0.5, y: 1.0 }}
+                                >
+                                  <View style={styles.roadPinContainer}>
+                                    <View style={[styles.roadPinCallout, { borderColor: '#DC2626' }]}>
+                                      <View style={[styles.roadPinBadgeNum, { backgroundColor: '#DC2626' }]}>
+                                        <Text style={{ fontSize: 9 }}>🏠</Text>
+                                      </View>
+                                      <Text style={[styles.roadPinCalloutText, { color: '#DC2626', fontWeight: '900' }]}>
+                                        HOME
+                                      </Text>
+                                    </View>
+                                    <View style={[styles.roadPinNeedle, { backgroundColor: '#DC2626' }]} />
+                                    <View style={[styles.roadPinDot, { borderColor: '#DC2626' }]} />
                                   </View>
-                                  <Text style={[styles.roadPinCalloutText, { color: '#DC2626', fontWeight: '900' }]}>
-                                    HOME
-                                  </Text>
-                                </View>
-                                <View style={[styles.roadPinNeedle, { backgroundColor: '#DC2626' }]} />
-                                <View style={[styles.roadPinDot, { borderColor: '#DC2626' }]} />
-                              </View>
-                            </Marker>
+                                </Marker>
+                              );
+                            })()}
 
                             {/* 4. Real-Time Moving Motorbike Courier Marker (SNAPPED DIRECTLY ONTO THE BLUE ROAD LINE) */}
                             {(() => {
                               const currentStopIdx = ord.currentStopIndex || 0;
+                              const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+                              const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+                              const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
+                              const origin = ord.riderOrigin || ord.boltCoords || {
+                                latitude: (Number(firstStore.latitude) || 9.0882) - 0.005,
+                                longitude: (Number(firstStore.longitude) || 7.4933) - 0.004,
+                              };
+                              const wps = [
+                                origin,
+                                ...(ord.stops && ord.stops.length > 0
+                                  ? ord.stops.map((s) => ({
+                                      latitude: Number(s.latitude) || 9.0882,
+                                      longitude: Number(s.longitude) || 7.4933,
+                                    }))
+                                  : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
+                                { latitude: homeLat, longitude: homeLng },
+                              ];
+                              const directFallback = buildDirectLegsBetweenWaypoints(wps);
+
                               const activeRoadPts =
                                 ord.roadLegs &&
                                 ord.roadLegs[currentStopIdx] &&
                                 ord.roadLegs[currentStopIdx].length > 1
                                   ? ord.roadLegs[currentStopIdx]
-                                  : REAL_ROAD_LEGS[currentStopIdx] || REAL_ROAD_LEGS[0];
+                                  : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
 
-                              const pointIdx = Math.min(ord.roadPointIndex || 0, activeRoadPts.length - 1);
+                              const pointIdx = Math.min(ord.roadPointIndex || 0, Math.max(0, activeRoadPts.length - 1));
                               const riderOnBlueLine =
                                 ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
                                   ? ord.boltCoords
-                                  : activeRoadPts[pointIdx] || REAL_ROAD_LEGS[0][0];
+                                  : activeRoadPts[pointIdx] || origin;
 
                               return (
                                 <Marker
