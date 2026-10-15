@@ -2225,15 +2225,26 @@ export default function App() {
             });
 
             const completedShopName = ord.stops?.[currentStopIdx]?.storeName || 'Shop 1';
-            const nextShopName = ord.stops?.[nextStopIdx]?.storeName || 'Shop 2';
+            const isHeadingToCustomer = nextStopIdx === totalLegs - 1;
+            const nextShopName = isHeadingToCustomer
+              ? 'your delivery address'
+              : (ord.stops?.[nextStopIdx]?.storeName || 'Shop 2');
+
+            // 🔔 Audio Beep & Push: Alert buyer when all packages are picked up and courier is en route to gate!
+            if (isHeadingToCustomer && !ord.hasNotifiedOnTheWay) {
+              notifyOrderOnTheWay(ord, ord.boltRider?.name || 'Musa Ibrahim');
+            }
 
             return {
               ...ord,
               currentStopIndex: nextStopIdx,
               roadPointIndex: 0,
               stops: updatedStops,
-              journeyAlert: `🔔 Picked up from ${completedShopName}! Courier Musa Ibrahim is now riding on the road to ${nextShopName}.`,
-              status: 'Preparing',
+              hasNotifiedOnTheWay: isHeadingToCustomer ? true : ord.hasNotifiedOnTheWay,
+              journeyAlert: isHeadingToCustomer
+                ? `🎉 All packages picked up! Courier Musa Ibrahim is now riding directly to your pinned address.`
+                : `🔔 Picked up from ${completedShopName}! Courier Musa Ibrahim is now riding on the road to ${nextShopName}.`,
+              status: isHeadingToCustomer ? 'On the Way' : 'Preparing',
             };
           } else {
             // Arrived at Customer Delivery Destination!
@@ -3832,6 +3843,9 @@ export default function App() {
           const newCount = currentCount + 1;
           const currentRating = Number(st.rating) || 4.9;
           const newRating = Number(((currentRating * currentCount + matchingRev.storeRating) / newCount).toFixed(1));
+          if (matchingRev?.storeId) {
+            updateDatabaseStore(matchingRev.storeId, { rating: newRating }).catch(() => {});
+          }
           return {
             ...st,
             rating: newRating,
@@ -3853,11 +3867,26 @@ export default function App() {
     );
   };
 
-  const openStoreReviewsModal = (store) => {
+  const openStoreReviewsModal = async (store) => {
     if (!store) return;
     const storeRevs = reviewsList.filter((r) => r.storeId === store.id);
     setStoreReviewsViewing(storeRevs.length > 0 ? storeRevs : INITIAL_SAMPLE_REVIEWS.filter((r) => r.storeId === store.id));
     setStoreReviewsModalVisible(true);
+
+    try {
+      const cloudRevs = await getStoreReviews(store.id);
+      if (cloudRevs && cloudRevs.length > 0) {
+        setStoreReviewsViewing((prev) => {
+          const merged = [...cloudRevs];
+          prev.forEach((p) => {
+            if (!merged.some((m) => m.id === p.id)) {
+              merged.push(p);
+            }
+          });
+          return merged;
+        });
+      }
+    } catch (e) {}
   };
 
   const handleCheckout = () => {
@@ -4007,6 +4036,11 @@ export default function App() {
 
     // 🔔 Trigger immediate push notification + audio chime for buyer & merchant!
     notifyOrderPlaced(masterOrder);
+
+    // 🛵 Push & Audio Alert: Courier assigned and dispatching to Stop 1
+    setTimeout(() => {
+      notifyCourierDispatched(masterOrder, masterOrder.boltRider?.name || 'Musa Ibrahim');
+    }, 2800);
 
     // Fetch real road street network directions connecting strictly pinned stores to delivery home
     const roadWaypoints = [

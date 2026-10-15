@@ -325,20 +325,20 @@ Status:     All changes synced, verified, and pushed to origin/main
   - Verified that all client-side triggers in `mobile/App.js` hook directly into these Supabase operations.
 
 --------------------------------------------------------------------------------
-2. WHAT IS LEFT TO DO (STRICT ROADMAP ORDER COMMITTED BY USER)
+2. CURRENT STATUS & COMPLETED ROADMAP MILESTONES
 --------------------------------------------------------------------------------
-The user explicitly specified the exact order of remaining tasks:
+All core roadmap items are now implemented, verified, and synchronized:
 
-  ▶ STEP 1 (NEXT SESSION): Number 7 - Customer Reviews & Post-Order Feedback
+  ✅ COMPLETED: Number 7 - Customer Reviews & Post-Order Feedback
     - Trigger dual-scorecard review modal automatically on delivery completion (handover PIN verification),
       or on-demand via the persistent "⭐ Rate Order" button on delivered orders.
     - Rate both Merchant (Food/Product quality, packaging) and Courier (Speed, courtesy, handling) with 1-5 stars.
-    - Add quick-tag pills ("Fast Delivery", "Hot & Fresh", "Polite Courier", "Well Packaged").
+    - Context-aware quick-tag pills ("Fast Delivery", "Hot & Fresh", "Polite Courier", "Well Packaged").
     - Prevent duplicate ratings with a "✅ Rated ★ 5.0" badge.
     - Recalculate store rating averages and total review counts dynamically in Supabase and app state.
-    - Add verified customer reviews modal to store profile pages.
+    - Verified customer reviews modal connected to store profile pages with dynamic cloud review fetching.
 
-  ▶ STEP 2 (AFTER NUMBER 7): Number 4 - Push Notifications (Expo Push & Dual-Mode Audio Alerts)
+  ✅ COMPLETED: Number 4 - Push Notifications (Expo Push & Dual-Mode Audio Alerts)
     - Guaranteed alerts whether app is foregrounded, backgrounded, or locked with screen off.
     - Android High-Priority Channels: `order_updates` and `merchant_orders` with `AndroidImportance.MAX`,
       vibration patterns, sound, `bypassDnd: true`, and public lockscreen visibility.
@@ -346,8 +346,13 @@ The user explicitly specified the exact order of remaining tasks:
     - In-app Web Audio API dual-tone chimes:
       - Loud multi-tone cash register chime for merchants on new orders (C5 ➔ E5 ➔ G5 ➔ C6).
       - Luxury 2-tone concierge chime for customer order milestones.
-    - Floating animated drop-down glass banner for in-app alert visibility.
-    - 5 Core Lifecycle Triggers: Order Placed/Paid, Rider Dispatched, Order Picked Up, Courier at Gate, Handover Completed.
+    - Floating animated drop-down glass banner for in-app alert visibility with one-tap routing to Orders tab.
+    - 5 Core Lifecycle Triggers Fully Wired:
+      1. Order Placed / Paid (Instant notification + dual chime).
+      2. Courier Dispatched to Stop 1 (Assigned rider alert).
+      3. Courier Picked Up & On the Way (All packages collected en route alert).
+      4. Courier Arrived at Gate (High-priority arrival beep + PIN handover prompt).
+      5. Delivery Handover Completed (Delivery confirmation + automatic review modal launch).
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 14, 2026)
