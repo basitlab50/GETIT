@@ -237,7 +237,7 @@ export function notifyOrderPlaced(order) {
   // Merchant alert (Loud Cash Register Chime)
   triggerNotification({
     title: '🔔 NEW ORDER RECEIVED!',
-    body: `New Order #${order.id} for ${order.storeName}! Total: ₦${Number(order.total || 0).toLocaleString()}. Tap to start preparing.`,
+    body: `New Order #${order.id} for ${order.storeName}! Product value: ₦${Number(order.subtotal || order.total || 0).toLocaleString()}. Tap to start preparing.`,
     type: 'merchant_new_order',
     data: { orderId: order.id, status: 'New Order', role: 'merchant' },
   });

@@ -4164,8 +4164,40 @@ export default function App() {
     return true;
   });
 
+  const getMerchantOrderProductAmount = (ord) => {
+    // 1. If multi-stop order, find the matching stop subtotal for this shop
+    if (Array.isArray(ord.stops) && ord.stops.length > 0) {
+      const matchingStop = ord.stops.find(
+        (st) =>
+          (currentMerchantStore && (st.storeId === currentMerchantStore.id || st.storeName === currentMerchantStore.name)) ||
+          st.storeName === 'The Gourmet Emporium'
+      );
+      if (matchingStop && Number(matchingStop.subtotal) > 0) {
+        return Number(matchingStop.subtotal);
+      }
+    }
+    // 2. Filter items belonging to this store
+    if (Array.isArray(ord.items) && ord.items.length > 0) {
+      const matchingItems = ord.items.filter(
+        (it) =>
+          (!it.storeName && !it.storeId) ||
+          (currentMerchantStore && (it.storeName === currentMerchantStore.name || it.storeId === currentMerchantStore.id)) ||
+          it.storeName === 'The Gourmet Emporium'
+      );
+      if (matchingItems.length > 0) {
+        const itemsTotal = matchingItems.reduce(
+          (sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 1),
+          0
+        );
+        if (itemsTotal > 0) return itemsTotal;
+      }
+    }
+    // 3. Fallback to order subtotal (strictly products only, NEVER delivery fee)
+    return Number(ord.subtotal) || 0;
+  };
+
   const merchantTotalRevenue = merchantOrders.reduce(
-    (sum, o) => sum + (o.vendorPayout || Math.round(o.total * 0.9)),
+    (sum, o) => sum + getMerchantOrderProductAmount(o),
     0
   );
 
@@ -9757,15 +9789,14 @@ export default function App() {
                           )}
                         </View>
 
-                        {/* Order Financials & Net Payout */}
+                        {/* Order Financials: Strictly Product Money (No Delivery Fee, Customer Total Hidden) */}
                         <View style={styles.mFinancialsRow}>
                           <View>
-                            <Text style={styles.mNetPayoutLabel}>YOUR SETTLEMENT (90%)</Text>
+                            <Text style={styles.mNetPayoutLabel}>YOUR EARNINGS (PRODUCTS VALUE)</Text>
                             <Text style={styles.mNetPayoutValue}>
-                              {formatNaira(ord.vendorPayout || Math.round(ord.total * 0.9))}
+                              {formatNaira(getMerchantOrderProductAmount(ord))}
                             </Text>
                           </View>
-                          <Text style={styles.mCustomerPaid}>Customer Paid: {formatNaira(ord.total)}</Text>
                         </View>
 
                         {/* Action Buttons depending on status */}
@@ -10026,27 +10057,23 @@ export default function App() {
 
                 {/* Breakdown Card */}
                 <View style={styles.financeBreakdownCard}>
-                  <Text style={styles.financeCardTitle}>Commission Structure</Text>
+                  <Text style={styles.financeCardTitle}>Product Revenue Summary</Text>
                   <View style={styles.financeRow}>
-                    <Text style={styles.financeLabel}>Store Gross Sales</Text>
+                    <Text style={styles.financeLabel}>Total Products Sold</Text>
                     <Text style={styles.financeVal}>
-                      {formatNaira(Math.round(merchantTotalRevenue / 0.9))}
+                      {formatNaira(merchantTotalRevenue)}
                     </Text>
                   </View>
                   <View style={styles.financeRow}>
-                    <Text style={styles.financeLabel}>Platform Commission (10%)</Text>
-                    <Text style={[styles.financeVal, { color: '#DC2626' }]}>
-                      -{formatNaira(Math.round(merchantTotalRevenue * 0.1))}
+                    <Text style={styles.financeLabel}>Delivery Fee</Text>
+                    <Text style={[styles.financeVal, { color: COLORS.emeraldPrimary, fontWeight: '700' }]}>
+                      ₦0.00 (Customer to Courier)
                     </Text>
-                  </View>
-                  <View style={styles.financeRow}>
-                    <Text style={styles.financeLabel}>Courier Cost (Covered by Client)</Text>
-                    <Text style={styles.financeVal}>₦0.00</Text>
                   </View>
                   <View style={styles.financeDivider} />
                   <View style={styles.financeRow}>
                     <Text style={[styles.financeLabel, { fontWeight: '800', color: COLORS.textDark }]}>
-                      Net Vendor Payout (90%)
+                      Your Product Earnings
                     </Text>
                     <Text style={[styles.financeVal, { color: COLORS.emeraldPrimary, fontWeight: '900' }]}>
                       {formatNaira(merchantTotalRevenue)}
