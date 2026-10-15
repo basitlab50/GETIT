@@ -241,6 +241,9 @@ Status:     All changes synced, verified, and pushed to origin/main
       - Home Destination Pin now pulls the customer's actual pinned delivery address (`ord.deliveryLocation` / `pinnedLocation`).
       - Auto-Fitting Map Viewport (`getOrderRegion`): Dynamically calculates bounding box coordinates so all participating stores,
         the customer's delivery home, and the courier are guaranteed to be fully visible inside the map screen.
+      - Eliminated Phantom Unpinned Origin Route: Removed the arbitrary off-site "rider origin/dispatch hub" coordinate that
+        caused the courier to travel to a random unpinned spot before going to the shop. The route now starts directly at
+        Shop 1 (or between Shop 1 ➔ Shop 2 ➔ Home), so every single coordinate visited is an actual pinned location!
       - Dynamic Sequential Route Connection (`buildDirectLegsBetweenWaypoints`): Route and glider strictly connect the actual
         merchant locations to the customer's actual home address!
     - Single Master Security PIN: Buyer gives one single 4-digit Delivery Security PIN to the courier upon final handover.

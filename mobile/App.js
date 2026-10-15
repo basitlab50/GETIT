@@ -1514,7 +1514,10 @@ export default function App() {
         vehicle: 'Bajaj Boxer 150 (Red)',
         plate: 'ABJ-492-KW',
       },
-      boltCoords: REAL_ROAD_LEGS[0][0],
+      boltCoords: {
+        latitude: 9.0882,
+        longitude: 7.4933,
+      },
       eta: '11 mins',
       deliveryPin: '4928',
       pickupPin: '7391',
@@ -1762,18 +1765,16 @@ export default function App() {
       ) {
         const stopsList = ord.stops && ord.stops.length > 0 ? ord.stops : [];
         const firstStore = stopsList[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
-        const origin = ord.riderOrigin || ord.boltCoords || {
-          latitude: (Number(firstStore.latitude) || 9.0882) - 0.005,
-          longitude: (Number(firstStore.longitude) || 7.4933) - 0.004,
-        };
         const dest = ord.deliveryLocation || pinnedLocation || { latitude: 9.0882, longitude: 7.4933 };
 
+        // Waypoints strictly start at the first pinned store and end at the customer home
         const waypoints = [
-          origin,
-          ...stopsList.map((s) => ({
-            latitude: Number(s.latitude) || 9.0882,
-            longitude: Number(s.longitude) || 7.4933,
-          })),
+          ...(stopsList.length > 0
+            ? stopsList.map((s) => ({
+                latitude: Number(s.latitude) || 9.0882,
+                longitude: Number(s.longitude) || 7.4933,
+              }))
+            : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
           {
             latitude: Number(dest.latitude) || 9.0882,
             longitude: Number(dest.longitude) || 7.4933,
@@ -1784,7 +1785,7 @@ export default function App() {
           if (result && result.roadPoints && result.roadPoints.length > 0) {
             // Update stops with their snapped pinpoint coordinates directly on the road!
             const updatedStops = (ord.stops || []).map((st, sIdx) => {
-              const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx + 1] : null;
+              const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx] : null;
               return {
                 ...st,
                 snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.0882,
@@ -1840,15 +1841,10 @@ export default function App() {
               : null;
 
           if (!activeLegPts || activeLegPts.length === 0) {
-            const homeLat = Number(ord.deliveryLocation?.latitude || 9.0882);
-            const homeLng = Number(ord.deliveryLocation?.longitude || 7.4933);
+            const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+            const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
             const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
-            const origin = ord.riderOrigin || ord.boltCoords || {
-              latitude: (Number(firstStore.latitude) || 9.0882) - 0.005,
-              longitude: (Number(firstStore.longitude) || 7.4933) - 0.004,
-            };
             const wps = [
-              origin,
               ...(ord.stops && ord.stops.length > 0
                 ? ord.stops.map((s) => ({
                     latitude: Number(s.latitude) || 9.0882,
@@ -1877,17 +1873,17 @@ export default function App() {
           }
 
           // Arrived at the end of this leg!
-          const stopsCount = (ord.stops && ord.stops.length > 0) ? ord.stops.length : 2;
+          const totalLegs = (ord.roadLegs && ord.roadLegs.length > 0) ? ord.roadLegs.length : (ord.stops?.length || 1);
 
-          if (currentStopIdx < stopsCount - 1) {
-            // Arrived at intermediate shop (e.g. Shop 1)
+          if (currentStopIdx < totalLegs - 1) {
+            // Arrived at intermediate shop (e.g. Shop 2 in multi-store order)
             const nextStopIdx = currentStopIdx + 1;
             const updatedStops = (ord.stops || []).map((st, idx) => {
-              if (idx === currentStopIdx) {
+              if (idx <= currentStopIdx) {
                 return {
                   ...st,
                   pickupStatus: 'picked_up',
-                  pickedUpAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 };
               }
               if (idx === nextStopIdx) {
@@ -1896,7 +1892,7 @@ export default function App() {
               return st;
             });
 
-            const currentShopName = ord.stops?.[currentStopIdx]?.storeName || 'Shop 1';
+            const completedShopName = ord.stops?.[currentStopIdx]?.storeName || 'Shop 1';
             const nextShopName = ord.stops?.[nextStopIdx]?.storeName || 'Shop 2';
 
             return {
@@ -1904,11 +1900,11 @@ export default function App() {
               currentStopIndex: nextStopIdx,
               roadPointIndex: 0,
               stops: updatedStops,
-              journeyAlert: `🔔 Picked up from ${currentShopName}! Courier Musa Ibrahim is now riding on the road to ${nextShopName} (Stop ${nextStopIdx + 1}).`,
+              journeyAlert: `🔔 Picked up from ${completedShopName}! Courier Musa Ibrahim is now riding on the road to ${nextShopName}.`,
               status: 'Preparing',
             };
-          } else if (currentStopIdx === stopsCount - 1) {
-            // Arrived at final shop (e.g. Shop 2) -> now transition to Home leg
+          } else {
+            // Arrived at Customer Delivery Destination!
             const updatedStops = (ord.stops || []).map((st) => ({
               ...st,
               pickupStatus: 'picked_up',
@@ -1917,16 +1913,8 @@ export default function App() {
 
             return {
               ...ord,
-              currentStopIndex: stopsCount,
-              roadPointIndex: 0,
               stops: updatedStops,
-              journeyAlert: `🎉 All shops collected! Courier Musa Ibrahim has all your provisions and is on the way to your door.`,
               status: 'On the Way',
-            };
-          } else {
-            // Arrived at Customer Home!
-            return {
-              ...ord,
               journeyAlert: `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin}) to collect packages.`,
             };
           }
@@ -3386,12 +3374,12 @@ export default function App() {
         plate: 'ABJ-492-KW',
       },
       riderOrigin: {
-        latitude: (Number(stops[0]?.latitude) || 9.0882) - 0.005,
-        longitude: (Number(stops[0]?.longitude) || 7.4933) - 0.004,
+        latitude: Number(stops[0]?.latitude) || 9.0882,
+        longitude: Number(stops[0]?.longitude) || 7.4933,
       },
       boltCoords: {
-        latitude: (Number(stops[0]?.latitude) || 9.0882) - 0.005,
-        longitude: (Number(stops[0]?.longitude) || 7.4933) - 0.004,
+        latitude: Number(stops[0]?.latitude) || 9.0882,
+        longitude: Number(stops[0]?.longitude) || 7.4933,
       },
       eta: isMultiStore ? '25-35 mins' : '15-20 mins',
       timestamp: Date.now(),
@@ -3401,16 +3389,15 @@ export default function App() {
 
     updateAndPersistOrders((prev) => [masterOrder, ...prev]);
 
-    // Fetch real road street network directions for this newly placed order
+    // Fetch real road street network directions connecting strictly pinned stores to delivery home
     const roadWaypoints = [
-      masterOrder.riderOrigin,
       ...stops.map((s) => ({ latitude: Number(s.latitude) || 9.0882, longitude: Number(s.longitude) || 7.4933 })),
       masterOrder.deliveryLocation,
     ];
     fetchRealRoadDirections(roadWaypoints).then((result) => {
       if (result && result.roadPoints && result.roadPoints.length > 0) {
         const updatedStops = masterOrder.stops.map((st, sIdx) => {
-          const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx + 1] : null;
+          const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx] : null;
           return {
             ...st,
             snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.0882,
@@ -6363,13 +6350,7 @@ export default function App() {
                               const currentStopIdx = ord.currentStopIndex || 0;
                               const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
                               const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
-                              const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
-                              const origin = ord.riderOrigin || ord.boltCoords || {
-                                latitude: (Number(firstStore.latitude) || 9.0882) - 0.005,
-                                longitude: (Number(firstStore.longitude) || 7.4933) - 0.004,
-                              };
                               const wps = [
-                                origin,
                                 ...(ord.stops && ord.stops.length > 0
                                   ? ord.stops.map((s) => ({
                                       latitude: Number(s.latitude) || 9.0882,
@@ -6523,12 +6504,7 @@ export default function App() {
                               const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
                               const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
                               const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
-                              const origin = ord.riderOrigin || ord.boltCoords || {
-                                latitude: (Number(firstStore.latitude) || 9.0882) - 0.005,
-                                longitude: (Number(firstStore.longitude) || 7.4933) - 0.004,
-                              };
                               const wps = [
-                                origin,
                                 ...(ord.stops && ord.stops.length > 0
                                   ? ord.stops.map((s) => ({
                                       latitude: Number(s.latitude) || 9.0882,
@@ -6547,10 +6523,14 @@ export default function App() {
                                   : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
 
                               const pointIdx = Math.min(ord.roadPointIndex || 0, Math.max(0, activeRoadPts.length - 1));
+                              const firstStoreCoord = {
+                                latitude: Number(firstStore.latitude) || 9.0882,
+                                longitude: Number(firstStore.longitude) || 7.4933,
+                              };
                               const riderOnBlueLine =
                                 ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
                                   ? ord.boltCoords
-                                  : activeRoadPts[pointIdx] || origin;
+                                  : activeRoadPts[pointIdx] || firstStoreCoord;
 
                               return (
                                 <Marker
