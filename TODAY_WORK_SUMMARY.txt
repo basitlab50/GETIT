@@ -253,6 +253,10 @@ Status:     All changes synced, verified, and pushed to origin/main
     - Switched from `.insert()` to `.upsert()` to prevent duplicate key collisions during transient socket disconnects.
     - Added offline fallback: When completely disconnected, pending orders are saved to `getit_pending_order_syncs` in
       `AsyncStorage` and automatically flushed to Supabase as soon as network connectivity is restored.
+    - Fixed Orders Tab Render Crash (`firstStore is not defined`):
+      Declared `const firstStore = (ord.stops && ord.stops[0]) || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 }`
+      in Turn-by-Turn Road Route block so orders without `ord.stops` or standard single-store orders never throw reference errors.
+    - Hardened `getOrderRegion` with try/catch and `isNaN` protections so malformed or missing order coordinates never crash the screen.
 
 --------------------------------------------------------------------------------
 3. GIT COMMIT RECORD (OCTOBER 11 - 12, 2026)

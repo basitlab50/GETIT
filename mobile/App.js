@@ -1627,52 +1627,65 @@ export default function App() {
 
   // Auto-fit map viewport to encompass all participating stores, customer home, and rider
   const getOrderRegion = (ord) => {
-    const points = [];
-    const homeLat = Number(ord?.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
-    const homeLng = Number(ord?.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
-    points.push({ latitude: homeLat, longitude: homeLng });
+    try {
+      const points = [];
+      const homeLat = Number(ord?.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+      const homeLng = Number(ord?.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+      points.push({ latitude: isNaN(homeLat) ? 9.0882 : homeLat, longitude: isNaN(homeLng) ? 7.4933 : homeLng });
 
-    if (ord?.stops && ord.stops.length > 0) {
-      ord.stops.forEach((st) => {
-        const sLat = Number(st.latitude);
-        const sLng = Number(st.longitude);
-        if (sLat && sLng) points.push({ latitude: sLat, longitude: sLng });
+      if (ord?.stops && Array.isArray(ord.stops) && ord.stops.length > 0) {
+        ord.stops.forEach((st) => {
+          const sLat = Number(st.latitude);
+          const sLng = Number(st.longitude);
+          if (!isNaN(sLat) && !isNaN(sLng) && sLat !== 0 && sLng !== 0) {
+            points.push({ latitude: sLat, longitude: sLng });
+          }
+        });
+      } else if (ord?.storeLocation?.latitude && ord?.storeLocation?.longitude) {
+        const sLat = Number(ord.storeLocation.latitude);
+        const sLng = Number(ord.storeLocation.longitude);
+        if (!isNaN(sLat) && !isNaN(sLng)) {
+          points.push({ latitude: sLat, longitude: sLng });
+        }
+      }
+
+      if (ord?.boltCoords?.latitude && ord?.boltCoords?.longitude) {
+        const bLat = Number(ord.boltCoords.latitude);
+        const bLng = Number(ord.boltCoords.longitude);
+        if (!isNaN(bLat) && !isNaN(bLng)) {
+          points.push({ latitude: bLat, longitude: bLng });
+        }
+      }
+
+      let minLat = points[0].latitude;
+      let maxLat = points[0].latitude;
+      let minLng = points[0].longitude;
+      let maxLng = points[0].longitude;
+
+      points.forEach((p) => {
+        minLat = Math.min(minLat, p.latitude);
+        maxLat = Math.max(maxLat, p.latitude);
+        minLng = Math.min(minLng, p.longitude);
+        maxLng = Math.max(maxLng, p.longitude);
       });
-    } else if (ord?.storeLocation?.latitude && ord?.storeLocation?.longitude) {
-      points.push({
-        latitude: Number(ord.storeLocation.latitude),
-        longitude: Number(ord.storeLocation.longitude),
-      });
+
+      const latDelta = Math.max(0.018, (maxLat - minLat) * 1.6);
+      const lngDelta = Math.max(0.018, (maxLng - minLng) * 1.6);
+
+      return {
+        latitude: (minLat + maxLat) / 2,
+        longitude: (minLng + maxLng) / 2,
+        latitudeDelta: isNaN(latDelta) ? 0.032 : latDelta,
+        longitudeDelta: isNaN(lngDelta) ? 0.032 : lngDelta,
+      };
+    } catch (e) {
+      return {
+        latitude: 9.0882,
+        longitude: 7.4933,
+        latitudeDelta: 0.032,
+        longitudeDelta: 0.032,
+      };
     }
-
-    if (ord?.boltCoords?.latitude && ord?.boltCoords?.longitude) {
-      points.push({
-        latitude: Number(ord.boltCoords.latitude),
-        longitude: Number(ord.boltCoords.longitude),
-      });
-    }
-
-    let minLat = points[0].latitude;
-    let maxLat = points[0].latitude;
-    let minLng = points[0].longitude;
-    let maxLng = points[0].longitude;
-
-    points.forEach((p) => {
-      minLat = Math.min(minLat, p.latitude);
-      maxLat = Math.max(maxLat, p.latitude);
-      minLng = Math.min(minLng, p.longitude);
-      maxLng = Math.max(maxLng, p.longitude);
-    });
-
-    const latDelta = Math.max(0.018, (maxLat - minLat) * 1.6);
-    const lngDelta = Math.max(0.018, (maxLng - minLng) * 1.6);
-
-    return {
-      latitude: (minLat + maxLat) / 2,
-      longitude: (minLng + maxLng) / 2,
-      latitudeDelta: latDelta,
-      longitudeDelta: lngDelta,
-    };
   };
 
   // Build sequential connection legs directly between actual order waypoints
@@ -6350,8 +6363,9 @@ export default function App() {
                               const currentStopIdx = ord.currentStopIndex || 0;
                               const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
                               const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+                              const firstStore = (ord.stops && ord.stops[0]) || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
                               const wps = [
-                                ...(ord.stops && ord.stops.length > 0
+                                ...(ord.stops && Array.isArray(ord.stops) && ord.stops.length > 0
                                   ? ord.stops.map((s) => ({
                                       latitude: Number(s.latitude) || 9.0882,
                                       longitude: Number(s.longitude) || 7.4933,

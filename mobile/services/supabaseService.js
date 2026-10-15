@@ -176,6 +176,10 @@ export async function createDatabaseOrder(order) {
     console.log('📦 Order stored in local offline queue for sync when network stabilizes:', record.id);
   } catch (storageErr) {}
 
+  if (lastErr) {
+    console.warn('⚠️ Supabase network disconnected, order safely preserved locally:', lastErr?.message || lastErr);
+  }
+
   return { offlineQueued: true, ...record };
 }
 
