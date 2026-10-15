@@ -2161,7 +2161,8 @@ export default function App() {
         prev.map((ord) => {
           if (
             ord.status === 'Cancelled' ||
-            ord.status === 'Delivered'
+            ord.status === 'Delivered' ||
+            ord.status === 'New Order'
           ) {
             return ord;
           }
@@ -3986,12 +3987,13 @@ export default function App() {
       stopsCount: stops.length,
       currentStopIndex: 0,
       journeyAlert: isMultiStore
-        ? `⚡ Inbound Dispatch: Courier ${assignedRider.name} matched near outermost shop (${stops[0].storeName}). Progressing inward to your door!`
-        : `🛵 Courier ${assignedRider.name} assigned! Heading to ${stops[0].storeName}.`,
-      status: 'Preparing',
+        ? `🛍️ Order Placed! Waiting for shop confirmation (${stops[0].storeName}).`
+        : `🛍️ Order Placed! Waiting for ${stops[0]?.storeName || 'store'} to confirm and accept.`,
+      status: 'New Order',
+      storeId: stops[0]?.storeId || currentMerchantStore?.id || 'store-gourmet',
       storeName: isMultiStore
         ? `Multi-Store Order (${stops.map((s) => s.storeName).join(' ➔ ')})`
-        : stops[0]?.storeName || 'GETIT Store',
+        : stops[0]?.storeName || currentMerchantStore?.name || 'GETIT Store',
       stops: stops,
       itemsCount: cart.reduce((sum, i) => sum + i.qty, 0),
       items: cart.map((i) => ({
@@ -4142,11 +4144,16 @@ export default function App() {
   const currentMerchantStore =
     storesList.find((s) => s.id === merchantStoreId) || storesList[0];
 
-  const merchantOrders = orders.filter(
-    (o) =>
-      (currentMerchantStore && (o.storeId === currentMerchantStore.id || o.storeName === currentMerchantStore.name)) ||
-      (!currentMerchantStore && o.storeName === 'The Gourmet Emporium')
-  );
+  const merchantOrders = orders.filter((o) => {
+    if (!currentMerchantStore) return o.storeName === 'The Gourmet Emporium';
+    if (o.storeId === currentMerchantStore.id || o.storeName === currentMerchantStore.name) {
+      return true;
+    }
+    if (Array.isArray(o.stops) && o.stops.some((st) => st.storeId === currentMerchantStore.id || st.storeName === currentMerchantStore.name)) {
+      return true;
+    }
+    return false;
+  });
 
   const merchantFilteredOrders = merchantOrders.filter((o) => {
     if (merchantOrderFilter === 'all') return true;
@@ -4164,7 +4171,15 @@ export default function App() {
 
   const acceptMerchantOrder = (orderId) => {
     updateAndPersistOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, status: 'Preparing' } : o))
+      prev.map((o) =>
+        o.id === orderId
+          ? {
+              ...o,
+              status: 'Preparing',
+              journeyAlert: `🍳 Order Accepted! Store is now preparing your provisions.`,
+            }
+          : o
+      )
     );
     Alert.alert('Order Accepted', `Order ${orderId} is now marked as Preparing in your shop.`);
     updateDatabaseOrderStatus(orderId, { status: 'Preparing' }).catch(() => {});
