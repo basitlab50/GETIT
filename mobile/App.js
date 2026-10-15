@@ -3550,6 +3550,52 @@ export default function App() {
     return sorted;
   }, [orders, ordersFilterTab, lastPlacedOrderId, currentUser]);
 
+  // 1-Tap Delivery Handover & PIN Verification
+  const completeDeliveryHandover = (orderId) => {
+    const targetOrder = orders.find((o) => o.id === orderId);
+    if (!targetOrder) return;
+
+    Alert.alert(
+      '📦 Confirm Package Handover',
+      `Have you received all packages from courier ${targetOrder.boltRider?.name || 'Musa Ibrahim'}?\n\nSecurity PIN: ${targetOrder.deliveryPin}`,
+      [
+        { text: 'Not Yet', style: 'cancel' },
+        {
+          text: '✓ Yes, Received!',
+          onPress: () => {
+            updateAndPersistOrders((prev) =>
+              prev.map((o) =>
+                o.id === orderId
+                  ? {
+                      ...o,
+                      status: 'Delivered',
+                      eta: 'Delivered',
+                      deliveredAt: Date.now(),
+                      journeyAlert: '✅ Order Delivered successfully! Thank you for choosing GETIT.',
+                    }
+                  : o
+              )
+            );
+
+            // 🔔 Delivery Push & Sound
+            notifyOrderDelivered(targetOrder);
+
+            // Supabase cloud sync
+            updateDatabaseOrderStatus(orderId, {
+              status: 'Delivered',
+              eta: 'Delivered',
+            }).catch(() => {});
+
+            // Auto-launch customer review scorecard after handover
+            setTimeout(() => {
+              openReviewModalForOrder(targetOrder);
+            }, 600);
+          },
+        },
+      ]
+    );
+  };
+
   // Advance multi-stop courier journey: Step 1 -> Step 2 -> Dropoff Destination
   const advanceMultiStopJourney = (orderId) => {
     updateAndPersistOrders((prev) =>
@@ -7073,13 +7119,33 @@ export default function App() {
                       <View style={{ flex: 1 }}>
                         <Text style={styles.pinLabel}>DELIVERY SECURITY PIN</Text>
                         <Text style={styles.pinInstructions}>
-                          Give this 4-digit code to your rider at your door to confirm delivery.
+                          {ord.status === 'Delivered'
+                            ? 'Delivery verified and packages handed over.'
+                            : 'Give this 4-digit code to your rider at your door to confirm delivery.'}
                         </Text>
                       </View>
                       <View style={styles.pinNumberWrap}>
                         <Text style={styles.pinNumberText}>{ord.deliveryPin}</Text>
                       </View>
                     </View>
+                  )}
+
+                  {/* 1-Tap Delivery Handover Confirmation Button for Active Orders */}
+                  {ord.status !== 'Cancelled' && ord.status !== 'Delivered' && (
+                    <TouchableOpacity
+                      style={styles.confirmHandoverBtn}
+                      onPress={() => completeDeliveryHandover(ord.id)}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.confirmHandoverBtnIcon}>📦</Text>
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={styles.confirmHandoverBtnTitle}>Confirm Package Handover</Text>
+                        <Text style={styles.confirmHandoverBtnSub}>
+                          Tap to verify PIN ({ord.deliveryPin}) & complete delivery
+                        </Text>
+                      </View>
+                      <Text style={styles.confirmHandoverBtnChevron}>➔</Text>
+                    </TouchableOpacity>
                   )}
 
                   {/* --- LIVE COURIER ROUTE NAVIGATION MAP (ALWAYS SHOWN FOR ACTIVE ORDERS) --- */}
@@ -15500,6 +15566,43 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#FFFFFF',
     letterSpacing: 2,
+  },
+  confirmHandoverBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#056B4B',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#10B981',
+    shadowColor: '#056B4B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  confirmHandoverBtnIcon: {
+    fontSize: 20,
+  },
+  confirmHandoverBtnTitle: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  confirmHandoverBtnSub: {
+    color: '#D1FAE5',
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  confirmHandoverBtnChevron: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    marginLeft: 6,
   },
   orderFooterRow: {
     flexDirection: 'row',
