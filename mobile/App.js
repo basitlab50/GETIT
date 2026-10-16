@@ -9754,10 +9754,26 @@ export default function App() {
                       {merchantOrders.length} order{merchantOrders.length === 1 ? '' : 's'} assigned to your shop
                     </Text>
                   </View>
-                  <View style={styles.revenueBadgePill}>
-                    <Text style={styles.revenueBadgeText}>
-                      Sales: {formatNaira(merchantTotalRevenue)}
-                    </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity
+                      style={styles.testChimeBtn}
+                      onPress={async () => {
+                        await playAudioBeep('merchant_new_order');
+                        triggerNotification({
+                          title: '🔔 Sound Test Alert!',
+                          body: 'Native chime is active and ringing loud on your iPad.',
+                          type: 'merchant_new_order',
+                        });
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.testChimeBtnText}>🔊 Test Sound</Text>
+                    </TouchableOpacity>
+                    <View style={styles.revenueBadgePill}>
+                      <Text style={styles.revenueBadgeText}>
+                        Sales: {formatNaira(merchantTotalRevenue)}
+                      </Text>
+                    </View>
                   </View>
                 </View>
 
@@ -17041,6 +17057,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: COLORS.emeraldPrimary,
+  },
+  testChimeBtn: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 6,
+  },
+  testChimeBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#B45309',
   },
   merchantFilterChip: {
     paddingHorizontal: 12,
