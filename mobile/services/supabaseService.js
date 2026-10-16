@@ -691,7 +691,7 @@ export async function seedDefaultDatabaseUsers() {
   try {
     // Fetch users from dedicated Supabase 'users' table
     const { data: dbUsers, error } = await supabase.from('users').select('*');
-    if (!error && Array.isArray(dbUsers) && dbUsers.length > 0) {
+    if (!error && Array.isArray(dbUsers)) {
       const mappedList = dbUsers.map((u) => ({
         id: u.id,
         role: u.role || 'buyer',
@@ -705,7 +705,12 @@ export async function seedDefaultDatabaseUsers() {
         createdAt: u.created_at,
       }));
       MEMORY_REGISTERED_USERS = mappedList;
-      await AsyncStorage.setItem('getit_registered_users', JSON.stringify(mappedList));
+      if (mappedList.length > 0) {
+        await AsyncStorage.setItem('getit_registered_users', JSON.stringify(mappedList));
+      } else {
+        // Clean slate: completely purge stale registered users from local cache
+        await AsyncStorage.removeItem('getit_registered_users');
+      }
     }
   } catch (e) {
     console.warn('Sync users from Supabase warning:', e);
@@ -718,46 +723,49 @@ export async function findDatabaseUser(identifier) {
   const digitsOnly = cleanId.replace(/\D/g, '');
 
   // 1. Direct query from authoritative Supabase 'users' table
+  let cloudQuerySucceeded = false;
   try {
     const { data: dbUsers, error } = await supabase.from('users').select('*');
-    if (!error && Array.isArray(dbUsers) && dbUsers.length > 0) {
-      for (const u of dbUsers) {
-        const mapped = {
-          id: u.id,
-          role: u.role || 'buyer',
-          fullName: u.full_name,
-          email: u.email,
-          phone: u.phone,
-          password: u.password_hash || u.password,
-          address: u.address || '',
-          businessName: u.business_name || null,
-          storeId: u.store_id || null,
-          createdAt: u.created_at,
-        };
+    if (!error && Array.isArray(dbUsers)) {
+      cloudQuerySucceeded = true;
+      const mappedList = dbUsers.map((u) => ({
+        id: u.id,
+        role: u.role || 'buyer',
+        fullName: u.full_name,
+        email: u.email,
+        phone: u.phone,
+        password: u.password_hash || u.password,
+        address: u.address || '',
+        businessName: u.business_name || null,
+        storeId: u.store_id || null,
+        createdAt: u.created_at,
+      }));
+      MEMORY_REGISTERED_USERS = mappedList;
+      for (const mapped of mappedList) {
         if (userMatchesIdentifier(mapped, cleanId, digitsOnly)) {
-          // Sync local memory and AsyncStorage
-          if (!MEMORY_REGISTERED_USERS.some((m) => m.id === mapped.id)) {
-            MEMORY_REGISTERED_USERS.push(mapped);
-          }
           return mapped;
         }
       }
+      // Authoritative cloud check succeeded and user was NOT found in database
+      return null;
     }
   } catch (err) {
     console.warn('Supabase findDatabaseUser query error:', err);
   }
 
-  // 2. Query persistent local database storage (AsyncStorage fallback for offline)
-  try {
-    const raw = await AsyncStorage.getItem('getit_registered_users');
-    if (raw) {
-      const localUsers = JSON.parse(raw);
-      if (Array.isArray(localUsers)) {
-        const match = localUsers.find((u) => userMatchesIdentifier(u, cleanId, digitsOnly));
-        if (match) return match;
+  // 2. Query persistent local database storage ONLY if offline / network failed
+  if (!cloudQuerySucceeded) {
+    try {
+      const raw = await AsyncStorage.getItem('getit_registered_users');
+      if (raw) {
+        const localUsers = JSON.parse(raw);
+        if (Array.isArray(localUsers)) {
+          const match = localUsers.find((u) => userMatchesIdentifier(u, cleanId, digitsOnly));
+          if (match) return match;
+        }
       }
-    }
-  } catch (err) {}
+    } catch (err) {}
+  }
 
   return null;
 }

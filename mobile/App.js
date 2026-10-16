@@ -1287,7 +1287,7 @@ export default function App() {
   const [storesList, setStoresList] = useState(STORES_AROUND_ME);
   const [appMode, setAppMode] = useState('customer'); // 'customer' | 'merchant'
   const [merchantTab, setMerchantTab] = useState('orders'); // 'orders' | 'inventory' | 'finances' | 'store'
-  const [merchantStoreId, setMerchantStoreId] = useState('s1'); // default: The Gourmet Emporium
+  const [merchantStoreId, setMerchantStoreId] = useState(null); // set dynamically on merchant sign in
   const [merchantOrderFilter, setMerchantOrderFilter] = useState('all'); // 'all' | 'new' | 'preparing' | 'ready' | 'completed'
   const [storeOpenStatus, setStoreOpenStatus] = useState(true);
   const [addProductModalVisible, setAddProductModalVisible] = useState(false);
@@ -2610,24 +2610,48 @@ export default function App() {
         setStoresList(dedupedHydrated);
         await AsyncStorage.setItem('getit_stores_list', JSON.stringify(dedupedHydrated));
 
-        // 2. Restore active authenticated user
-        let activeMerchantStoreId = 's1';
+        // 2. Restore active authenticated user (strict database verification)
+        let activeMerchantStoreId = null;
         const storedUser = await AsyncStorage.getItem('getit_current_user');
         if (storedUser) {
-          const parsed = JSON.parse(storedUser);
-          setCurrentUser(parsed);
-          setIsLoggedIn(true);
-          if (parsed.role === 'seller') {
-            setAppMode('merchant');
-            if (parsed.storeId) {
-              setMerchantStoreId(parsed.storeId);
-              activeMerchantStoreId = parsed.storeId;
+          try {
+            const parsed = JSON.parse(storedUser);
+            // Verify against authoritative database
+            const verified = await findDatabaseUser(parsed.id || parsed.phone || parsed.email);
+            if (verified) {
+              setCurrentUser(verified);
+              setIsLoggedIn(true);
+              if (verified.role === 'seller') {
+                setAppMode('merchant');
+                if (verified.storeId) {
+                  setMerchantStoreId(verified.storeId);
+                  activeMerchantStoreId = verified.storeId;
+                }
+              }
+            } else {
+              // Stale or deleted account: completely purge from device storage
+              console.log('Stale user session detected, purging local storage');
+              setCurrentUser(null);
+              setIsLoggedIn(false);
+              await AsyncStorage.removeItem('getit_current_user');
+              await AsyncStorage.removeItem('getit_registered_users');
+              await AsyncStorage.removeItem('getit_orders');
+              setOrders([]);
             }
+          } catch (e) {
+            setCurrentUser(null);
+            setIsLoggedIn(false);
+            await AsyncStorage.removeItem('getit_current_user');
           }
+        } else {
+          setCurrentUser(null);
+          setIsLoggedIn(false);
         }
 
         // 3. Restore active store's timing and live toggle state
-        const targetActiveStore = hydratedStores.find((s) => s.id === activeMerchantStoreId) || hydratedStores[0];
+        const targetActiveStore = activeMerchantStoreId
+          ? hydratedStores.find((s) => s.id === activeMerchantStoreId)
+          : null;
         if (targetActiveStore) {
           setStoreTiming({
             is24Hours: Boolean(targetActiveStore.is24Hours),
@@ -4303,8 +4327,21 @@ export default function App() {
   };
 
   // Merchant Helper Computations & Actions
+  const merchantOwnedStores = storesList.filter((st) => {
+    if (!currentUser) return false;
+    if (currentUser.storeId && st.id === currentUser.storeId) return true;
+    const uPhone = (currentUser.phone || '').replace(/\D/g, '');
+    const sPhone = (st.phone || '').replace(/\D/g, '');
+    if (uPhone.length >= 8 && sPhone.length >= 8) {
+      if (uPhone.slice(-8) === sPhone.slice(-8)) return true;
+    }
+    return false;
+  });
+
   const currentMerchantStore =
-    storesList.find((s) => s.id === merchantStoreId) || storesList[0];
+    merchantOwnedStores.find((s) => s.id === (merchantStoreId || currentUser?.storeId)) ||
+    merchantOwnedStores[0] ||
+    (currentUser?.role === 'seller' && currentUser.storeId ? { id: currentUser.storeId, name: currentUser.businessName || 'My Store' } : null);
 
   const getMerchantStopForOrder = (ord, store = currentMerchantStore) => {
     if (!ord) return null;
@@ -4978,31 +5015,6 @@ export default function App() {
     }).catch(console.warn);
 
     Alert.alert('🎉 Seller Account & Store Live!', `Congratulations ${newSeller.fullName}! Your store "${newSeller.businessName}" is live on GETIT. You can now add products and manage your hours.`);
-  };
-
-  const handleSwitchToDemoBuyer = async () => {
-    const demoBuyer = (await findDatabaseUser('08032941194')) || DEFAULT_DATABASE_USERS[0];
-    setCurrentUser(demoBuyer);
-    setAppMode('customer');
-    setIsLoggedIn(true);
-    setAuthModalVisible(false);
-    try {
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(demoBuyer));
-    } catch (e) {}
-    Alert.alert('🛍️ Buyer Account Active', `Signed in from database as ${demoBuyer.fullName} (${demoBuyer.phone}).`);
-  };
-
-  const handleSwitchToDemoSeller = async () => {
-    const demoSeller = (await findDatabaseUser('08031112233')) || DEFAULT_DATABASE_USERS[1];
-    setCurrentUser(demoSeller);
-    setMerchantStoreId(demoSeller.storeId || 's1');
-    setAppMode('merchant');
-    setIsLoggedIn(true);
-    setAuthModalVisible(false);
-    try {
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(demoSeller));
-    } catch (e) {}
-    Alert.alert('🏪 Merchant Hub Active', `Signed in from database as ${demoSeller.fullName} — ${demoSeller.businessName || 'The Gourmet Emporium'}.`);
   };
 
   // --- DEDICATED LOGIN / SIGN UP SCREEN HANDLERS (DATABASE CONNECTED) ---
@@ -6248,16 +6260,6 @@ export default function App() {
                     <Text style={styles.luxePrimaryBtnText}>Sign In ➔</Text>
                   </TouchableOpacity>
 
-                  {/* Compact Demo Sign In Button */}
-                  <TouchableOpacity
-                    style={styles.luxeDemoCardBtn}
-                    onPress={handleSwitchToDemoBuyer}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={{ fontSize: 13, marginRight: 8 }}>⚡</Text>
-                    <Text style={styles.luxeDemoCardTitle}>Demo Sign In (Amina Bello)</Text>
-                  </TouchableOpacity>
-
                   {/* Guest Browse Option */}
                   <TouchableOpacity
                     style={styles.luxeGuestBrowseBtn}
@@ -6453,15 +6455,6 @@ export default function App() {
                     <Text style={[styles.luxePrimaryBtnText, { color: '#000000', fontWeight: '800' }]}>
                       Log In to Hub ➔
                     </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.luxeDemoCardBtn}
-                    onPress={handleSwitchToDemoSeller}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={{ fontSize: 13, marginRight: 8 }}>🏪</Text>
-                    <Text style={styles.luxeDemoCardTitle}>Demo Merchant (The Gourmet Emporium)</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
@@ -8103,56 +8096,85 @@ export default function App() {
           </View>
 
           {/* --- MERCHANT HUB SWITCHER CARD --- */}
-          <View style={styles.merchantSwitchCard}>
-            <View style={styles.merchantSwitchTopRow}>
-              <View style={styles.merchantIconWrap}>
-                <Text style={{ fontSize: 26 }}>🏪</Text>
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <View style={styles.merchantTagRow}>
-                  <Text style={styles.merchantTag}>SHOP OWNER / VENDOR</Text>
-                  <View style={styles.merchantActiveBadge}>
-                    <Text style={styles.merchantActiveText}>PARTNER</Text>
-                  </View>
+          {currentUser?.role === 'seller' ? (
+            <View style={styles.merchantSwitchCard}>
+              <View style={styles.merchantSwitchTopRow}>
+                <View style={styles.merchantIconWrap}>
+                  <Text style={{ fontSize: 26 }}>🏪</Text>
                 </View>
-                <Text style={styles.merchantCardTitle}>Merchant Hub</Text>
-                <Text style={styles.merchantCardSub}>
-                  Manage orders, catalog stock & daily payouts for {currentMerchantStore?.name}
-                </Text>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <View style={styles.merchantTagRow}>
+                    <Text style={styles.merchantTag}>SHOP OWNER / VENDOR</Text>
+                    <View style={styles.merchantActiveBadge}>
+                      <Text style={styles.merchantActiveText}>PARTNER</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.merchantCardTitle}>Merchant Hub</Text>
+                  <Text style={styles.merchantCardSub}>
+                    Manage orders, catalog stock & daily payouts for {currentMerchantStore?.name || currentUser?.businessName || 'Your Store'}
+                  </Text>
+                </View>
               </View>
-            </View>
 
-            <View style={styles.merchantStatsMiniRow}>
-              <View style={styles.merchantStatMini}>
-                <Text style={styles.merchantStatVal}>{merchantOrders.length}</Text>
-                <Text style={styles.merchantStatLbl}>Live Orders</Text>
+              <View style={styles.merchantStatsMiniRow}>
+                <View style={styles.merchantStatMini}>
+                  <Text style={styles.merchantStatVal}>{merchantOrders.length}</Text>
+                  <Text style={styles.merchantStatLbl}>Live Orders</Text>
+                </View>
+                <View style={styles.merchantStatDivider} />
+                <View style={styles.merchantStatMini}>
+                  <Text style={styles.merchantStatVal}>
+                    {formatNaira(merchantTotalRevenue)}
+                  </Text>
+                  <Text style={styles.merchantStatLbl}>Net Revenue</Text>
+                </View>
+                <View style={styles.merchantStatDivider} />
+                <View style={styles.merchantStatMini}>
+                  <Text style={styles.merchantStatVal}>
+                    {currentMerchantStore?.rating || '5.0'} ★
+                  </Text>
+                  <Text style={styles.merchantStatLbl}>Store Rating</Text>
+                </View>
               </View>
-              <View style={styles.merchantStatDivider} />
-              <View style={styles.merchantStatMini}>
-                <Text style={styles.merchantStatVal}>
-                  {formatNaira(merchantTotalRevenue)}
-                </Text>
-                <Text style={styles.merchantStatLbl}>Net Revenue</Text>
-              </View>
-              <View style={styles.merchantStatDivider} />
-              <View style={styles.merchantStatMini}>
-                <Text style={styles.merchantStatVal}>
-                  {currentMerchantStore?.rating || '4.9'} ★
-                </Text>
-                <Text style={styles.merchantStatLbl}>Store Rating</Text>
-              </View>
-            </View>
 
-            <TouchableOpacity
-              style={styles.merchantSwitchBtn}
-              onPress={() => setAppMode('merchant')}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.merchantSwitchBtnText}>
-                Switch to Shop Owner Mode ➔
-              </Text>
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity
+                style={styles.merchantSwitchBtn}
+                onPress={() => setAppMode('merchant')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.merchantSwitchBtnText}>
+                  Switch to Shop Owner Mode ➔
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.merchantSwitchCard}>
+              <View style={styles.merchantSwitchTopRow}>
+                <View style={styles.merchantIconWrap}>
+                  <Text style={{ fontSize: 26 }}>🏪</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.merchantCardTitle}>Sell on GETIT</Text>
+                  <Text style={styles.merchantCardSub}>
+                    Open your supermarket, grocery, or specialty shop to thousands of shoppers in Abuja.
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={[styles.merchantSwitchBtn, { backgroundColor: COLORS.goldPrimary }]}
+                onPress={() => {
+                  setAuthScreenMode('signup');
+                  setAuthRole('seller');
+                  setAuthModalVisible(true);
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.merchantSwitchBtnText, { color: '#000000', fontWeight: '800' }]}>
+                  🚀 Register as Merchant & Open Store ➔
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           <View style={styles.profileMenuCard}>
             <TouchableOpacity style={styles.profileMenuItem}>
@@ -11042,41 +11064,43 @@ export default function App() {
                 </View>
 
                 {/* --- SWITCH STORE BRANCH CARD --- */}
-                <View style={styles.switchBranchCard}>
-                  <Text style={styles.financeCardTitle}>Select Store Branch to Manage</Text>
-                  <Text style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 12 }}>
-                    Tap any branch below to view its live stock and incoming orders:
-                  </Text>
-                  {storesList.map((st, stIdx) => {
-                    const isSelected = st.id === merchantStoreId;
-                    return (
-                      <TouchableOpacity
-                        key={`merchant-branch-${st.id}-${stIdx}`}
-                        style={[styles.branchItem, isSelected && styles.branchItemActive]}
-                        onPress={() => handleSelectMerchantBranch(st.id)}
-                        activeOpacity={0.85}
-                      >
-                        <Image
-                          source={{ uri: st.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=400&q=80' }}
-                          style={styles.branchImageThumb}
-                        />
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.branchName, isSelected && styles.branchNameActive]} numberOfLines={1}>
-                            {st.name}
-                          </Text>
-                          <Text style={styles.branchSub} numberOfLines={1}>
-                            {st.categoryLabel} • {st.address}
-                          </Text>
-                        </View>
-                        {isSelected ? (
-                          <View style={styles.activeBranchCheckBadge}>
-                            <Text style={styles.activeBranchCheckText}>ACTIVE</Text>
+                {merchantOwnedStores.length > 1 && (
+                  <View style={styles.switchBranchCard}>
+                    <Text style={styles.financeCardTitle}>Select Store Branch to Manage</Text>
+                    <Text style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 12 }}>
+                      Tap any branch below to view its live stock and incoming orders:
+                    </Text>
+                    {merchantOwnedStores.map((st, stIdx) => {
+                      const isSelected = st.id === (merchantStoreId || currentMerchantStore?.id);
+                      return (
+                        <TouchableOpacity
+                          key={`merchant-branch-${st.id}-${stIdx}`}
+                          style={[styles.branchItem, isSelected && styles.branchItemActive]}
+                          onPress={() => handleSelectMerchantBranch(st.id)}
+                          activeOpacity={0.85}
+                        >
+                          <Image
+                            source={{ uri: st.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=400&q=80' }}
+                            style={styles.branchImageThumb}
+                          />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.branchName, isSelected && styles.branchNameActive]} numberOfLines={1}>
+                              {st.name}
+                            </Text>
+                            <Text style={styles.branchSub} numberOfLines={1}>
+                              {st.categoryLabel} • {st.address}
+                            </Text>
                           </View>
-                        ) : null}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                          {isSelected ? (
+                            <View style={styles.activeBranchCheckBadge}>
+                              <Text style={styles.activeBranchCheckText}>ACTIVE</Text>
+                            </View>
+                          ) : null}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
 
                 {/* Switch to Customer View Button */}
                 <TouchableOpacity
@@ -12163,25 +12187,6 @@ export default function App() {
                     🛍️ Create Buyer Account & Start Shopping ➔
                   </Text>
                 </TouchableOpacity>
-
-                {/* Quick Demo Switch */}
-                <View style={styles.quickDemoDivider}>
-                  <View style={styles.quickDemoLine} />
-                  <Text style={styles.quickDemoDividerText}>OR QUICK DEMO</Text>
-                  <View style={styles.quickDemoLine} />
-                </View>
-
-                <TouchableOpacity
-                  style={styles.quickDemoBtn}
-                  onPress={handleSwitchToDemoBuyer}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.quickDemoBtnIcon}>⚡</Text>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.quickDemoBtnTitle}>One-Tap Switch: Amina Bello (Buyer)</Text>
-                    <Text style={styles.quickDemoBtnSub}>Plot 14 Gana St, Maitama • Instant switch</Text>
-                  </View>
-                </TouchableOpacity>
               </View>
             ) : (
               /* --- SELLER TAB CONTENT --- */
@@ -12257,25 +12262,6 @@ export default function App() {
                   <Text style={[styles.primaryActionBtnText, { color: '#000000', fontWeight: '800' }]}>
                     🚀 Register Seller Account & Go Live ➔
                   </Text>
-                </TouchableOpacity>
-
-                {/* Quick Demo Switch */}
-                <View style={styles.quickDemoDivider}>
-                  <View style={styles.quickDemoLine} />
-                  <Text style={styles.quickDemoDividerText}>OR QUICK DEMO</Text>
-                  <View style={styles.quickDemoLine} />
-                </View>
-
-                <TouchableOpacity
-                  style={styles.quickDemoBtn}
-                  onPress={handleSwitchToDemoSeller}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.quickDemoBtnIcon}>🏪</Text>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.quickDemoBtnTitle}>One-Tap Switch: Emeka Okafor (Seller)</Text>
-                    <Text style={styles.quickDemoBtnSub}>The Gourmet Emporium • Full store owner dashboard</Text>
-                  </View>
                 </TouchableOpacity>
               </View>
             )}

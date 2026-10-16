@@ -407,6 +407,13 @@ FIX DETAILS - ACCOUNT ISOLATION & FRESH DATABASE RESET
 4. Clean Session & Logout Handling:
    - handleLogout clears currentUser, resets orders to [], and removes getit_current_user and getit_orders from local AsyncStorage.
    - Logging in on any device pulls that exact account's data directly from Supabase.
+5. Stale Account Purge on App Startup:
+   - On application startup, loadStoredState verifies the stored user in AsyncStorage against Supabase users.
+   - If the user no longer exists in Supabase (e.g. from database reset), local storage is purged immediately (getit_current_user, getit_registered_users, getit_orders) and state resets to clean logged-out status.
+6. Complete Elimination of Demo Buttons:
+   - Removed 'Demo Sign In (Amina Bello)' and 'Demo Merchant (The Gourmet Emporium)' from all authentication screens.
+   - Removed 'One-Tap Switch' demo buttons from secondary modals.
+   - Scoped Merchant Hub branch switcher strictly to stores owned by the logged-in merchant. Unrelated merchants no longer see other partner stores in their branch selector.
 
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
