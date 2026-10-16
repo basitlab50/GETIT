@@ -383,7 +383,23 @@ All core roadmap items are now implemented, verified, and synchronized:
 - 3b6d14d  Redesign store profile UI with cover photo changer and store details editor
 - 2b75059  Allow single account to sign in as both buyer and shop owner seamlessly
 
+- 68e70e7  Fix multi-store courier pickup stall at second shop and sync stop pickups to cloud
+- 00c2e09  Unblock courier simulation by removing Preparing status check when rider is assigned, auto-heal stops on fetch
+
+================================================================================
+FIX DETAILS - MULTI-STORE COURIER PICKUP UNBLOCK
+================================================================================
+1. Direct Cloud Reconciliation:
+   - Queried active order ORD-29525 in Supabase.
+   - Reconciled all 3 stops (The Gourmet Emporium, Abdul Basit Store, Abdul Basit Labaran's Store) to 'picked_up'.
+   - Updated top-level order status from 'Preparing' to 'On the Way'.
+2. Root-Cause Simulation Unblock:
+   - In App.js courier timer loop, removed the check that aborted movement whenever ord.status === 'Preparing'. If a boltRider is assigned, the courier is active and must advance.
+   - Placed the auto-heal verification before movement checks so all reached intermediate stops are automatically transitioned to 'picked_up'.
+3. Data Ingestion Auto-Healing:
+   - In supabaseService.js getDatabaseOrders, if an order has a rider assigned and is not Delivered/Cancelled, it automatically normalizes to 'On the Way'.
+   - All stops up to currentStopIndex are verified as 'picked_up' upon loading across all devices.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
-
