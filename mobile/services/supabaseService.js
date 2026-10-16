@@ -218,6 +218,7 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
       ...(updates.boltRider || {}),
       stops: updates.stops !== undefined ? updates.stops : (existingRider.stops || []),
       journeyAlert: updates.journeyAlert !== undefined ? updates.journeyAlert : existingRider.journeyAlert,
+      currentStopIndex: updates.currentStopIndex !== undefined ? updates.currentStopIndex : (existingRider.currentStopIndex || 0),
     };
 
     if (!updates.boltRider && !existingRider.name) {

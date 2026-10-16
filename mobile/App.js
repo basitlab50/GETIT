@@ -2217,10 +2217,25 @@ export default function App() {
             const nextIdx = Math.min(currentPointIdx + 1, totalPoints - 1);
             const nextCoord = activeLegPts[nextIdx];
 
+            // Auto-heal: Ensure all stops already reached or departed are marked picked_up
+            const verifiedStops = (ord.stops || []).map((st, idx) => {
+              if (idx <= currentStopIdx && st.pickupStatus !== 'picked_up') {
+                return {
+                  ...st,
+                  pickupStatus: 'picked_up',
+                  pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  status: 'Ready for Pickup',
+                };
+              }
+              return st;
+            });
+
             return {
               ...ord,
               roadPointIndex: nextIdx,
               boltCoords: nextCoord,
+              stops: verifiedStops,
+              status: 'On the Way',
             };
           }
 
@@ -2230,30 +2245,41 @@ export default function App() {
           if (currentStopIdx < totalLegs - 1) {
             // Arrived at intermediate shop (e.g. Shop 2 in multi-store order)
             const nextStopIdx = currentStopIdx + 1;
+            // Mark all shops up to and including the arrived stop as picked_up!
             const updatedStops = (ord.stops || []).map((st, idx) => {
-              if (idx <= currentStopIdx) {
+              if (idx <= nextStopIdx) {
                 return {
                   ...st,
                   pickupStatus: 'picked_up',
+                  status: 'Ready for Pickup',
                   pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 };
-              }
-              if (idx === nextStopIdx) {
-                return { ...st, pickupStatus: 'in_progress' };
               }
               return st;
             });
 
-            const completedShopName = ord.stops?.[currentStopIdx]?.storeName || 'Shop 1';
-            const isHeadingToCustomer = nextStopIdx === totalLegs - 1;
-            const nextShopName = isHeadingToCustomer
+            const completedShopName = ord.stops?.[nextStopIdx]?.storeName || ord.stops?.[currentStopIdx]?.storeName || 'Shop';
+            const isHeadingToCustomer = nextStopIdx >= (ord.stops?.length || 1) - 1;
+            const nextDestinationName = isHeadingToCustomer
               ? 'your delivery address'
-              : (ord.stops?.[nextStopIdx]?.storeName || 'Shop 2');
+              : (ord.stops?.[nextStopIdx + 1]?.storeName || 'the next shop');
 
             // 🔔 Audio Beep & Push: Alert buyer when all packages are picked up and courier is en route to gate!
             if (isHeadingToCustomer && !ord.hasNotifiedOnTheWay) {
               notifyOrderOnTheWay(ord, ord.boltRider?.name || 'Musa Ibrahim');
             }
+
+            const alertMsg = isHeadingToCustomer
+              ? `🎉 All shops picked up! Courier ${ord.boltRider?.name || 'Musa Ibrahim'} has collected all packages and is now riding directly to your pinned address.`
+              : `🔔 Picked up from ${completedShopName}! Courier ${ord.boltRider?.name || 'Musa Ibrahim'} is now riding on the road to ${nextDestinationName}.`;
+
+            // Cloud sync to Supabase so both buyer and merchant devices see the pickup in real time!
+            updateDatabaseOrderStatus(ord.id, {
+              status: 'On the Way',
+              stops: updatedStops,
+              currentStopIndex: nextStopIdx,
+              journeyAlert: alertMsg,
+            }).catch(() => {});
 
             return {
               ...ord,
@@ -2261,16 +2287,15 @@ export default function App() {
               roadPointIndex: 0,
               stops: updatedStops,
               hasNotifiedOnTheWay: isHeadingToCustomer ? true : ord.hasNotifiedOnTheWay,
-              journeyAlert: isHeadingToCustomer
-                ? `🎉 All packages picked up! Courier Musa Ibrahim is now riding directly to your pinned address.`
-                : `🔔 Picked up from ${completedShopName}! Courier Musa Ibrahim is now riding on the road to ${nextShopName}.`,
-              status: isHeadingToCustomer ? 'On the Way' : 'Preparing',
+              journeyAlert: alertMsg,
+              status: 'On the Way',
             };
           } else {
             // Arrived at Customer Delivery Destination!
             const updatedStops = (ord.stops || []).map((st) => ({
               ...st,
               pickupStatus: 'picked_up',
+              status: 'Ready for Pickup',
               pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             }));
 
@@ -2279,12 +2304,20 @@ export default function App() {
               notifyCourierArrived(ord);
             }
 
+            const arrivedAlert = `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin}) to collect packages.`;
+
+            updateDatabaseOrderStatus(ord.id, {
+              status: 'On the Way',
+              stops: updatedStops,
+              journeyAlert: arrivedAlert,
+            }).catch(() => {});
+
             return {
               ...ord,
               stops: updatedStops,
               status: 'On the Way',
               hasNotifiedArrived: true,
-              journeyAlert: `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin}) to collect packages.`,
+              journeyAlert: arrivedAlert,
             };
           }
         })
@@ -4577,11 +4610,57 @@ export default function App() {
   };
 
   const completeMerchantOrder = (orderId) => {
+    let merchantStoreName = currentMerchantStore?.name || 'Store';
+    let updatedStopsList = [];
+    let allStopsPickedUp = false;
+
     updateAndPersistOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, status: 'Completed', eta: 'Delivered' } : o))
+      prev.map((o) => {
+        if (o.id !== orderId) return o;
+        const stops = Array.isArray(o.stops) && o.stops.length > 0 ? o.stops : [];
+        if (stops.length > 0) {
+          updatedStopsList = stops.map((st) => {
+            const isTargetShop =
+              (currentMerchantStore && (st.storeId === currentMerchantStore.id || (st.storeName && currentMerchantStore.name && st.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) ||
+              (!currentMerchantStore && st.storeName === 'The Gourmet Emporium');
+            if (isTargetShop) {
+              merchantStoreName = st.storeName;
+              return {
+                ...st,
+                status: 'Ready for Pickup',
+                pickupStatus: 'picked_up',
+                pickedUpAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              };
+            }
+            return st;
+          });
+          allStopsPickedUp = updatedStopsList.every((st) => st.pickupStatus === 'picked_up');
+        } else {
+          allStopsPickedUp = true;
+        }
+
+        const newAlert = allStopsPickedUp
+          ? `🎉 All shops handed over! Courier Musa Ibrahim has all packages and is en route to customer.`
+          : `✓ Handed over at ${merchantStoreName}! Courier is collecting remaining shops.`;
+
+        return {
+          ...o,
+          stops: updatedStopsList.length > 0 ? updatedStopsList : o.stops,
+          journeyAlert: newAlert,
+          status: 'On the Way',
+        };
+      })
     );
-    Alert.alert('Handover Complete', `Order ${orderId} handed over to courier and marked completed.`);
-    updateDatabaseOrderStatus(orderId, { status: 'Delivered', eta: 'Delivered' }).catch(() => {});
+
+    Alert.alert(
+      'Handover Confirmed ✅',
+      `Packages for ${merchantStoreName} have been handed over to courier Musa Ibrahim.`
+    );
+
+    updateDatabaseOrderStatus(orderId, {
+      stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
+      status: 'On the Way',
+    }).catch(() => {});
   };
 
   const rejectMerchantOrder = (orderId) => {
