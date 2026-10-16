@@ -1597,12 +1597,15 @@ export default function App() {
 
   const [ordersFilterTab, setOrdersFilterTab] = useState('active'); // 'active' | 'all' | 'completed' | 'cancelled'
   const [lastPlacedOrderId, setLastPlacedOrderId] = useState(null);
-  const [expandedOrderId, setExpandedOrderId] = useState(null); // Accordion: only 1 order open at a time
+  const [expandedOrderId, setExpandedOrderId] = useState('AUTO_TOP'); // Accordion: top active order open by default, only 1 order open at a time
   const [collapsedBoltMapOrderIds, setCollapsedBoltMapOrderIds] = useState([]);
   const [expandedItemsOrderIds, setExpandedItemsOrderIds] = useState([]);
 
   const toggleOrderAccordion = (orderId) => {
-    setExpandedOrderId((prev) => (prev === orderId ? null : orderId));
+    setExpandedOrderId((prev) => {
+      const currentActiveId = prev === 'AUTO_TOP' ? (sortedAndFilteredOrders[0]?.id || null) : prev;
+      return currentActiveId === orderId ? null : orderId;
+    });
   };
 
   const toggleBoltMapCollapse = (orderId) => {
@@ -6789,7 +6792,10 @@ export default function App() {
           <View style={styles.ordersFilterTabBar}>
             <TouchableOpacity
               style={[styles.ordersFilterTabBtn, ordersFilterTab === 'active' && styles.ordersFilterTabBtnActive]}
-              onPress={() => setOrdersFilterTab('active')}
+              onPress={() => {
+                setOrdersFilterTab('active');
+                setExpandedOrderId('AUTO_TOP');
+              }}
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'active' && styles.ordersFilterTabTextActive]}>
@@ -6798,7 +6804,10 @@ export default function App() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.ordersFilterTabBtn, ordersFilterTab === 'all' && styles.ordersFilterTabBtnActive]}
-              onPress={() => setOrdersFilterTab('all')}
+              onPress={() => {
+                setOrdersFilterTab('all');
+                setExpandedOrderId('AUTO_TOP');
+              }}
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'all' && styles.ordersFilterTabTextActive]}>
@@ -6807,7 +6816,10 @@ export default function App() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.ordersFilterTabBtn, ordersFilterTab === 'completed' && styles.ordersFilterTabBtnActive]}
-              onPress={() => setOrdersFilterTab('completed')}
+              onPress={() => {
+                setOrdersFilterTab('completed');
+                setExpandedOrderId('AUTO_TOP');
+              }}
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'completed' && styles.ordersFilterTabTextActive]}>
@@ -6816,7 +6828,10 @@ export default function App() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.ordersFilterTabBtn, ordersFilterTab === 'cancelled' && styles.ordersFilterTabBtnActive]}
-              onPress={() => setOrdersFilterTab('cancelled')}
+              onPress={() => {
+                setOrdersFilterTab('cancelled');
+                setExpandedOrderId('AUTO_TOP');
+              }}
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'cancelled' && styles.ordersFilterTabTextActive]}>
@@ -6848,7 +6863,10 @@ export default function App() {
           ) : (
             sortedAndFilteredOrders.map((ord, oIndex) => {
               const isJustPlaced = ord.id === lastPlacedOrderId || (ord.timestamp && Date.now() - ord.timestamp < 1800000);
-              const isExpanded = expandedOrderId === ord.id || (expandedOrderId === null && isJustPlaced && oIndex === 0);
+              const activeExpandedId = expandedOrderId === 'AUTO_TOP'
+                ? (sortedAndFilteredOrders[0]?.id || null)
+                : expandedOrderId;
+              const isExpanded = activeExpandedId === ord.id;
               const isBoltMapOpen = !collapsedBoltMapOrderIds.includes(ord.id);
               const isItemsOpen = expandedItemsOrderIds.includes(ord.id);
 
@@ -9644,7 +9662,10 @@ export default function App() {
 
         <TouchableOpacity
           style={styles.navItem}
-          onPress={() => setActiveTab('orders')}
+          onPress={() => {
+            setActiveTab('orders');
+            setExpandedOrderId('AUTO_TOP');
+          }}
           activeOpacity={0.8}
         >
           <Text style={[styles.navIcon, activeTab === 'orders' && styles.navIconActive]}>
