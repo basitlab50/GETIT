@@ -2177,7 +2177,11 @@ export default function App() {
           if (
             ord.status === 'Cancelled' ||
             ord.status === 'Delivered' ||
-            ord.status === 'New Order'
+            ord.status === 'New Order' ||
+            ord.status === 'Preparing' ||
+            ord.status === 'Looking for Courier' ||
+            !ord.boltRider ||
+            !ord.boltRider.name
           ) {
             return ord;
           }
@@ -2347,13 +2351,32 @@ export default function App() {
         updateAndPersistOrders((prev) =>
           prev.map((o) => {
             if (o.id === updated.id) {
+              const riderPayload = (typeof updated.bolt_rider === 'object' && updated.bolt_rider) ? updated.bolt_rider : {};
+              const stops = (riderPayload.stops && Array.isArray(riderPayload.stops) && riderPayload.stops.length > 0)
+                ? riderPayload.stops
+                : o.stops;
+              const hasRider = Boolean(riderPayload.name && riderPayload.phone);
+              const riderObj = hasRider ? {
+                id: riderPayload.id || 'bolt-rider-01',
+                name: riderPayload.name,
+                phone: riderPayload.phone,
+                rating: riderPayload.rating || '4.95',
+                trips: riderPayload.trips || 1420,
+                vehicle: riderPayload.vehicle || 'Bajaj Boxer 150 (Red)',
+                plate: riderPayload.plate || 'ABJ-492-KW',
+                avatar: riderPayload.avatar || '🛵',
+              } : null;
+
               return {
                 ...o,
                 status: updated.status || o.status,
+                stops: stops,
+                journeyAlert: riderPayload.journeyAlert || o.journeyAlert,
                 boltStatus: updated.bolt_status || o.boltStatus,
-                boltRider: updated.bolt_rider || o.boltRider,
+                boltRider: riderObj,
                 boltCoords: updated.bolt_coords || o.boltCoords,
                 eta: updated.eta || o.eta,
+                courierSearching: updated.status === 'Looking for Courier',
               };
             }
             return o;
@@ -4152,7 +4175,8 @@ export default function App() {
         apartment: pinnedLocation.apartment,
         notes: riderDeliveryNote || pinnedLocation.notes,
       },
-      boltRider: assignedRider,
+      boltRider: null,
+      boltStatus: 'PENDING_STORE_READY',
       riderOrigin: {
         latitude: Number(stops[0]?.latitude) || 9.0882,
         longitude: Number(stops[0]?.longitude) || 7.4933,
@@ -4171,11 +4195,6 @@ export default function App() {
 
     // 🔔 Trigger immediate push notification + audio chime for buyer & merchant!
     notifyOrderPlaced(masterOrder);
-
-    // 🛵 Push & Audio Alert: Courier assigned and dispatching to Stop 1
-    setTimeout(() => {
-      notifyCourierDispatched(masterOrder, masterOrder.boltRider?.name || 'Musa Ibrahim');
-    }, 2800);
 
     // Fetch real road street network directions connecting strictly pinned stores to delivery home
     const roadWaypoints = [
@@ -4244,19 +4263,14 @@ export default function App() {
       Alert.alert(
         '🎉 Multi-Store Order Confirmed!',
         `Your multi-store order (${masterOrder.id}) with ${stops.length} pickup hubs is confirmed!\n\n` +
-          `⚡ Inbound Funnel Dispatch:\n` +
           `• Outermost Hub: ${stops[0].storeName} (Stop 1)\n` +
-          `• Matched Courier: ${assignedRider.name} (${assignedRider.vehicle})\n` +
-          `• Proximity to Hub 1: ~${funnelDispatch?.approachDistKm || '1.0'} km\n\n` +
           stops.map((s) => `• Stop ${s.stopNumber}: ${s.storeName} (${formatNaira(s.subtotal)})\n   Pickup PIN: ${s.pickupPin}`).join('\n\n') +
-          `\n\nYour courier ${assignedRider.name} will pick up from the outer shop and sweep inward toward your home in one continuous trip!`
+          `\n\nYour order has been sent to the shops. Once packaged, an available courier will be dispatched to pick up your provisions!`
       );
     } else {
       Alert.alert(
         'Order Confirmed! ⚡',
-        `Your order ${masterOrder.id} for ${stops[0]?.storeName} has been placed via ${
-          selectedDeliveryTier === 'bolt' ? 'Bolt Express' : 'GETIT Concierge'
-        }.`
+        `Your order ${masterOrder.id} for ${stops[0]?.storeName} has been sent to the store. Once packaged and ready, a courier will be dispatched for pickup.`
       );
     }
 
@@ -4382,17 +4396,18 @@ export default function App() {
             anyStopAccepted = updatedStopsList.some((st) => st.status === 'Preparing' || st.status === 'Ready for Pickup');
           }
 
-          const journeyAlert = stops.length > 1
+          const dynamicAlert = stops.length > 1
             ? (allStopsAccepted
                 ? `🍳 All shops (${stops.length}) have accepted and are preparing your packages!`
                 : `🍳 ${storeAcceptedName} accepted & is preparing! Awaiting other stores.`)
-            : `🍳 Order Accepted! ${storeAcceptedName} is preparing your provisions.`;
+            : `🍳 Store has accepted your order • Preparing your provisions.`;
 
           return {
             ...o,
             status: 'Preparing',
             stops: updatedStopsList.length > 0 ? updatedStopsList : o.stops,
-            journeyAlert,
+            journeyAlert: dynamicAlert,
+            boltRider: null,
           };
         }
         return o;
@@ -4404,50 +4419,16 @@ export default function App() {
       `Order ${orderId} is now marked as Preparing for ${storeAcceptedName}.`
     );
 
+    const alertToSend = updatedStopsList.length > 1
+      ? (allStopsAccepted
+          ? `🍳 All shops (${updatedStopsList.length}) have accepted and are preparing your packages!`
+          : `🍳 ${storeAcceptedName} accepted & is preparing! Awaiting other stores.`)
+      : `🍳 Store has accepted your order • Preparing your provisions.`;
+
     updateDatabaseOrderStatus(orderId, {
       status: 'Preparing',
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
-    }).catch(() => {});
-  };
-
-  const dispatchBoltCourier = (orderId) => {
-    const targetOrder = orders.find((o) => o.id === orderId);
-    const assignedRider = SAMPLE_BOLT_RIDERS[Math.floor(Math.random() * SAMPLE_BOLT_RIDERS.length)];
-    const boltCode = `BOLT-ABJ-${Math.floor(10000 + Math.random() * 90000)}`;
-    const storeLat = 9.0882;
-    const storeLng = 7.4933;
-    const riderLat = storeLat + (Math.random() - 0.5) * 0.005;
-    const riderLng = storeLng + (Math.random() - 0.5) * 0.005;
-
-    updateAndPersistOrders((prev) =>
-      prev.map((o) => {
-        if (o.id === orderId) {
-          return {
-            ...o,
-            deliveryPartner: 'bolt',
-            boltStatus: 'IN_TRANSIT',
-            boltTrackingCode: boltCode,
-            boltRider: assignedRider,
-            boltCoords: { latitude: riderLat, longitude: riderLng },
-            status: 'On the Way',
-            eta: '14 mins (Bolt Motorbike)',
-          };
-        }
-        return o;
-      })
-    );
-
-    Alert.alert(
-      '🟢 Bolt Courier Dispatched!',
-      `Bolt rider ${assignedRider.name} (${assignedRider.vehicle}, ${assignedRider.plate}) is dispatched to your store!\n\nPickup PIN: ${targetOrder?.pickupPin || '7391'}\nTracking Code: ${boltCode}\nETA: 4 mins.`
-    );
-
-    updateDatabaseOrderStatus(orderId, {
-      status: 'On the Way',
-      boltStatus: 'IN_TRANSIT',
-      boltRider: assignedRider,
-      boltCoords: { latitude: riderLat, longitude: riderLng },
-      eta: '14 mins (Bolt Motorbike)',
+      journeyAlert: alertToSend,
     }).catch(() => {});
   };
 
@@ -4456,48 +4437,110 @@ export default function App() {
     let allStopsReady = true;
     let updatedStopsList = [];
 
+    const targetOrder = orders.find((o) => o.id === orderId);
+    const stops = Array.isArray(targetOrder?.stops) && targetOrder.stops.length > 0 ? targetOrder.stops : [];
+    if (stops.length > 0) {
+      updatedStopsList = stops.map((st) => {
+        const isTargetShop =
+          (currentMerchantStore && (st.storeId === currentMerchantStore.id || (st.storeName && currentMerchantStore.name && st.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) ||
+          (!currentMerchantStore && st.storeName === 'The Gourmet Emporium');
+        if (isTargetShop) {
+          storeReadyName = st.storeName;
+          return { ...st, status: 'Ready for Pickup', pickupStatus: 'ready' };
+        }
+        return st;
+      });
+      allStopsReady = updatedStopsList.every((st) => st.status === 'Ready for Pickup');
+    }
+
+    const shouldDispatch = allStopsReady || updatedStopsList.length <= 1;
+    const initialStatus = shouldDispatch ? 'Looking for Courier' : 'Preparing';
+    const initialAlert = stops.length > 1
+      ? (allStopsReady
+          ? `📦 All packages packed & ready! Looking for available nearby courier... 🚴‍♂️`
+          : `📦 ${storeReadyName} has packed your package! Waiting for remaining stores.`)
+      : `📦 Package packed & ready at ${storeReadyName}! Looking for available nearby courier... 🚴‍♂️`;
+
     updateAndPersistOrders((prev) =>
       prev.map((o) => {
         if (o.id === orderId) {
-          const stops = Array.isArray(o.stops) && o.stops.length > 0 ? o.stops : [];
-          if (stops.length > 0) {
-            updatedStopsList = stops.map((st) => {
-              const isTargetShop =
-                (currentMerchantStore && (st.storeId === currentMerchantStore.id || (st.storeName && currentMerchantStore.name && st.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) ||
-                (!currentMerchantStore && st.storeName === 'The Gourmet Emporium');
-              if (isTargetShop) {
-                storeReadyName = st.storeName;
-                return { ...st, status: 'Ready for Pickup', pickupStatus: 'ready' };
-              }
-              return st;
-            });
-
-            allStopsReady = updatedStopsList.every((st) => st.status === 'Ready for Pickup');
-          }
-
-          const newMasterStatus = allStopsReady || stops.length <= 1 ? 'Ready for Pickup' : 'Preparing';
-          const journeyAlert = stops.length > 1
-            ? (allStopsReady
-                ? `📦 All packages packed & ready! Courier notified for multi-stop sweep.`
-                : `📦 ${storeReadyName} has packed your package! Waiting for remaining stores.`)
-            : `📦 Package packed & ready at ${storeReadyName}. Courier notified for pickup.`;
-
           return {
             ...o,
-            status: newMasterStatus,
+            status: initialStatus,
             stops: updatedStopsList.length > 0 ? updatedStopsList : o.stops,
-            journeyAlert,
+            journeyAlert: initialAlert,
+            courierSearching: shouldDispatch,
           };
         }
         return o;
       })
     );
 
-    Alert.alert('Order Ready', `Order ${orderId} is packaged for ${storeReadyName}. Courier notified.`);
+    Alert.alert(
+      'Order Ready for Pickup 📦',
+      shouldDispatch
+        ? `Order ${orderId} is packaged for ${storeReadyName}. Looking for nearby available courier...`
+        : `Order ${orderId} packaged for ${storeReadyName}. Waiting for remaining shops.`
+    );
+
     updateDatabaseOrderStatus(orderId, {
-      status: allStopsReady || updatedStopsList.length <= 1 ? 'Ready for Pickup' : 'Preparing',
+      status: initialStatus,
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
+      journeyAlert: initialAlert,
     }).catch(() => {});
+
+    // Courier Dispatch Sequence: Look for available courier, match, and notify!
+    if (shouldDispatch) {
+      setTimeout(() => {
+        const assignedRider = {
+          id: 'bolt-rider-01',
+          name: 'Musa Ibrahim',
+          phone: '+234 803 294 1194',
+          rating: '4.95',
+          trips: 1420,
+          vehicle: 'Bajaj Boxer 150 (Red)',
+          plate: 'ABJ-492-KW',
+          avatar: '🛵',
+        };
+
+        const firstStop = (updatedStopsList && updatedStopsList[0]) || { latitude: 9.0882, longitude: 7.4933 };
+        const riderCoords = {
+          latitude: Number(firstStop.latitude) || 9.0882,
+          longitude: Number(firstStop.longitude) || 7.4933,
+        };
+
+        const dispatchedAlert = `🚴 Courier ${assignedRider.name} matched! Heading to ${storeReadyName} for pickup.`;
+
+        updateAndPersistOrders((prev) =>
+          prev.map((o) => {
+            if (o.id === orderId) {
+              return {
+                ...o,
+                status: 'On the Way',
+                boltStatus: 'IN_TRANSIT',
+                boltRider: assignedRider,
+                boltCoords: riderCoords,
+                journeyAlert: dispatchedAlert,
+                courierSearching: false,
+                eta: '12-15 mins (Courier Matched)',
+              };
+            }
+            return o;
+          })
+        );
+
+        notifyCourierDispatched({ id: orderId, storeName: storeReadyName }, assignedRider.name);
+
+        updateDatabaseOrderStatus(orderId, {
+          status: 'On the Way',
+          boltStatus: 'IN_TRANSIT',
+          boltRider: assignedRider,
+          boltCoords: riderCoords,
+          journeyAlert: dispatchedAlert,
+          eta: '12-15 mins (Courier Matched)',
+        }).catch(() => {});
+      }, 3500);
+    }
   };
 
   const completeMerchantOrder = (orderId) => {
@@ -7131,6 +7174,10 @@ export default function App() {
                           ord.status === 'Cancelled' && { backgroundColor: 'rgba(239, 68, 68, 0.12)' },
                           ord.status === 'Delivered' && { backgroundColor: 'rgba(5, 107, 75, 0.12)' },
                           ord.status === 'New Order' && { backgroundColor: 'rgba(245, 158, 11, 0.12)' },
+                          ord.status === 'Preparing' && { backgroundColor: '#DBEAFE' },
+                          ord.status === 'Looking for Courier' && { backgroundColor: '#EDE9FE' },
+                          ord.status === 'Ready for Pickup' && { backgroundColor: '#DCFCE7' },
+                          ord.status === 'On the Way' && { backgroundColor: '#D1FAE5' },
                         ]}
                       >
                         <Text
@@ -7139,9 +7186,23 @@ export default function App() {
                             ord.status === 'Cancelled' && { color: '#EF4444' },
                             ord.status === 'Delivered' && { color: '#056B4B' },
                             ord.status === 'New Order' && { color: '#D97706' },
+                            ord.status === 'Preparing' && { color: '#1D4ED8' },
+                            ord.status === 'Looking for Courier' && { color: '#7C3AED' },
+                            ord.status === 'Ready for Pickup' && { color: '#047857' },
+                            ord.status === 'On the Way' && { color: '#056B4B' },
                           ]}
                         >
-                          {ord.status}
+                          {ord.status === 'New Order'
+                            ? '⏳ Awaiting Store'
+                            : ord.status === 'Preparing'
+                            ? '🍳 Preparing'
+                            : ord.status === 'Looking for Courier'
+                            ? '📡 Finding Courier'
+                            : ord.status === 'Ready for Pickup'
+                            ? '📦 Ready'
+                            : ord.status === 'On the Way'
+                            ? '🚴 On the Way'
+                            : ord.status}
                         </Text>
                       </View>
                       <View style={styles.orderAccordionToggleBadge}>
@@ -7443,41 +7504,118 @@ export default function App() {
                   {/* --- LIVE COURIER ROUTE NAVIGATION MAP (ALWAYS SHOWN FOR ACTIVE ORDERS) --- */}
                   {ord.status !== 'Cancelled' && (
                     <View style={styles.boltTrackingSummaryCard}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
-                          <View style={styles.boltRiderAvatarSmall}>
-                            <Text style={{ fontSize: 16 }}>🛵</Text>
+                      {ord.boltRider && ord.boltRider.name ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
+                            <View style={styles.boltRiderAvatarSmall}>
+                              <Text style={{ fontSize: 16 }}>🛵</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.boltRiderNameSmall}>
+                                {ord.boltRider.name} (Courier)
+                              </Text>
+                              <Text style={styles.boltEtaPillTextSmall}>
+                                ⚡ Arrival: {ord.eta || '12 mins'} • {ord.boltRider.rating || '4.95'}★
+                              </Text>
+                            </View>
                           </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.boltRiderNameSmall}>
-                              {ord.boltRider?.name || 'Musa Ibrahim'} (Courier)
-                            </Text>
-                            <Text style={styles.boltEtaPillTextSmall}>
-                              ⚡ Arrival: {ord.eta || '12 mins'} • {ord.boltRider?.rating || '4.95'}★
-                            </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <TouchableOpacity
+                              style={styles.boltToggleMapBtn}
+                              onPress={() => toggleBoltMapCollapse(ord.id)}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.boltToggleMapBtnText}>
+                                {isBoltMapOpen ? '▲ Hide Map' : '🗺️ Live Map'}
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.boltCallBtnSmall}
+                              onPress={() =>
+                                Linking.openURL(`tel:${ord.boltRider.phone || '+2348032941194'}`)
+                              }
+                              activeOpacity={0.8}
+                            >
+                              <Text style={styles.boltCallBtnSmallText}>📞 Call</Text>
+                            </TouchableOpacity>
                           </View>
                         </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      ) : ord.status === 'Looking for Courier' ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
+                            <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#EDE9FE' }]}>
+                              <Text style={{ fontSize: 16 }}>📡</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.boltRiderNameSmall, { color: '#7C3AED' }]}>
+                                Looking for Available Courier...
+                              </Text>
+                              <Text style={styles.boltEtaPillTextSmall}>
+                                📦 Package ready at shop • Scanning nearby fleet
+                              </Text>
+                            </View>
+                          </View>
                           <TouchableOpacity
                             style={styles.boltToggleMapBtn}
                             onPress={() => toggleBoltMapCollapse(ord.id)}
                             activeOpacity={0.7}
                           >
                             <Text style={styles.boltToggleMapBtnText}>
-                              {isBoltMapOpen ? '▲ Hide Map' : '🗺️ Live Map'}
+                              {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
                             </Text>
                           </TouchableOpacity>
+                        </View>
+                      ) : ord.status === 'Preparing' ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
+                            <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#DBEAFE' }]}>
+                              <Text style={{ fontSize: 16 }}>🍳</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.boltRiderNameSmall, { color: '#1D4ED8' }]}>
+                                Store Preparing Provisions
+                              </Text>
+                              <Text style={styles.boltEtaPillTextSmall}>
+                                Provisions being freshly sorted • Courier dispatch when ready
+                              </Text>
+                            </View>
+                          </View>
                           <TouchableOpacity
-                            style={styles.boltCallBtnSmall}
-                            onPress={() =>
-                              Linking.openURL(`tel:${ord.boltRider?.phone || '+2348032941194'}`)
-                            }
-                            activeOpacity={0.8}
+                            style={styles.boltToggleMapBtn}
+                            onPress={() => toggleBoltMapCollapse(ord.id)}
+                            activeOpacity={0.7}
                           >
-                            <Text style={styles.boltCallBtnSmallText}>📞 Call</Text>
+                            <Text style={styles.boltToggleMapBtnText}>
+                              {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
+                            </Text>
                           </TouchableOpacity>
                         </View>
-                      </View>
+                      ) : (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
+                            <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#FEF3C7' }]}>
+                              <Text style={{ fontSize: 16 }}>⏳</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.boltRiderNameSmall, { color: '#B45309' }]}>
+                                Awaiting Store Acceptance
+                              </Text>
+                              <Text style={styles.boltEtaPillTextSmall}>
+                                Order sent to merchant • Awaiting confirmation
+                              </Text>
+                            </View>
+                          </View>
+                          <TouchableOpacity
+                            style={styles.boltToggleMapBtn}
+                            onPress={() => toggleBoltMapCollapse(ord.id)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.boltToggleMapBtnText}>
+                              {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
 
                       {/* On-Demand Interactive Courier Map */}
                       {isBoltMapOpen && (
@@ -7692,7 +7830,7 @@ export default function App() {
                                   ? ord.boltCoords
                                   : activeRoadPts[pointIdx] || firstStoreCoord;
 
-                              return (
+                              return Boolean(ord.boltRider && ord.boltRider.name) ? (
                                 <Marker
                                   coordinate={riderOnBlueLine}
                                   title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Courier)`}
@@ -7718,7 +7856,7 @@ export default function App() {
                                     </View>
                                   </View>
                                 </Marker>
-                              );
+                              ) : null;
                             })()}
                           </MapView>
                         </View>

@@ -108,18 +108,8 @@ export async function removeStoreInventoryItem(itemId) {
 
 // 3. Orders & Realtime Sync
 export async function createDatabaseOrder(order) {
-  const baseRider = (typeof order.boltRider === 'object' && order.boltRider)
-    ? order.boltRider
-    : {
-        id: 'bolt-rider-01',
-        name: 'Musa Ibrahim',
-        phone: '+234 803 294 1194',
-        vehicle: 'Bajaj Boxer 150 (Red)',
-        plate: 'ABJ-492-KW',
-        rating: '4.95',
-        trips: 1420,
-        avatar: '🛵',
-      };
+  const hasExplicitRider = Boolean(order.boltRider && typeof order.boltRider === 'object' && order.boltRider.name);
+  const baseRider = hasExplicitRider ? order.boltRider : {};
 
   const riderPayload = {
     ...baseRider,
@@ -151,7 +141,7 @@ export async function createDatabaseOrder(order) {
     delivery_fee: Number(order.deliveryFee || order.delivery_fee) || 1200,
     status: order.status || 'New Order',
     delivery_partner: order.deliveryPartner || order.delivery_partner || 'bolt',
-    bolt_status: order.boltStatus || order.bolt_status || 'IN_TRANSIT',
+    bolt_status: order.boltStatus || (hasExplicitRider ? 'IN_TRANSIT' : 'PENDING_STORE_READY'),
     bolt_tracking_code: order.boltTrackingCode || order.bolt_tracking_code || `BOLT-ABJ-${order.id ? String(order.id).replace(/\D/g, '').slice(-5) : '89412'}`,
     bolt_rider: riderPayload,
     bolt_coords: order.boltCoords || (firstStop ? { latitude: Number(firstStop.latitude) || 9.0882, longitude: Number(firstStop.longitude) || 7.4933 } : { latitude: 9.0882, longitude: 7.4933 }),
@@ -211,16 +201,40 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
     const dbUpdates = {};
     if (updates.status !== undefined) dbUpdates.status = updates.status;
     if (updates.boltStatus !== undefined) dbUpdates.bolt_status = updates.boltStatus;
-    if (updates.boltRider !== undefined) dbUpdates.bolt_rider = updates.boltRider;
     if (updates.boltCoords !== undefined) dbUpdates.bolt_coords = updates.boltCoords;
     if (updates.eta !== undefined) dbUpdates.eta = updates.eta;
+
+    // Fetch existing bolt_rider to preserve stops & road geometry cleanly
+    let existingRider = {};
+    try {
+      const { data: curr } = await supabase.from('orders').select('bolt_rider').eq('id', orderId).maybeSingle();
+      if (curr && typeof curr.bolt_rider === 'object' && curr.bolt_rider) {
+        existingRider = curr.bolt_rider;
+      }
+    } catch (e) {}
+
+    const mergedRider = {
+      ...existingRider,
+      ...(updates.boltRider || {}),
+      stops: updates.stops !== undefined ? updates.stops : (existingRider.stops || []),
+      journeyAlert: updates.journeyAlert !== undefined ? updates.journeyAlert : existingRider.journeyAlert,
+    };
+
+    if (!updates.boltRider && !existingRider.name) {
+      delete mergedRider.name;
+      delete mergedRider.phone;
+      delete mergedRider.vehicle;
+      delete mergedRider.plate;
+    }
+
+    dbUpdates.bolt_rider = mergedRider;
 
     const { data, error } = await supabase
       .from('orders')
       .update(dbUpdates)
       .eq('id', orderId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
     return data;
@@ -336,18 +350,18 @@ export async function getDatabaseOrders() {
         deliveryPartner: item.delivery_partner || 'bolt',
         deliveryFee: Number(item.delivery_fee) || 1200,
         conciergeFee: Number(item.concierge_fee) || 0,
-        boltStatus: item.bolt_status || 'IN_TRANSIT',
+        boltStatus: item.bolt_status || 'PENDING_STORE_READY',
         boltTrackingCode: item.bolt_tracking_code || `BOLT-ABJ-${item.id ? String(item.id).replace(/\D/g, '').slice(-5) : '89412'}`,
-        boltRider: {
+        boltRider: (riderMeta.name && riderMeta.phone) ? {
           id: riderMeta.id || 'bolt-rider-01',
-          name: riderMeta.name || 'Musa Ibrahim',
-          phone: riderMeta.phone || '+234 803 294 1194',
+          name: riderMeta.name,
+          phone: riderMeta.phone,
           rating: riderMeta.rating || '4.95',
           trips: riderMeta.trips || 1420,
           vehicle: riderMeta.vehicle || 'Bajaj Boxer 150 (Red)',
           plate: riderMeta.plate || 'ABJ-492-KW',
           avatar: riderMeta.avatar || '🛵',
-        },
+        } : null,
         boltCoords: item.bolt_coords || (stops[0] ? { latitude: Number(stops[0].latitude) || 9.0882, longitude: Number(stops[0].longitude) || 7.4933 } : { latitude: 9.0882, longitude: 7.4933 }),
         status: item.status || 'New Order',
         eta: item.eta || '20 mins',
