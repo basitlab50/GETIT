@@ -4027,6 +4027,7 @@ export default function App() {
         vendorPayout: Math.round(storeSubtotal * 0.9),
         pickupPin: pickupPin,
         pickupStatus: index === 0 ? 'in_progress' : 'queued',
+        status: 'New Order',
         pickedUpAt: null,
       };
     });
@@ -4199,39 +4200,62 @@ export default function App() {
   const currentMerchantStore =
     storesList.find((s) => s.id === merchantStoreId) || storesList[0];
 
+  const getMerchantStopForOrder = (ord, store = currentMerchantStore) => {
+    if (!ord) return null;
+    if (Array.isArray(ord.stops) && ord.stops.length > 0) {
+      if (store) {
+        const match = ord.stops.find(
+          (st) =>
+            (st.storeId && st.storeId === store.id) ||
+            (st.storeName && store.name && st.storeName.toLowerCase() === store.name.toLowerCase())
+        );
+        if (match) return match;
+      }
+      const fallback = ord.stops.find(
+        (st) => st.storeName === 'The Gourmet Emporium' || st.storeId === 'store-gourmet'
+      );
+      return fallback || ord.stops[0];
+    }
+    return null;
+  };
+
+  const getMerchantStopStatus = (ord, store = currentMerchantStore) => {
+    const matchingStop = getMerchantStopForOrder(ord, store);
+    if (matchingStop) {
+      if (matchingStop.status) return matchingStop.status;
+      if (matchingStop.pickupStatus === 'ready') return 'Ready for Pickup';
+      if (matchingStop.pickupStatus === 'in_progress_prep' || matchingStop.pickupStatus === 'preparing') return 'Preparing';
+      if (matchingStop.pickupStatus === 'rejected') return 'Rejected';
+    }
+    return ord.status || 'New Order';
+  };
+
   const merchantOrders = orders.filter((o) => {
     if (!currentMerchantStore) return o.storeName === 'The Gourmet Emporium';
     if (o.storeId === currentMerchantStore.id || o.storeName === currentMerchantStore.name) {
       return true;
     }
-    if (Array.isArray(o.stops) && o.stops.some((st) => st.storeId === currentMerchantStore.id || st.storeName === currentMerchantStore.name)) {
+    if (Array.isArray(o.stops) && o.stops.some((st) => st.storeId === currentMerchantStore.id || (st.storeName && currentMerchantStore.name && st.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) {
       return true;
     }
     return false;
   });
 
   const merchantFilteredOrders = merchantOrders.filter((o) => {
+    const stopStatus = getMerchantStopStatus(o, currentMerchantStore);
     if (merchantOrderFilter === 'all') return true;
-    if (merchantOrderFilter === 'new') return o.status === 'New Order';
-    if (merchantOrderFilter === 'preparing') return o.status === 'Preparing';
-    if (merchantOrderFilter === 'ready') return o.status === 'Ready for Pickup';
-    if (merchantOrderFilter === 'completed') return o.status === 'Completed' || o.status === 'On the Way';
+    if (merchantOrderFilter === 'new') return stopStatus === 'New Order';
+    if (merchantOrderFilter === 'preparing') return stopStatus === 'Preparing';
+    if (merchantOrderFilter === 'ready') return stopStatus === 'Ready for Pickup';
+    if (merchantOrderFilter === 'completed') return stopStatus === 'Completed' || stopStatus === 'On the Way' || o.status === 'Completed' || o.status === 'Delivered';
     return true;
   });
 
   const getMerchantOrderProductAmount = (ord) => {
-    // 1. If multi-stop order, find the matching stop subtotal for this shop
-    if (Array.isArray(ord.stops) && ord.stops.length > 0) {
-      const matchingStop = ord.stops.find(
-        (st) =>
-          (currentMerchantStore && (st.storeId === currentMerchantStore.id || st.storeName === currentMerchantStore.name)) ||
-          st.storeName === 'The Gourmet Emporium'
-      );
-      if (matchingStop && Number(matchingStop.subtotal) > 0) {
-        return Number(matchingStop.subtotal);
-      }
+    const matchingStop = getMerchantStopForOrder(ord, currentMerchantStore);
+    if (matchingStop && Number(matchingStop.subtotal) > 0) {
+      return Number(matchingStop.subtotal);
     }
-    // 2. Filter items belonging to this store
     if (Array.isArray(ord.items) && ord.items.length > 0) {
       const matchingItems = ord.items.filter(
         (it) =>
@@ -4247,7 +4271,6 @@ export default function App() {
         if (itemsTotal > 0) return itemsTotal;
       }
     }
-    // 3. Fallback to order subtotal (strictly products only, NEVER delivery fee)
     return Number(ord.subtotal) || 0;
   };
 
@@ -4257,19 +4280,57 @@ export default function App() {
   );
 
   const acceptMerchantOrder = (orderId) => {
+    let storeAcceptedName = currentMerchantStore?.name || 'Store';
+    let allStopsAccepted = true;
+    let anyStopAccepted = true;
+    let updatedStopsList = [];
+
     updateAndPersistOrders((prev) =>
-      prev.map((o) =>
-        o.id === orderId
-          ? {
-              ...o,
-              status: 'Preparing',
-              journeyAlert: `🍳 Order Accepted! Store is now preparing your provisions.`,
-            }
-          : o
-      )
+      prev.map((o) => {
+        if (o.id === orderId) {
+          const stops = Array.isArray(o.stops) && o.stops.length > 0 ? o.stops : [];
+          if (stops.length > 0) {
+            updatedStopsList = stops.map((st) => {
+              const isTargetShop =
+                (currentMerchantStore && (st.storeId === currentMerchantStore.id || (st.storeName && currentMerchantStore.name && st.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) ||
+                (!currentMerchantStore && st.storeName === 'The Gourmet Emporium');
+              if (isTargetShop) {
+                storeAcceptedName = st.storeName;
+                return { ...st, status: 'Preparing', pickupStatus: 'in_progress_prep' };
+              }
+              return st;
+            });
+
+            allStopsAccepted = updatedStopsList.every((st) => st.status === 'Preparing' || st.status === 'Ready for Pickup');
+            anyStopAccepted = updatedStopsList.some((st) => st.status === 'Preparing' || st.status === 'Ready for Pickup');
+          }
+
+          const journeyAlert = stops.length > 1
+            ? (allStopsAccepted
+                ? `🍳 All shops (${stops.length}) have accepted and are preparing your packages!`
+                : `🍳 ${storeAcceptedName} accepted & is preparing! Awaiting other stores.`)
+            : `🍳 Order Accepted! ${storeAcceptedName} is preparing your provisions.`;
+
+          return {
+            ...o,
+            status: 'Preparing',
+            stops: updatedStopsList.length > 0 ? updatedStopsList : o.stops,
+            journeyAlert,
+          };
+        }
+        return o;
+      })
     );
-    Alert.alert('Order Accepted', `Order ${orderId} is now marked as Preparing in your shop.`);
-    updateDatabaseOrderStatus(orderId, { status: 'Preparing' }).catch(() => {});
+
+    Alert.alert(
+      'Order Accepted',
+      `Order ${orderId} is now marked as Preparing for ${storeAcceptedName}.`
+    );
+
+    updateDatabaseOrderStatus(orderId, {
+      status: 'Preparing',
+      stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
+    }).catch(() => {});
   };
 
   const dispatchBoltCourier = (orderId) => {
@@ -4314,11 +4375,52 @@ export default function App() {
   };
 
   const readyMerchantOrder = (orderId) => {
+    let storeReadyName = currentMerchantStore?.name || 'Store';
+    let allStopsReady = true;
+    let updatedStopsList = [];
+
     updateAndPersistOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, status: 'Ready for Pickup' } : o))
+      prev.map((o) => {
+        if (o.id === orderId) {
+          const stops = Array.isArray(o.stops) && o.stops.length > 0 ? o.stops : [];
+          if (stops.length > 0) {
+            updatedStopsList = stops.map((st) => {
+              const isTargetShop =
+                (currentMerchantStore && (st.storeId === currentMerchantStore.id || (st.storeName && currentMerchantStore.name && st.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) ||
+                (!currentMerchantStore && st.storeName === 'The Gourmet Emporium');
+              if (isTargetShop) {
+                storeReadyName = st.storeName;
+                return { ...st, status: 'Ready for Pickup', pickupStatus: 'ready' };
+              }
+              return st;
+            });
+
+            allStopsReady = updatedStopsList.every((st) => st.status === 'Ready for Pickup');
+          }
+
+          const newMasterStatus = allStopsReady || stops.length <= 1 ? 'Ready for Pickup' : 'Preparing';
+          const journeyAlert = stops.length > 1
+            ? (allStopsReady
+                ? `📦 All packages packed & ready! Courier notified for multi-stop sweep.`
+                : `📦 ${storeReadyName} has packed your package! Waiting for remaining stores.`)
+            : `📦 Package packed & ready at ${storeReadyName}. Courier notified for pickup.`;
+
+          return {
+            ...o,
+            status: newMasterStatus,
+            stops: updatedStopsList.length > 0 ? updatedStopsList : o.stops,
+            journeyAlert,
+          };
+        }
+        return o;
+      })
     );
-    Alert.alert('Order Ready', `Order ${orderId} is packaged. Courier has been notified with the Pickup PIN.`);
-    updateDatabaseOrderStatus(orderId, { status: 'Ready for Pickup' }).catch(() => {});
+
+    Alert.alert('Order Ready', `Order ${orderId} is packaged for ${storeReadyName}. Courier notified.`);
+    updateDatabaseOrderStatus(orderId, {
+      status: allStopsReady || updatedStopsList.length <= 1 ? 'Ready for Pickup' : 'Preparing',
+      stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
+    }).catch(() => {});
   };
 
   const completeMerchantOrder = (orderId) => {
@@ -4330,16 +4432,54 @@ export default function App() {
   };
 
   const rejectMerchantOrder = (orderId) => {
-    Alert.alert('Reject Order', 'Are you sure you want to reject this order? Customer will be notified.', [
+    let storeName = currentMerchantStore?.name || 'Store';
+    let updatedStopsList = [];
+    let allStopsRejected = false;
+
+    Alert.alert('Reject Order', `Are you sure you want to reject the items for ${storeName}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Reject Order',
         style: 'destructive',
         onPress: () => {
           updateAndPersistOrders((prev) =>
-            prev.map((o) => (o.id === orderId ? { ...o, status: 'Rejected' } : o))
+            prev.map((o) => {
+              if (o.id === orderId) {
+                const stops = Array.isArray(o.stops) && o.stops.length > 0 ? o.stops : [];
+                if (stops.length > 0) {
+                  updatedStopsList = stops.map((st) => {
+                    const isTargetShop =
+                      (currentMerchantStore && (st.storeId === currentMerchantStore.id || (st.storeName && currentMerchantStore.name && st.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) ||
+                      (!currentMerchantStore && st.storeName === 'The Gourmet Emporium');
+                    if (isTargetShop) {
+                      return { ...st, status: 'Rejected', pickupStatus: 'rejected' };
+                    }
+                    return st;
+                  });
+                  allStopsRejected = updatedStopsList.every((st) => st.status === 'Rejected');
+                }
+
+                const newMasterStatus = allStopsRejected || stops.length <= 1 ? 'Cancelled' : o.status;
+                const journeyAlert = stops.length > 1
+                  ? (allStopsRejected
+                      ? `❌ Order Cancelled: All stores were unable to fulfill provisions.`
+                      : `⚠️ ${storeName} could not fulfill their items. Remaining stops will continue.`)
+                  : `❌ Order Cancelled: ${storeName} could not fulfill your provisions.`;
+
+                return {
+                  ...o,
+                  status: newMasterStatus,
+                  stops: updatedStopsList.length > 0 ? updatedStopsList : o.stops,
+                  journeyAlert,
+                };
+              }
+              return o;
+            })
           );
-          updateDatabaseOrderStatus(orderId, { status: 'Rejected' }).catch(() => {});
+          updateDatabaseOrderStatus(orderId, {
+            status: allStopsRejected || updatedStopsList.length <= 1 ? 'Cancelled' : undefined,
+            stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
+          }).catch(() => {});
         },
       },
     ]);
@@ -7007,6 +7147,10 @@ export default function App() {
                                   styles.stopStatusBadge,
                                   isCompleted
                                     ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
+                                    : stop.status === 'Ready for Pickup'
+                                    ? { backgroundColor: '#DCFCE7' }
+                                    : stop.status === 'Preparing'
+                                    ? { backgroundColor: '#DBEAFE' }
                                     : isCurrentStop
                                     ? { backgroundColor: '#FEF3C7' }
                                     : { backgroundColor: '#F3F4F6' },
@@ -7017,12 +7161,26 @@ export default function App() {
                                     styles.stopStatusBadgeText,
                                     isCompleted
                                       ? { color: '#056B4B' }
+                                      : stop.status === 'Ready for Pickup'
+                                      ? { color: '#047857' }
+                                      : stop.status === 'Preparing'
+                                      ? { color: '#1D4ED8' }
                                       : isCurrentStop
                                       ? { color: '#B45309' }
                                       : { color: '#6B7280' },
                                   ]}
                                 >
-                                  {isCompleted ? '✅ Picked Up' : isCurrentStop ? '🛵 Collecting Now' : '⏳ Queued'}
+                                  {isCompleted
+                                    ? '✅ Picked Up'
+                                    : stop.status === 'Ready for Pickup'
+                                    ? '📦 Ready for Courier'
+                                    : stop.status === 'Preparing'
+                                    ? '🍳 Preparing Provisions'
+                                    : stop.status === 'Rejected'
+                                    ? '❌ Store Unavailable'
+                                    : isCurrentStop
+                                    ? '🛵 Collecting Now'
+                                    : '⏳ Awaiting Store'}
                                 </Text>
                               </View>
                             </View>
@@ -9808,10 +9966,13 @@ export default function App() {
                 >
                   {[
                     { id: 'all', label: `All (${merchantOrders.length})` },
-                    { id: 'new', label: `New (${merchantOrders.filter((o) => o.status === 'New Order').length})` },
-                    { id: 'preparing', label: `Preparing (${merchantOrders.filter((o) => o.status === 'Preparing').length})` },
-                    { id: 'ready', label: `Ready (${merchantOrders.filter((o) => o.status === 'Ready for Pickup').length})` },
-                    { id: 'completed', label: `Done (${merchantOrders.filter((o) => o.status === 'Completed' || o.status === 'On the Way').length})` },
+                    { id: 'new', label: `New (${merchantOrders.filter((o) => getMerchantStopStatus(o, currentMerchantStore) === 'New Order').length})` },
+                    { id: 'preparing', label: `Preparing (${merchantOrders.filter((o) => getMerchantStopStatus(o, currentMerchantStore) === 'Preparing').length})` },
+                    { id: 'ready', label: `Ready (${merchantOrders.filter((o) => getMerchantStopStatus(o, currentMerchantStore) === 'Ready for Pickup').length})` },
+                    { id: 'completed', label: `Done (${merchantOrders.filter((o) => {
+                      const s = getMerchantStopStatus(o, currentMerchantStore);
+                      return s === 'Completed' || s === 'On the Way' || o.status === 'Completed' || o.status === 'Delivered';
+                    }).length})` },
                   ].map((f) => {
                     const active = merchantOrderFilter === f.id;
                     return (
@@ -9839,10 +10000,12 @@ export default function App() {
                   </View>
                 ) : (
                   merchantFilteredOrders.map((ord) => {
-                    const isNew = ord.status === 'New Order';
-                    const isPrep = ord.status === 'Preparing';
-                    const isReady = ord.status === 'Ready for Pickup';
-                    const isDone = ord.status === 'Completed' || ord.status === 'On the Way';
+                    const matchingStop = getMerchantStopForOrder(ord, currentMerchantStore);
+                    const stopStatus = getMerchantStopStatus(ord, currentMerchantStore);
+                    const isNew = stopStatus === 'New Order';
+                    const isPrep = stopStatus === 'Preparing';
+                    const isReady = stopStatus === 'Ready for Pickup';
+                    const isDone = stopStatus === 'Completed' || stopStatus === 'On the Way' || ord.status === 'Completed' || ord.status === 'Delivered';
 
                     return (
                       <View key={ord.id} style={styles.mOrderCard}>
@@ -9871,7 +10034,7 @@ export default function App() {
                                 isDone && { color: '#475569' },
                               ]}
                             >
-                              {ord.status}
+                              {stopStatus}
                             </Text>
                           </View>
                         </View>
@@ -9901,16 +10064,16 @@ export default function App() {
                               Landmark: <Text style={{ color: COLORS.textDark, fontWeight: '700' }}>{ord.deliveryLocation.landmark}</Text>
                             </Text>
                           )}
-                          {ord.pickupPin && (
+                          {(matchingStop?.pickupPin || ord.pickupPin) && (
                             <Text style={styles.mPickupPinNotice}>
-                              Shop Handover PIN: <Text style={{ fontWeight: '800' }}>{ord.pickupPin}</Text>
+                              Shop Handover PIN: <Text style={{ fontWeight: '800' }}>{matchingStop?.pickupPin || ord.pickupPin}</Text>
                             </Text>
                           )}
                         </View>
 
                         {/* Items ordered */}
                         <View style={styles.mItemsList}>
-                          {ord.items?.map((it, idx) => (
+                          {((matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items)?.map((it, idx) => (
                             <View key={idx} style={styles.mItemRow}>
                               <Text style={styles.mItemIcon}>{it.icon || '🛍️'}</Text>
                               <Text style={styles.mItemName}>
