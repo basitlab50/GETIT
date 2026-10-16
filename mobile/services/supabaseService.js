@@ -113,6 +113,8 @@ export async function createDatabaseOrder(order) {
 
   const riderPayload = {
     ...baseRider,
+    customerId: order.customerId || order.customer_id || null,
+    customerEmail: order.customerEmail || order.customer_email || null,
     stops: order.stops || [],
     roadRouteCoordinates: order.roadRouteCoordinates || [],
     roadLegs: order.roadLegs || [],
@@ -128,7 +130,7 @@ export async function createDatabaseOrder(order) {
     store_id: order.storeId || order.store_id || (firstStop ? firstStop.storeId : 'store-fresh-mart'),
     store_name: order.storeName || order.store_name || (firstStop ? firstStop.storeName : 'Fresh Mart Maitama'),
     customer_name: order.customerName || order.customer_name || 'Customer',
-    customer_phone: order.customerPhone || order.customer_phone || '+234 803 000 1234',
+    customer_phone: order.customerPhone || order.customer_phone || '',
     customer_address: order.customerAddress || order.delivery_address || 'Abuja, Nigeria',
     delivery_lat: Number(order.deliveryLat ?? order.delivery_lat ?? order.deliveryLocation?.latitude ?? 9.0882),
     delivery_lng: Number(order.deliveryLng ?? order.delivery_lng ?? order.deliveryLocation?.longitude ?? 7.4933),
@@ -361,6 +363,8 @@ export async function getDatabaseOrders() {
         id: item.id,
         storeId: item.store_id,
         storeName: item.store_name,
+        customerId: riderMeta.customerId || null,
+        customerEmail: riderMeta.customerEmail || null,
         customerName: item.customer_name || 'Customer',
         customerPhone: item.customer_phone || '',
         customerAddress: item.customer_address || 'Abuja, Nigeria',
@@ -623,35 +627,11 @@ export async function deleteDatabaseStore(storeId) {
 }
 
 // 6. User Accounts & Database Authentication
-export const DEFAULT_DATABASE_USERS = [
-  {
-    id: 'user-shopper-amina',
-    role: 'buyer',
-    fullName: 'Amina Bello',
-    email: 'amina@getit.ng',
-    phone: '08032941194',
-    password: 'password123',
-    address: 'Plot 14 Gana Street, Maitama, Abuja',
-    businessName: null,
-    storeId: null,
-    createdAt: '2026-10-10T00:00:00.000Z',
-  },
-  {
-    id: 'user-merchant-emeka',
-    role: 'seller',
-    fullName: 'Emeka Okafor',
-    email: 'emeka@freshmart.ng',
-    phone: '08031112233',
-    password: 'password123',
-    address: 'Adetokunbo Ademola Crescent, Wuse 2, Abuja',
-    businessName: 'The Gourmet Emporium',
-    storeId: 's1',
-    createdAt: '2026-10-10T00:00:00.000Z',
-  },
-];
+// 6. User Accounts & Database Authentication
+export const DEFAULT_DATABASE_USERS = [];
 
 // In-memory cache for ultra-fast, zero-latency user matching
-let MEMORY_REGISTERED_USERS = [...DEFAULT_DATABASE_USERS];
+let MEMORY_REGISTERED_USERS = [];
 
 /**
  * Normalizes phone numbers to their core 10 digits (e.g. 08031234567 or +2348031234567 -> 8031234567)
@@ -709,95 +689,26 @@ function userMatchesIdentifier(user, cleanId, digitsOnly) {
 
 export async function seedDefaultDatabaseUsers() {
   try {
-    const raw = await AsyncStorage.getItem('getit_registered_users');
-    let localUsers = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(localUsers) || localUsers.length === 0) {
-      localUsers = [...DEFAULT_DATABASE_USERS];
-      await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
-    } else {
-      DEFAULT_DATABASE_USERS.forEach((def) => {
-        if (!localUsers.some((u) => u.id === def.id || getCorePhoneDigits(u.phone) === getCorePhoneDigits(def.phone))) {
-          localUsers.push(def);
-        }
-      });
-      await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
-    }
-
-    // Immediately sync in-memory cache with local storage before any network call
-    localUsers.forEach((u) => {
-      if (!MEMORY_REGISTERED_USERS.some((m) => m.id === u.id)) {
-        MEMORY_REGISTERED_USERS.push(u);
-      }
-    });
-
-    // 1. Fetch users from dedicated Supabase 'users' table
-    try {
-      const { data: dbUsers } = await supabase.from('users').select('*');
-      if (Array.isArray(dbUsers) && dbUsers.length > 0) {
-        dbUsers.forEach((u) => {
-          const mapped = {
-            id: u.id,
-            role: u.role || 'buyer',
-            fullName: u.full_name,
-            email: u.email,
-            phone: u.phone,
-            password: u.password_hash || u.password,
-            address: u.address || '',
-            businessName: u.business_name || null,
-            storeId: u.store_id || null,
-            createdAt: u.created_at,
-          };
-          if (!localUsers.some((lu) => lu.id === mapped.id || (mapped.phone && getCorePhoneDigits(lu.phone) === getCorePhoneDigits(mapped.phone)))) {
-            localUsers.push(mapped);
-          }
-          if (!MEMORY_REGISTERED_USERS.some((m) => m.id === mapped.id || (mapped.phone && getCorePhoneDigits(m.phone) === getCorePhoneDigits(mapped.phone)))) {
-            MEMORY_REGISTERED_USERS.push(mapped);
-          }
-        });
-        await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
-      }
-    } catch (e) {}
-
-    // 2. Fetch cloud backup users from Supabase riders table so any account survives reload
-    try {
-      const { data: cloudUsers } = await supabase
-        .from('riders')
-        .select('*')
-        .like('id', 'usr-%');
-
-      if (Array.isArray(cloudUsers) && cloudUsers.length > 0) {
-        cloudUsers.forEach((cu) => {
-          let meta = {};
-          try { meta = JSON.parse(cu.avatar || '{}'); } catch (e) {}
-          const mapped = {
-            id: meta.realId || cu.id,
-            role: meta.role || 'buyer',
-            fullName: cu.name,
-            email: cu.vehicle,
-            phone: cu.phone,
-            password: cu.plate,
-            address: meta.address || '',
-            businessName: meta.businessName || null,
-            storeId: meta.storeId || null,
-            createdAt: cu.created_at,
-          };
-          if (!localUsers.some((u) => u.id === mapped.id || (mapped.phone && getCorePhoneDigits(u.phone) === getCorePhoneDigits(mapped.phone)))) {
-            localUsers.push(mapped);
-          }
-          if (!MEMORY_REGISTERED_USERS.some((m) => m.id === mapped.id || (mapped.phone && getCorePhoneDigits(m.phone) === getCorePhoneDigits(mapped.phone)))) {
-            MEMORY_REGISTERED_USERS.push(mapped);
-          }
-        });
-        await AsyncStorage.setItem('getit_registered_users', JSON.stringify(localUsers));
-      }
-    } catch (e) {}
-
-    // Also sync localStorage if on web
-    if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem('getit_registered_users', JSON.stringify(MEMORY_REGISTERED_USERS));
+    // Fetch users from dedicated Supabase 'users' table
+    const { data: dbUsers, error } = await supabase.from('users').select('*');
+    if (!error && Array.isArray(dbUsers) && dbUsers.length > 0) {
+      const mappedList = dbUsers.map((u) => ({
+        id: u.id,
+        role: u.role || 'buyer',
+        fullName: u.full_name,
+        email: u.email,
+        phone: u.phone,
+        password: u.password_hash || u.password,
+        address: u.address || '',
+        businessName: u.business_name || null,
+        storeId: u.store_id || null,
+        createdAt: u.created_at,
+      }));
+      MEMORY_REGISTERED_USERS = mappedList;
+      await AsyncStorage.setItem('getit_registered_users', JSON.stringify(mappedList));
     }
   } catch (e) {
-    console.warn('Failed to seed default users in local storage:', e);
+    console.warn('Sync users from Supabase warning:', e);
   }
 }
 
@@ -806,123 +717,44 @@ export async function findDatabaseUser(identifier) {
   const cleanId = String(identifier).trim().toLowerCase();
   const digitsOnly = cleanId.replace(/\D/g, '');
 
-  // 1. First check in-memory cache for immediate zero-latency lookup
-  const memMatch = MEMORY_REGISTERED_USERS.find((u) => userMatchesIdentifier(u, cleanId, digitsOnly));
-  if (memMatch) return memMatch;
+  // 1. Direct query from authoritative Supabase 'users' table
+  try {
+    const { data: dbUsers, error } = await supabase.from('users').select('*');
+    if (!error && Array.isArray(dbUsers) && dbUsers.length > 0) {
+      for (const u of dbUsers) {
+        const mapped = {
+          id: u.id,
+          role: u.role || 'buyer',
+          fullName: u.full_name,
+          email: u.email,
+          phone: u.phone,
+          password: u.password_hash || u.password,
+          address: u.address || '',
+          businessName: u.business_name || null,
+          storeId: u.store_id || null,
+          createdAt: u.created_at,
+        };
+        if (userMatchesIdentifier(mapped, cleanId, digitsOnly)) {
+          // Sync local memory and AsyncStorage
+          if (!MEMORY_REGISTERED_USERS.some((m) => m.id === mapped.id)) {
+            MEMORY_REGISTERED_USERS.push(mapped);
+          }
+          return mapped;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Supabase findDatabaseUser query error:', err);
+  }
 
-  // 2. Query persistent local database storage (AsyncStorage)
+  // 2. Query persistent local database storage (AsyncStorage fallback for offline)
   try {
     const raw = await AsyncStorage.getItem('getit_registered_users');
     if (raw) {
       const localUsers = JSON.parse(raw);
       if (Array.isArray(localUsers)) {
-        // Sync memory cache with anything read
-        localUsers.forEach((u) => {
-          if (!MEMORY_REGISTERED_USERS.some((m) => m.id === u.id)) {
-            MEMORY_REGISTERED_USERS.push(u);
-          }
-        });
         const match = localUsers.find((u) => userMatchesIdentifier(u, cleanId, digitsOnly));
         if (match) return match;
-      }
-    }
-  } catch (err) {
-    console.warn('Local database lookup failed:', err);
-  }
-
-  // 3. Also check browser localStorage if on web
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const webRaw = window.localStorage.getItem('getit_registered_users');
-      if (webRaw) {
-        const webUsers = JSON.parse(webRaw);
-        if (Array.isArray(webUsers)) {
-          const match = webUsers.find((u) => userMatchesIdentifier(u, cleanId, digitsOnly));
-          if (match) return match;
-        }
-      }
-    }
-  } catch (e) {}
-
-  // 4. Query cloud-persisted user records from Supabase (riders table usr-%)
-  try {
-    const { data: cloudUsers, error: cErr } = await supabase
-      .from('riders')
-      .select('*')
-      .like('id', 'usr-%');
-
-    if (!cErr && Array.isArray(cloudUsers) && cloudUsers.length > 0) {
-      for (const cu of cloudUsers) {
-        let meta = {};
-        try { meta = JSON.parse(cu.avatar || '{}'); } catch (e) {}
-        const mapped = {
-          id: meta.realId || cu.id,
-          role: meta.role || 'buyer',
-          fullName: cu.name,
-          email: cu.vehicle,
-          phone: cu.phone,
-          password: cu.plate,
-          address: meta.address || '',
-          businessName: meta.businessName || null,
-          storeId: meta.storeId || null,
-          createdAt: cu.created_at,
-        };
-        // Ensure present in memory & local storage
-        if (!MEMORY_REGISTERED_USERS.some((m) => m.id === mapped.id)) {
-          MEMORY_REGISTERED_USERS.push(mapped);
-        }
-        if (userMatchesIdentifier(mapped, cleanId, digitsOnly)) {
-          // Asynchronously persist to local storage for future offline/instant access
-          AsyncStorage.getItem('getit_registered_users').then((raw) => {
-            let list = raw ? JSON.parse(raw) : [];
-            if (!Array.isArray(list)) list = [];
-            if (!list.some((u) => u.id === mapped.id)) {
-              list.push(mapped);
-              AsyncStorage.setItem('getit_registered_users', JSON.stringify(list)).catch(() => {});
-            }
-          }).catch(() => {});
-          return mapped;
-        }
-      }
-    }
-  } catch (err) {}
-
-  // 5. Fallback query remote Supabase 'users' table if it exists
-  try {
-    const { data, error } = await supabase.from('users').select('*');
-    if (!error && Array.isArray(data) && data.length > 0) {
-      const match = data.find((u) => {
-        const mapped = {
-          id: u.id,
-          role: u.role,
-          fullName: u.full_name,
-          email: u.email,
-          phone: u.phone,
-          password: u.password_hash || u.password,
-          address: u.address,
-          businessName: u.business_name,
-          storeId: u.store_id,
-          createdAt: u.created_at,
-        };
-        return userMatchesIdentifier(mapped, cleanId, digitsOnly);
-      });
-      if (match) {
-        const formatted = {
-          id: match.id,
-          role: match.role,
-          fullName: match.full_name,
-          email: match.email,
-          phone: match.phone,
-          password: match.password_hash || match.password,
-          address: match.address,
-          businessName: match.business_name,
-          storeId: match.store_id,
-          createdAt: match.created_at,
-        };
-        if (!MEMORY_REGISTERED_USERS.some((m) => m.id === formatted.id)) {
-          MEMORY_REGISTERED_USERS.push(formatted);
-        }
-        return formatted;
       }
     }
   } catch (err) {}

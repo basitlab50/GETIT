@@ -1409,15 +1409,7 @@ export default function App() {
     });
   };
 
-  const [currentUser, setCurrentUser] = useState({
-    id: 'user-client-01',
-    role: 'buyer', // 'buyer' | 'seller'
-    fullName: 'Distinguished Client',
-    email: 'client@getit.ng',
-    phone: '+234 803 294 1194',
-    address: 'Plot 14 Gana Street, Maitama, Abuja',
-    businessName: '',
-  });
+  const [currentUser, setCurrentUser] = useState(null);
   const [authModalVisible, setAuthModalVisible] = useState(false);
   const [authTab, setAuthTab] = useState('buyer'); // 'buyer' | 'seller'
   const [authName, setAuthName] = useState('');
@@ -1526,75 +1518,7 @@ export default function App() {
 
   // Active Orders
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'orders' | 'profile'
-  const [orders, setOrders] = useState([
-    {
-      id: 'ORD-98231',
-      storeName: 'The Gourmet Emporium',
-      itemsCount: 3,
-      items: [
-        { id: 'gp1', name: 'Truffle Infused Extra Virgin Oil (250ml)', price: 16500, qty: 1, icon: '🫒' },
-        { id: 'gp2', name: 'Aged Parmigiano Reggiano (300g)', price: 12800, qty: 1, icon: '🧀' },
-        { id: 'gp3', name: 'Organic Cold-Pressed Valencia Juices', price: 4200, qty: 1, icon: '🍊' },
-      ],
-      total: 33500,
-      vendorPayout: 30150,
-      status: 'On the Way',
-      deliveryPartner: 'bolt',
-      boltStatus: 'IN_TRANSIT',
-      boltTrackingCode: 'BOLT-ABJ-89412',
-      boltRider: {
-        name: 'Musa Ibrahim',
-        phone: '+234 803 294 1194',
-        rating: '4.95',
-        trips: 1420,
-        vehicle: 'Bajaj Boxer 150 (Red)',
-        plate: 'ABJ-492-KW',
-      },
-      boltCoords: {
-        latitude: 9.0882,
-        longitude: 7.4933,
-      },
-      eta: '11 mins',
-      deliveryPin: '4928',
-      pickupPin: '7391',
-      customerName: 'Chief Emeka Okafor',
-      customerAddress: 'Plot 14 Gana Street, Maitama, Abuja',
-      deliveryLocation: {
-        latitude: 9.0882,
-        longitude: 7.4933,
-        landmark: 'Opposite Transcorp Hilton, Black Gate with Security Post',
-        apartment: 'Suite 4B',
-        notes: 'Call on arrival for estate gate clearance',
-      },
-      createdAt: '12:45 PM',
-    },
-    {
-      id: 'ORD-98240',
-      storeName: 'The Gourmet Emporium',
-      itemsCount: 2,
-      items: [
-        { id: 'gp5', name: 'Smoked Atlantic Salmon Fillet (200g)', price: 14200, qty: 1, icon: '🐟' },
-        { id: 'gp7', name: 'San Pellegrino Sparkling Water (750ml)', price: 2900, qty: 2, icon: '🍾' },
-      ],
-      total: 20000,
-      vendorPayout: 18000,
-      status: 'New Order',
-      eta: '25 mins',
-      deliveryPin: '8214',
-      pickupPin: '3940',
-      customerName: 'Hajiya Aisha Danjuma',
-      customerAddress: 'Nelson Mandela Street, Asokoro, Abuja',
-      deliveryLocation: {
-        latitude: 9.0435,
-        longitude: 7.5218,
-        landmark: 'Close to ECOWAS Secretariat, Villa 7',
-        apartment: 'Villa 7',
-      },
-      isDemo: true,
-      timestamp: Date.now() - 3600000,
-      createdAt: '1:10 PM',
-    },
-  ]);
+  const [orders, setOrders] = useState([]);
 
   const [ordersFilterTab, setOrdersFilterTab] = useState('active'); // 'active' | 'all' | 'completed' | 'cancelled'
   const [lastPlacedOrderId, setLastPlacedOrderId] = useState(null);
@@ -2747,33 +2671,24 @@ export default function App() {
           console.warn('Error restoring pinned location on restart:', locErr);
         }
 
-        // 6. Restore orders (from AsyncStorage + cloud Supabase sync)
-        const storedOrders = await AsyncStorage.getItem('getit_orders');
-        let initialOrdersList = [];
-        if (storedOrders) {
-          try {
-            initialOrdersList = JSON.parse(storedOrders);
-          } catch (e) {}
-        }
-
+        // 6. Restore orders (from cloud Supabase sync as single source of truth)
         try {
           const cloudOrders = await getDatabaseOrders();
           if (cloudOrders && cloudOrders.length > 0) {
-            const orderMap = new Map();
-            initialOrdersList.forEach((o) => orderMap.set(o.id, o));
-            cloudOrders.forEach((co) => {
-              const existing = orderMap.get(co.id);
-              orderMap.set(co.id, existing ? { ...existing, ...co, status: co.status || existing.status } : co);
-            });
-            initialOrdersList = Array.from(orderMap.values());
+            setOrders(cloudOrders);
+            await AsyncStorage.setItem('getit_orders', JSON.stringify(cloudOrders));
+          } else {
+            setOrders([]);
+            await AsyncStorage.removeItem('getit_orders');
           }
         } catch (err) {
           console.warn('Could not sync cloud orders on startup:', err);
-        }
-
-        if (initialOrdersList.length > 0) {
-          setOrders(initialOrdersList);
-          await AsyncStorage.setItem('getit_orders', JSON.stringify(initialOrdersList));
+          const storedOrders = await AsyncStorage.getItem('getit_orders');
+          if (storedOrders) {
+            try {
+              setOrders(JSON.parse(storedOrders));
+            } catch (e) {}
+          }
         }
 
         // Ensure default & registered accounts exist in database
@@ -3712,12 +3627,31 @@ export default function App() {
   };
 
   // Cleanly sorted & filtered buyer orders list:
-  // - Shows all orders synced across devices from Supabase
+  // - Shows only orders belonging to the authenticated account
   // - Latest placed order is pinned at the top with 🔥 highlight badge
   // - Chronologically sorted (newest orders first)
   // - Filterable by Active, All, Delivered, Cancelled
   const sortedAndFilteredOrders = useMemo(() => {
-    const sorted = [...orders].sort((a, b) => {
+    if (!currentUser) return [];
+
+    const userPhoneDigits = (currentUser.phone || '').replace(/\D/g, '');
+    const userEmail = (currentUser.email || '').trim().toLowerCase();
+    const userId = currentUser.id;
+
+    // Strict Buyer Account Isolation: Show only orders placed by this account!
+    const myOrders = orders.filter((o) => {
+      if (userId && (o.customerId === userId || o.customer_id === userId)) return true;
+      if (userEmail && o.customerEmail && o.customerEmail.toLowerCase() === userEmail) return true;
+      const orderPhoneDigits = (o.customerPhone || o.customer_phone || '').replace(/\D/g, '');
+      if (userPhoneDigits && orderPhoneDigits) {
+        if (userPhoneDigits.endsWith(orderPhoneDigits.slice(-10)) || orderPhoneDigits.endsWith(userPhoneDigits.slice(-10))) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    const sorted = [...myOrders].sort((a, b) => {
       if (lastPlacedOrderId && a.id === lastPlacedOrderId) return -1;
       if (lastPlacedOrderId && b.id === lastPlacedOrderId) return 1;
       return (b.timestamp || 0) - (a.timestamp || 0);
@@ -4244,9 +4178,10 @@ export default function App() {
       total: cartTotal,
       deliveryPartner: selectedDeliveryTier,
       deliveryPin: masterDeliveryPin,
-      customerId: currentUser?.id || 'guest',
+      customerId: currentUser?.id || null,
+      customerEmail: currentUser?.email || '',
       customerName: currentUser?.fullName || currentUser?.name || 'Customer',
-      customerPhone: currentUser?.phone || '08032941194',
+      customerPhone: currentUser?.phone || '',
       customerAddress: pinnedLocation.name,
       deliveryLocation: {
         latitude: pinnedLocation.latitude,
@@ -4402,11 +4337,31 @@ export default function App() {
   };
 
   const merchantOrders = orders.filter((o) => {
-    if (!currentMerchantStore) return o.storeName === 'The Gourmet Emporium';
-    if (o.storeId === currentMerchantStore.id || o.storeName === currentMerchantStore.name) {
+    if (!currentUser) return false;
+
+    // Find all store IDs owned by or assigned to this merchant
+    const merchantPhoneDigits = (currentUser.phone || '').replace(/\D/g, '');
+    const myStores = storesList.filter((s) => {
+      if (currentUser.storeId && s.id === currentUser.storeId) return true;
+      const sPhoneDigits = (s.phone || '').replace(/\D/g, '');
+      if (merchantPhoneDigits && sPhoneDigits && (merchantPhoneDigits.endsWith(sPhoneDigits.slice(-10)) || sPhoneDigits.endsWith(merchantPhoneDigits.slice(-10)))) {
+        return true;
+      }
+      return false;
+    });
+
+    const activeStore = currentMerchantStore || myStores[0];
+    if (!activeStore) {
+      return false;
+    }
+
+    const activeId = activeStore.id;
+    const activeName = (activeStore.name || '').toLowerCase();
+
+    if (o.storeId === activeId || (o.storeName && o.storeName.toLowerCase() === activeName)) {
       return true;
     }
-    if (Array.isArray(o.stops) && o.stops.some((st) => st.storeId === currentMerchantStore.id || (st.storeName && currentMerchantStore.name && st.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) {
+    if (Array.isArray(o.stops) && o.stops.some((st) => st.storeId === activeId || (st.storeName && st.storeName.toLowerCase() === activeName))) {
       return true;
     }
     return false;
@@ -5389,7 +5344,10 @@ export default function App() {
     }
     try {
       await AsyncStorage.removeItem('getit_current_user');
+      await AsyncStorage.removeItem('getit_orders');
     } catch (e) {}
+    setCurrentUser(null);
+    setOrders([]);
     setIsLoggedIn(false);
     setAuthScreenRole('buyer');
     setAuthScreenMode('signin');
