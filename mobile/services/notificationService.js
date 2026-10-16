@@ -1,7 +1,6 @@
 import { Platform, Vibration } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
-import { setAudioModeAsync, createAudioPlayer } from 'expo-audio';
 
 // =========================================================================
 // 1. CONFIGURE FOREGROUND & BACKGROUND NOTIFICATION HANDLER
@@ -32,59 +31,14 @@ export function subscribeToInAppNotifications(listener) {
 const recentNotificationTimestamps = new Map();
 let lastVibrationTime = 0;
 
-// Configure audio mode for foreground audio so iOS / iPad plays sound even in silent mode
-let audioConfigured = false;
-async function configureAudioMode() {
-  if (audioConfigured) return;
-  try {
-    if (typeof setAudioModeAsync === 'function') {
-      await setAudioModeAsync({
-        playsInSilentMode: true,
-        interruptionMode: 'mixWithOthers',
-      });
-      audioConfigured = true;
-    }
-  } catch (e) {
-    // Audio mode configuration silent fallback
-  }
-}
-configureAudioMode();
-
-let chimePlayer = null;
-let merchantPlayer = null;
-
-async function playNativeSound(type) {
-  try {
-    await configureAudioMode();
-    if (type === 'merchant_new_order') {
-      if (!merchantPlayer) {
-        merchantPlayer = createAudioPlayer(require('../assets/sounds/merchant_order.wav'));
-      }
-      await merchantPlayer.seekTo(0).catch(() => {});
-      merchantPlayer.play();
-      return true;
-    } else {
-      if (!chimePlayer) {
-        chimePlayer = createAudioPlayer(require('../assets/sounds/chime.wav'));
-      }
-      await chimePlayer.seekTo(0).catch(() => {});
-      chimePlayer.play();
-      return true;
-    }
-  } catch (err) {
-    console.log('Native expo-audio notice:', err?.message);
-    return false;
-  }
-}
-
 // =========================================================================
 // 2. AUDIO SYNTHESIZER (INSTANT LUXURY BEEP & CHIME)
-// Works across iPad native (expo-audio), Android, and web
+// Works seamlessly across web, hybrid, and mobile devices
 // =========================================================================
-export async function playAudioBeep(type = 'default') {
+export function playAudioBeep(type = 'default') {
   try {
     const now = Date.now();
-    // Throttle vibration so phone never buzzes continuously (Android / iPhone)
+    // Throttle vibration so phone never buzzes continuously
     if (now - lastVibrationTime > 6000) {
       lastVibrationTime = now;
       if (type === 'merchant_new_order') {
@@ -94,13 +48,7 @@ export async function playAudioBeep(type = 'default') {
       }
     }
 
-    // 1. Primary: Native Audio Playback via expo-audio (iPadOS, iOS, Android)
-    const played = await playNativeSound(type);
-    if (played) {
-      return;
-    }
-
-    // 2. Secondary Fallback: Web Audio API Synthesis (Browser & Hybrid Web View)
+    // Web Audio API Synthesis (Browser & Hybrid Web View)
     if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const ctx = new AudioCtx();
