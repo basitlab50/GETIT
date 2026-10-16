@@ -1714,10 +1714,16 @@ export default function App() {
   const updateAndPersistStores = (updater) => {
     setStoresList((prev) => {
       const updated = typeof updater === 'function' ? updater(prev) : updater;
+      const seen = new Set();
+      const deduped = (Array.isArray(updated) ? updated : []).filter((s) => {
+        if (!s || !s.id || seen.has(s.id)) return false;
+        seen.add(s.id);
+        return true;
+      });
       try {
-        AsyncStorage.setItem('getit_stores_list', JSON.stringify(updated)).catch(console.warn);
+        AsyncStorage.setItem('getit_stores_list', JSON.stringify(deduped)).catch(console.warn);
       } catch (e) {}
-      return updated;
+      return deduped;
     });
   };
 
@@ -2440,8 +2446,15 @@ export default function App() {
           const existingIds = new Set(enriched.map((s) => s.id));
           const remainingStatic = prev.filter((s) => !existingIds.has(s.id));
           const combined = [...mergedCloud, ...remainingStatic];
-          AsyncStorage.setItem('getit_stores_list', JSON.stringify(combined)).catch(console.warn);
-          return combined;
+          const uniqueStoreMap = new Map();
+          combined.forEach((s) => {
+            if (s && s.id && !uniqueStoreMap.has(s.id)) {
+              uniqueStoreMap.set(s.id, s);
+            }
+          });
+          const dedupedCombined = Array.from(uniqueStoreMap.values());
+          AsyncStorage.setItem('getit_stores_list', JSON.stringify(dedupedCombined)).catch(console.warn);
+          return dedupedCombined;
         });
       } catch (err) {
         console.warn('Error loading cloud stores:', err);
@@ -2511,7 +2524,12 @@ export default function App() {
           try {
             const parsedStores = JSON.parse(storedStores);
             if (Array.isArray(parsedStores) && parsedStores.length > 0) {
-              baseStores = parsedStores;
+              const seenLocal = new Set();
+              baseStores = parsedStores.filter((s) => {
+                if (!s || !s.id || seenLocal.has(s.id)) return false;
+                seenLocal.add(s.id);
+                return true;
+              });
             }
           } catch (e) {}
         }
@@ -2539,8 +2557,14 @@ export default function App() {
             return updated;
           })
         );
-        setStoresList(hydratedStores);
-        await AsyncStorage.setItem('getit_stores_list', JSON.stringify(hydratedStores));
+        const seenHydrated = new Set();
+        const dedupedHydrated = hydratedStores.filter((s) => {
+          if (!s || !s.id || seenHydrated.has(s.id)) return false;
+          seenHydrated.add(s.id);
+          return true;
+        });
+        setStoresList(dedupedHydrated);
+        await AsyncStorage.setItem('getit_stores_list', JSON.stringify(dedupedHydrated));
 
         // 2. Restore active authenticated user
         let activeMerchantStoreId = 's1';
@@ -5810,8 +5834,11 @@ export default function App() {
   const buyerActiveLng = pinnedLocation?.longitude || mapCoords?.longitude || 7.4933;
 
   const filteredStores = useMemo(() => {
+    const seenIds = new Set();
     return storesList
       .filter((store) => {
+        if (!store || !store.id || seenIds.has(store.id)) return false;
+        seenIds.add(store.id);
         const matchesCategory = activeCategory === 'all' || store.category === activeCategory;
         const matchesSearch =
           !searchQuery ||
@@ -6672,12 +6699,12 @@ export default function App() {
                 />
 
                 {/* All Pinned Stores Around Buyer */}
-                {filteredStores.map((store) => {
+                {filteredStores.map((store, sIndex) => {
                   const isStoreOpen = isStoreCurrentlyOpen(store);
                   const isSelected = selectedMapStore?.id === store.id;
                   return (
                     <Marker
-                      key={`store-pin-${store.id}-${store.latitude}-${store.longitude}`}
+                      key={`store-pin-${store.id}-${sIndex}-${store.latitude}-${store.longitude}`}
                       coordinate={{
                         latitude: Number(store.latitude) || 9.0882,
                         longitude: Number(store.longitude) || 7.4933,
@@ -6741,12 +6768,12 @@ export default function App() {
             </View>
           ) : (
             /* Store Box Containers List */
-            filteredStores.map((store) => {
+            filteredStores.map((store, sIndex) => {
               const isFav = favorites.includes(store.id);
               const isStoreOpen = isStoreCurrentlyOpen(store);
               return (
                 <TouchableOpacity
-                  key={store.id}
+                  key={`store-card-${store.id}-${sIndex}`}
                   style={styles.storeBoxCard}
                   onPress={() => openStoreModal(store)}
                   activeOpacity={0.92}
@@ -10695,11 +10722,11 @@ export default function App() {
                   <Text style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 12 }}>
                     Tap any branch below to view its live stock and incoming orders:
                   </Text>
-                  {storesList.map((st) => {
+                  {storesList.map((st, stIdx) => {
                     const isSelected = st.id === merchantStoreId;
                     return (
                       <TouchableOpacity
-                        key={st.id}
+                        key={`merchant-branch-${st.id}-${stIdx}`}
                         style={[styles.branchItem, isSelected && styles.branchItemActive]}
                         onPress={() => handleSelectMerchantBranch(st.id)}
                         activeOpacity={0.85}
