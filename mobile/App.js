@@ -8164,7 +8164,8 @@ export default function App() {
                 style={[styles.merchantSwitchBtn, { backgroundColor: COLORS.goldPrimary }]}
                 onPress={() => {
                   setAuthScreenMode('signup');
-                  setAuthRole('seller');
+                  setAuthScreenRole('seller');
+                  setAuthTab('seller');
                   setAuthModalVisible(true);
                 }}
                 activeOpacity={0.85}
