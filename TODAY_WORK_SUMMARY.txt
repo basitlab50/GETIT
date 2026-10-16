@@ -385,20 +385,21 @@ All core roadmap items are now implemented, verified, and synchronized:
 
 - 68e70e7  Fix multi-store courier pickup stall at second shop and sync stop pickups to cloud
 - 00c2e09  Unblock courier simulation by removing Preparing status check when rider is assigned, auto-heal stops on fetch
+- cfffebe  Fix courier arrival snap, halt timer on destination arrival, and prevent handover status reversion
 
 ================================================================================
-FIX DETAILS - MULTI-STORE COURIER PICKUP UNBLOCK
+FIX DETAILS - DESTINATION ARRIVAL & PACKAGE HANDOVER FIX
 ================================================================================
-1. Direct Cloud Reconciliation:
-   - Queried active order ORD-29525 in Supabase.
-   - Reconciled all 3 stops (The Gourmet Emporium, Abdul Basit Store, Abdul Basit Labaran's Store) to 'picked_up'.
-   - Updated top-level order status from 'Preparing' to 'On the Way'.
-2. Root-Cause Simulation Unblock:
-   - In App.js courier timer loop, removed the check that aborted movement whenever ord.status === 'Preparing'. If a boltRider is assigned, the courier is active and must advance.
-   - Placed the auto-heal verification before movement checks so all reached intermediate stops are automatically transitioned to 'picked_up'.
-3. Data Ingestion Auto-Healing:
-   - In supabaseService.js getDatabaseOrders, if an order has a rider assigned and is not Delivered/Cancelled, it automatically normalizes to 'On the Way'.
-   - All stops up to currentStopIndex are verified as 'picked_up' upon loading across all devices.
+1. Courier Arrival at Destination:
+   - Snapped boltCoords directly to the buyer's delivery destination coordinates upon reaching the end of the final leg.
+   - Set courierArrivedOutside: true and hasNotifiedArrived: true so the background timer halts cleanly and does not loop or spam Supabase.
+   - Prevented the simulation timer from overwriting status to 'On the Way' once the courier arrived.
+2. Package Handover Persistence:
+   - Fixed completeDeliveryHandover to explicitly set courierArrivedOutside: true and pass journeyAlert and eta: 'Delivered'.
+   - Fixed getDatabaseOrders normalization in supabaseService.js to respect Delivered orders (via status or eta) so they are not forced back to 'On the Way'.
+   - Fixed syncOrdersFromCloud so existing cloud orders are not blindly upserted with stale local states.
+3. Database Reconciliation:
+   - Updated ORD-29525 in Supabase to 'Delivered' with exact destination coordinates.
 
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
