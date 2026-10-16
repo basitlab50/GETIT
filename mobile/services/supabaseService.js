@@ -336,6 +336,7 @@ export async function getDatabaseOrders() {
       const roadLegs = (riderMeta.roadLegs && Array.isArray(riderMeta.roadLegs)) ? riderMeta.roadLegs : [];
       const isMultiStore = riderMeta.isMultiStore !== undefined ? riderMeta.isMultiStore : (stops.length > 1);
       const currentStopIndex = Number(riderMeta.currentStopIndex) || 0;
+      const journeyAlert = riderMeta.journeyAlert || null;
       // Normalize status: if order was delivered or cancelled, preserve it. If courier is active, normalize to 'On the Way'
       let normalizedStatus = item.status || 'New Order';
       if (item.status === 'Delivered' || item.eta === 'Delivered') {

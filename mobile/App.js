@@ -3672,6 +3672,9 @@ export default function App() {
           return true;
         }
       }
+      const orderName = (o.customerName || o.customer_name || '').trim().toLowerCase();
+      const userName = (currentUser.fullName || currentUser.name || '').trim().toLowerCase();
+      if (userName && orderName && userName === orderName) return true;
       return false;
     });
 
@@ -4932,13 +4935,18 @@ export default function App() {
       return;
     }
     const newBuyer = {
-      id: `user-buyer-${Date.now()}`,
+      id: currentUser?.id || `user-buyer-${Date.now()}`,
       role: 'buyer',
       fullName: authName.trim(),
       email: authEmail.trim() || `${authName.toLowerCase().replace(/\s+/g, '')}@getit.ng`,
-      phone: authPhone.trim() || '+234 803 294 1194',
-      address: authAddress.trim(),
+      phone: authPhone.trim() || currentUser?.phone || '',
+      address: authAddress.trim() || currentUser?.address || 'Abuja, Nigeria',
     };
+    try {
+      await registerDatabaseUser(newBuyer);
+    } catch (e) {
+      console.warn('Error saving buyer to database:', e);
+    }
     setCurrentUser(newBuyer);
     setAppMode('customer');
     setAuthModalVisible(false);
@@ -4949,21 +4957,42 @@ export default function App() {
   };
 
   const handleRegisterSeller = async () => {
-    if (!authName.trim() || !authBusinessName.trim()) {
-      Alert.alert('Details Required', 'Please enter your name and store/business name.');
+    const businessName = authBusinessName.trim();
+    const fullName = authName.trim() || currentUser?.fullName || '';
+    const email = authEmail.trim() || currentUser?.email || '';
+    const phone = authPhone.trim() || currentUser?.phone || '';
+    const address = authAddress.trim() || currentUser?.address || 'Abuja, Nigeria';
+
+    if (!businessName) {
+      Alert.alert('Store Name Required', 'Please enter your store or business name.');
       return;
     }
-    const storeId = `store-${Date.now()}`;
+    if (!fullName) {
+      Alert.alert('Owner Name Required', 'Please enter your full name.');
+      return;
+    }
+
+    const storeId = (currentUser && currentUser.storeId) ? currentUser.storeId : `store-${Date.now()}`;
+    const sellerId = currentUser?.id || `user-seller-${Date.now()}`;
+
     const newSeller = {
-      id: `user-seller-${Date.now()}`,
+      id: sellerId,
       role: 'seller',
-      fullName: authName.trim(),
-      email: authEmail.trim() || `${authName.toLowerCase().replace(/\s+/g, '')}@merchant.getit.ng`,
-      phone: authPhone.trim() || '+234 800 111 2233',
-      address: authAddress.trim(),
-      businessName: authBusinessName.trim(),
+      fullName: fullName,
+      email: email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@merchant.getit.ng`,
+      phone: phone,
+      password: currentUser?.password || 'password123',
+      address: address,
+      businessName: businessName,
       storeId: storeId,
     };
+
+    // 1. Authoritatively persist updated user to Supabase
+    try {
+      await registerDatabaseUser(newSeller);
+    } catch (err) {
+      console.warn('Failed to persist merchant user to Supabase:', err);
+    }
 
     const newStoreObj = {
       id: storeId,
@@ -4990,7 +5019,7 @@ export default function App() {
       is_open: true,
     };
 
-    updateAndPersistStores((prev) => [newStoreObj, ...prev]);
+    updateAndPersistStores((prev) => [newStoreObj, ...prev.filter((s) => s.id !== storeId)]);
     setMerchantStoreId(storeId);
     setCurrentUser(newSeller);
     setAppMode('merchant');
@@ -5014,7 +5043,10 @@ export default function App() {
       isOpen: true,
     }).catch(console.warn);
 
-    Alert.alert('🎉 Seller Account & Store Live!', `Congratulations ${newSeller.fullName}! Your store "${newSeller.businessName}" is live on GETIT. You can now add products and manage your hours.`);
+    Alert.alert(
+      '🎉 Seller Account & Store Live!',
+      `Congratulations ${newSeller.fullName}! Your store "${newSeller.businessName}" is live on GETIT. You can now manage incoming orders and stock.`
+    );
   };
 
   // --- DEDICATED LOGIN / SIGN UP SCREEN HANDLERS (DATABASE CONNECTED) ---
