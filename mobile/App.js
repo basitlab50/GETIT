@@ -1597,8 +1597,13 @@ export default function App() {
 
   const [ordersFilterTab, setOrdersFilterTab] = useState('active'); // 'active' | 'all' | 'completed' | 'cancelled'
   const [lastPlacedOrderId, setLastPlacedOrderId] = useState(null);
+  const [expandedOrderId, setExpandedOrderId] = useState(null); // Accordion: only 1 order open at a time
   const [collapsedBoltMapOrderIds, setCollapsedBoltMapOrderIds] = useState([]);
   const [expandedItemsOrderIds, setExpandedItemsOrderIds] = useState([]);
+
+  const toggleOrderAccordion = (orderId) => {
+    setExpandedOrderId((prev) => (prev === orderId ? null : orderId));
+  };
 
   const toggleBoltMapCollapse = (orderId) => {
     setCollapsedBoltMapOrderIds((prev) =>
@@ -4150,6 +4155,7 @@ export default function App() {
     setCartModalVisible(false);
     if (selectedStore) setSelectedStore(null);
     setLastPlacedOrderId(masterOrder.id);
+    setExpandedOrderId(masterOrder.id);
     setOrdersFilterTab('active');
     setActiveTab('orders');
 
@@ -6840,8 +6846,9 @@ export default function App() {
               </TouchableOpacity>
             </View>
           ) : (
-            sortedAndFilteredOrders.map((ord) => {
+            sortedAndFilteredOrders.map((ord, oIndex) => {
               const isJustPlaced = ord.id === lastPlacedOrderId || (ord.timestamp && Date.now() - ord.timestamp < 1800000);
+              const isExpanded = expandedOrderId === ord.id || (expandedOrderId === null && isJustPlaced && oIndex === 0);
               const isBoltMapOpen = !collapsedBoltMapOrderIds.includes(ord.id);
               const isItemsOpen = expandedItemsOrderIds.includes(ord.id);
 
@@ -6854,56 +6861,78 @@ export default function App() {
                     </View>
                   )}
 
-                  {/* Multi-Store Package Tag */}
-                  {ord.isMultiStore && (
-                    <View style={styles.orderBatchBadge}>
-                      <Text style={styles.orderBatchBadgeText}>
-                        🔗 MULTI-STORE CONCIERGE PACKAGE • {ord.stops?.length || 2} SHOPS
+                  {/* Order Card Compact Summary Header (Tappable Dropdown Accordion Toggle) */}
+                  <TouchableOpacity
+                    style={[
+                      styles.orderCardHeader,
+                      !isExpanded && styles.orderCardHeaderCollapsed,
+                    ]}
+                    onPress={() => toggleOrderAccordion(ord.id)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flex: 1, marginRight: 10 }}>
+                      <Text style={styles.orderCardTitle} numberOfLines={1}>{ord.storeName}</Text>
+                      <Text style={styles.orderCardSub} numberOfLines={1}>
+                        {ord.id} • {ord.itemsCount} {ord.itemsCount === 1 ? 'item' : 'items'} • {formatNaira(ord.total || ord.subtotal || 0)}
+                      </Text>
+                      <Text style={styles.orderCardDateText}>
+                        🕒 {ord.createdAt || 'Just now'} • {ord.dateStr || 'Today'}
                       </Text>
                     </View>
-                  )}
-
-                  {/* Inbound Funnel Route Optimizer Badge */}
-                  {ord.isInboundFunnel && ord.stops && ord.stops.length > 1 ? (
-                    <View style={styles.funnelRouteBadge}>
-                      <Text style={styles.funnelRouteBadgeText}>
-                        ⚡ INBOUND FUNNEL DISPATCH • Outermost shop first ({ord.stops[0]?.storeName}) ➔ Progressing to home
-                      </Text>
-                    </View>
-                  ) : ord.isRouteOptimized && ord.stops && ord.stops.length > 1 ? (
-                    <View style={styles.smartRouteBadge}>
-                      <Text style={styles.smartRouteBadgeText}>
-                        ⚡ NEAREST-SHOP FIRST • Sequence optimized to minimize courier travel
-                      </Text>
-                    </View>
-                  ) : null}
-
-                  {/* Order Card Header */}
-                  <View style={styles.orderCardHeader}>
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <Text style={styles.orderCardTitle}>{ord.storeName}</Text>
-                      <Text style={styles.orderCardSub}>
-                        {ord.id} • {ord.itemsCount} items • {ord.createdAt || 'Just now'}
-                      </Text>
-                    </View>
-                    <View
-                      style={[
-                        styles.orderStatusPill,
-                        ord.status === 'Cancelled' && { backgroundColor: 'rgba(239, 68, 68, 0.12)' },
-                        ord.status === 'Delivered' && { backgroundColor: 'rgba(5, 107, 75, 0.12)' },
-                      ]}
-                    >
-                      <Text
+                    <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+                      <View
                         style={[
-                          styles.orderStatusText,
-                          ord.status === 'Cancelled' && { color: '#EF4444' },
-                          ord.status === 'Delivered' && { color: '#056B4B' },
+                          styles.orderStatusPill,
+                          ord.status === 'Cancelled' && { backgroundColor: 'rgba(239, 68, 68, 0.12)' },
+                          ord.status === 'Delivered' && { backgroundColor: 'rgba(5, 107, 75, 0.12)' },
+                          ord.status === 'New Order' && { backgroundColor: 'rgba(245, 158, 11, 0.12)' },
                         ]}
                       >
-                        {ord.status}
-                      </Text>
+                        <Text
+                          style={[
+                            styles.orderStatusText,
+                            ord.status === 'Cancelled' && { color: '#EF4444' },
+                            ord.status === 'Delivered' && { color: '#056B4B' },
+                            ord.status === 'New Order' && { color: '#D97706' },
+                          ]}
+                        >
+                          {ord.status}
+                        </Text>
+                      </View>
+                      <View style={styles.orderAccordionToggleBadge}>
+                        <Text style={styles.orderAccordionToggleText}>
+                          {isExpanded ? '▲ Hide Details' : '▼ View Details'}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
+                  </TouchableOpacity>
+
+                  {/* --- EXPANDABLE FULL ORDER DETAILS DROPDOWN --- */}
+                  {isExpanded && (
+                    <View style={styles.orderExpandedBodyWrap}>
+                      {/* Multi-Store Package Tag */}
+                      {ord.isMultiStore && (
+                        <View style={styles.orderBatchBadge}>
+                          <Text style={styles.orderBatchBadgeText}>
+                            🔗 MULTI-STORE CONCIERGE PACKAGE • {ord.stops?.length || 2} SHOPS
+                          </Text>
+                        </View>
+                      )}
+
+                      {/* Inbound Funnel Route Optimizer Badge */}
+                      {ord.isInboundFunnel && ord.stops && ord.stops.length > 1 ? (
+                        <View style={styles.funnelRouteBadge}>
+                          <Text style={styles.funnelRouteBadgeText}>
+                            ⚡ INBOUND FUNNEL DISPATCH • Outermost shop first ({ord.stops[0]?.storeName}) ➔ Progressing to home
+                          </Text>
+                        </View>
+                      ) : ord.isRouteOptimized && ord.stops && ord.stops.length > 1 ? (
+                        <View style={styles.smartRouteBadge}>
+                          <Text style={styles.smartRouteBadgeText}>
+                            ⚡ NEAREST-SHOP FIRST • Sequence optimized to minimize courier travel
+                          </Text>
+                        </View>
+                      ) : null}
 
                   {/* Multi-Store Journey Alert Banner */}
                   {ord.journeyAlert && ord.status !== 'Cancelled' && (
@@ -7511,7 +7540,8 @@ export default function App() {
                         </TouchableOpacity>
                       )
                     )}
-                  </View>
+                    </View>
+                  )}
                 </View>
               );
             })
@@ -15506,9 +15536,38 @@ const styles = StyleSheet.create({
   },
   orderCardHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 12,
+  },
+  orderCardHeaderCollapsed: {
+    marginBottom: 0,
+  },
+  orderCardDateText: {
+    fontSize: 10.5,
+    color: '#64748B',
+    marginTop: 3,
+    fontWeight: '500',
+  },
+  orderAccordionToggleBadge: {
+    marginTop: 6,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  orderAccordionToggleText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#056B4B',
+  },
+  orderExpandedBodyWrap: {
+    marginTop: 8,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
   },
   orderCardTitle: {
     fontSize: 15,
