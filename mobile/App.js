@@ -1672,10 +1672,9 @@ export default function App() {
       const cloudOrders = await getDatabaseOrders();
       const cloudOrderIds = new Set((cloudOrders || []).map((o) => o.id));
 
-      // 3. Bidirectional Push: If this device has any local orders with stops/routes,
-      // upload or update them in Supabase so all other devices receive them!
+      // 3. Bidirectional Push: If this device has any local orders not yet in Supabase, upload them!
       for (const localOrd of orders) {
-        if (!localOrd.isDemo && (!cloudOrderIds.has(localOrd.id) || (localOrd.stops && localOrd.stops.length > 0))) {
+        if (!localOrd.isDemo && !cloudOrderIds.has(localOrd.id)) {
           await createDatabaseOrder(localOrd).catch(console.warn);
         }
       }
@@ -1694,10 +1693,13 @@ export default function App() {
                 ? {
                     ...existing,
                     ...co,
-                    status: co.status || existing.status,
+                    status: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.status || existing.status),
+                    eta: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.eta || existing.eta),
                     stops: (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []),
                     roadRouteCoordinates: (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []),
                     roadLegs: (co.roadLegs && co.roadLegs.length > 0) ? co.roadLegs : (existing.roadLegs || []),
+                    roadPointIndex: existing.roadPointIndex !== undefined ? existing.roadPointIndex : 0,
+                    boltCoords: (existing.status === 'On the Way' && existing.boltCoords) ? existing.boltCoords : (co.boltCoords || existing.boltCoords),
                   }
                 : co
             );
@@ -2177,6 +2179,7 @@ export default function App() {
           if (
             ord.status === 'Cancelled' ||
             ord.status === 'Delivered' ||
+            ord.courierArrivedOutside ||
             !ord.boltRider ||
             !ord.boltRider.name
           ) {
@@ -2289,8 +2292,17 @@ export default function App() {
               status: 'On the Way',
             };
           } else {
+            // If courier already arrived outside gate, halt timer cleanly
+            if (ord.courierArrivedOutside || ord.hasNotifiedArrived) {
+              return ord;
+            }
+
             // Arrived at Customer Delivery Destination!
-            const updatedStops = (ord.stops || []).map((st) => ({
+            const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+            const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+            const destCoord = { latitude: homeLat, longitude: homeLng };
+
+            const updatedStops = (verifiedStops || []).map((st) => ({
               ...st,
               pickupStatus: 'picked_up',
               status: 'Ready for Pickup',
@@ -2298,23 +2310,24 @@ export default function App() {
             }));
 
             // 🔔 Audio Beep & Push: Courier arrived outside gate (ONLY ONCE!)
-            if (!ord.hasNotifiedArrived) {
-              notifyCourierArrived(ord);
-            }
+            notifyCourierArrived(ord);
 
             const arrivedAlert = `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin}) to collect packages.`;
 
             updateDatabaseOrderStatus(ord.id, {
-              status: 'On the Way',
               stops: updatedStops,
+              boltCoords: destCoord,
+              eta: 'Arrived outside gate',
               journeyAlert: arrivedAlert,
             }).catch(() => {});
 
             return {
               ...ord,
               stops: updatedStops,
-              status: 'On the Way',
+              boltCoords: destCoord,
               hasNotifiedArrived: true,
+              courierArrivedOutside: true,
+              eta: 'Arrived outside gate',
               journeyAlert: arrivedAlert,
             };
           }
@@ -3742,6 +3755,8 @@ export default function App() {
                       ...o,
                       status: 'Delivered',
                       eta: 'Delivered',
+                      courierArrivedOutside: true,
+                      hasNotifiedArrived: true,
                       deliveredAt: Date.now(),
                       journeyAlert: '✅ Order Delivered successfully! Thank you for choosing GETIT.',
                     }
@@ -3756,6 +3771,7 @@ export default function App() {
             updateDatabaseOrderStatus(orderId, {
               status: 'Delivered',
               eta: 'Delivered',
+              journeyAlert: '✅ Order Delivered successfully! Thank you for choosing GETIT.',
             }).catch(() => {});
 
             // Auto-launch customer review scorecard after handover

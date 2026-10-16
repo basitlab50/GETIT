@@ -334,9 +334,13 @@ export async function getDatabaseOrders() {
       const roadLegs = (riderMeta.roadLegs && Array.isArray(riderMeta.roadLegs)) ? riderMeta.roadLegs : [];
       const isMultiStore = riderMeta.isMultiStore !== undefined ? riderMeta.isMultiStore : (stops.length > 1);
       const currentStopIndex = Number(riderMeta.currentStopIndex) || 0;
-      // Normalize status: if courier is already assigned, order is active and on the way unless delivered/cancelled
+      // Normalize status: if order was delivered or cancelled, preserve it. If courier is active, normalize to 'On the Way'
       let normalizedStatus = item.status || 'New Order';
-      if (riderMeta.name && normalizedStatus !== 'Delivered' && normalizedStatus !== 'Cancelled') {
+      if (item.status === 'Delivered' || item.eta === 'Delivered') {
+        normalizedStatus = 'Delivered';
+      } else if (item.status === 'Cancelled') {
+        normalizedStatus = 'Cancelled';
+      } else if (riderMeta.name) {
         normalizedStatus = 'On the Way';
       }
 
