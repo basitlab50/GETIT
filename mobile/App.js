@@ -3462,11 +3462,16 @@ export default function App() {
         { latitude: deliveryDestLat, longitude: deliveryDestLng },
         ...participatingStores.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
       ];
+      // Only include userLiveCoords if it's within 40km of delivery destination to prevent zooming out across the country
       if (userLiveCoords?.latitude && userLiveCoords?.longitude) {
-        points.push({
-          latitude: userLiveCoords.latitude,
-          longitude: userLiveCoords.longitude,
-        });
+        const dLat = Math.abs(userLiveCoords.latitude - deliveryDestLat);
+        const dLng = Math.abs(userLiveCoords.longitude - deliveryDestLng);
+        if (dLat < 0.4 && dLng < 0.4) {
+          points.push({
+            latitude: userLiveCoords.latitude,
+            longitude: userLiveCoords.longitude,
+          });
+        }
       }
 
       const lats = points.map((p) => Number(p.latitude)).filter((n) => !isNaN(n) && n !== 0);
@@ -3480,8 +3485,8 @@ export default function App() {
 
       const centerLat = (minLat + maxLat) / 2;
       const centerLng = (minLng + maxLng) / 2;
-      const latDelta = Math.max(0.015, (maxLat - minLat) * 1.6);
-      const lngDelta = Math.max(0.015, (maxLng - minLng) * 1.6);
+      const latDelta = Math.max(0.015, (maxLat - minLat) * 1.5);
+      const lngDelta = Math.max(0.015, (maxLng - minLng) * 1.5);
 
       const targetRegion = {
         latitude: centerLat,
@@ -3494,13 +3499,28 @@ export default function App() {
 
       // Animate to bounding region
       if (typeof targetMap.animateToRegion === 'function') {
-        targetMap.animateToRegion(targetRegion, 500);
+        targetMap.animateToRegion(targetRegion, 450);
       }
-      // Also invoke native fitToCoordinates if available
+      // Also invoke native fitToCoordinates if available with asymmetric padding
       if (typeof targetMap.fitToCoordinates === 'function') {
         try {
+          const edgePadding =
+            typeof padding === 'object' && padding !== null
+              ? {
+                  top: padding.top ?? 50,
+                  right: padding.right ?? 50,
+                  bottom: padding.bottom ?? 50,
+                  left: padding.left ?? 50,
+                }
+              : {
+                  top: padding,
+                  right: padding,
+                  bottom: padding,
+                  left: padding,
+                };
+
           targetMap.fitToCoordinates(points, {
-            edgePadding: { top: padding, right: padding, bottom: padding, left: padding },
+            edgePadding,
             animated: true,
           });
         } catch (e) {}
@@ -3580,12 +3600,25 @@ export default function App() {
     }
   }, [cartModalVisible]);
 
-  // When fullscreen map opens: auto-frame all pins with larger padding
+  // When fullscreen map opens: auto-frame all pins with proper asymmetric padding to avoid card/header overlap
   useEffect(() => {
     if (isCartMapFullscreen) {
-      setTimeout(() => {
-        fitCartMapToAllPins(cartFullscreenMapRef, 70);
-      }, 400);
+      const paddingConfig = {
+        top: Platform.OS === 'ios' ? 120 : 100,
+        right: 45,
+        bottom: 190,
+        left: 45,
+      };
+      const t1 = setTimeout(() => {
+        fitCartMapToAllPins(cartFullscreenMapRef, paddingConfig);
+      }, 250);
+      const t2 = setTimeout(() => {
+        fitCartMapToAllPins(cartFullscreenMapRef, paddingConfig);
+      }, 650);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
     }
   }, [isCartMapFullscreen]);
 
@@ -7058,8 +7091,13 @@ export default function App() {
             </View>
           </View>
 
-          {/* Clean Categorized Status Filter Tabs */}
-          <View style={styles.ordersFilterTabBar}>
+          {/* Clean Categorized Status Filter Tabs (Horizontally Scrollable for all Phone & Tablet Screens) */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.ordersFilterTabBar}
+            style={{ marginBottom: 14 }}
+          >
             <TouchableOpacity
               style={[styles.ordersFilterTabBtn, ordersFilterTab === 'active' && styles.ordersFilterTabBtnActive]}
               onPress={() => {
@@ -7108,7 +7146,7 @@ export default function App() {
                 ❌ Cancelled ({orders.filter((o) => o.status === 'Cancelled').length})
               </Text>
             </TouchableOpacity>
-          </View>
+          </ScrollView>
 
           {/* Empty State */}
           {sortedAndFilteredOrders.length === 0 ? (
@@ -7158,16 +7196,16 @@ export default function App() {
                     onPress={() => toggleOrderAccordion(ord.id)}
                     activeOpacity={0.8}
                   >
-                    <View style={{ flex: 1, marginRight: 10 }}>
+                    <View style={{ flex: 1, marginRight: 8 }}>
                       <Text style={styles.orderCardTitle} numberOfLines={1}>{ord.storeName}</Text>
                       <Text style={styles.orderCardSub} numberOfLines={1}>
                         {ord.id} • {ord.itemsCount} {ord.itemsCount === 1 ? 'item' : 'items'} • {formatNaira(ord.total || ord.subtotal || 0)}
                       </Text>
-                      <Text style={styles.orderCardDateText}>
+                      <Text style={styles.orderCardDateText} numberOfLines={1}>
                         🕒 {ord.createdAt || 'Just now'} • {ord.dateStr || 'Today'}
                       </Text>
                     </View>
-                    <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+                    <View style={{ alignItems: 'flex-end', justifyContent: 'center', flexShrink: 0 }}>
                       <View
                         style={[
                           styles.orderStatusPill,
@@ -7191,6 +7229,7 @@ export default function App() {
                             ord.status === 'Ready for Pickup' && { color: '#047857' },
                             ord.status === 'On the Way' && { color: '#056B4B' },
                           ]}
+                          numberOfLines={1}
                         >
                           {ord.status === 'New Order'
                             ? '⏳ Awaiting Store'
@@ -7273,7 +7312,7 @@ export default function App() {
                             ]}
                           >
                             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
                                 <View
                                   style={[
                                     styles.stopTimelineIcon,
@@ -7288,7 +7327,7 @@ export default function App() {
                                     {isCompleted ? '✓' : stop.stopNumber}
                                   </Text>
                                 </View>
-                                <Text style={styles.stopTimelineStoreName}>{stop.storeName}</Text>
+                                <Text style={styles.stopTimelineStoreName} numberOfLines={1}>{stop.storeName}</Text>
                               </View>
                               <View
                                 style={[
@@ -7302,6 +7341,7 @@ export default function App() {
                                     : isCurrentStop
                                     ? { backgroundColor: '#FEF3C7' }
                                     : { backgroundColor: '#F3F4F6' },
+                                  { flexShrink: 0 },
                                 ]}
                               >
                                 <Text
@@ -7317,6 +7357,7 @@ export default function App() {
                                       ? { color: '#B45309' }
                                       : { color: '#6B7280' },
                                   ]}
+                                  numberOfLines={1}
                                 >
                                   {isCompleted
                                     ? '✅ Picked Up'
@@ -7334,21 +7375,21 @@ export default function App() {
                             </View>
 
                             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
-                              <View>
-                                <Text style={styles.stopItemsSummaryText}>
+                              <View style={{ flex: 1, marginRight: 8 }}>
+                                <Text style={styles.stopItemsSummaryText} numberOfLines={1}>
                                   {stop.itemsCount} items • {formatNaira(stop.subtotal)}
                                 </Text>
                                 {stop.distanceFromPrevKm && (
-                                  <Text style={styles.stopProximityDistanceText}>
+                                  <Text style={styles.stopProximityDistanceText} numberOfLines={1}>
                                     📍 {sIdx === 0 && stop.isAnchorStore
-                                      ? `Outermost Shop (${stop.distanceFromPrevKm} km from matched courier)`
+                                      ? `Outermost Shop (${stop.distanceFromPrevKm} km)`
                                       : sIdx === 0
-                                      ? `Closest Hub (${stop.distanceFromPrevKm} km from courier)`
-                                      : `Next inward hop (${stop.distanceFromPrevKm} km)`}
+                                      ? `Closest Hub (${stop.distanceFromPrevKm} km)`
+                                      : `Next hop (${stop.distanceFromPrevKm} km)`}
                                   </Text>
                                 )}
                               </View>
-                              <View style={styles.stopPickupPinBadge}>
+                              <View style={[styles.stopPickupPinBadge, { flexShrink: 0 }]}>
                                 <Text style={styles.stopPickupPinBadgeText}>
                                   Shop PIN: {stop.pickupPin}
                                 </Text>
@@ -7367,7 +7408,7 @@ export default function App() {
                         ]}
                       >
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
                             <View
                               style={[
                                 styles.stopTimelineIcon,
@@ -7380,7 +7421,7 @@ export default function App() {
                             >
                               <Text style={{ fontSize: 10 }}>🏠</Text>
                             </View>
-                            <Text style={styles.stopTimelineStoreName}>Your Delivery Destination</Text>
+                            <Text style={styles.stopTimelineStoreName} numberOfLines={1}>Your Delivery Destination</Text>
                           </View>
                           <View
                             style={[
@@ -7390,6 +7431,7 @@ export default function App() {
                                 : ord.currentStopIndex >= ord.stops.length
                                 ? { backgroundColor: '#DCFCE7' }
                                 : { backgroundColor: '#F3F4F6' },
+                              { flexShrink: 0 },
                             ]}
                           >
                             <Text
@@ -7401,6 +7443,7 @@ export default function App() {
                                   ? { color: '#166534' }
                                   : { color: '#6B7280' },
                               ]}
+                              numberOfLines={1}
                             >
                               {ord.status === 'Delivered'
                                 ? '✅ Delivered'
@@ -7419,7 +7462,7 @@ export default function App() {
                       {ord.status !== 'Delivered' && ord.status !== 'Cancelled' && (
                         <View style={styles.liveNavigatingStatusPill}>
                           <View style={styles.liveGreenPulsingDot} />
-                          <Text style={styles.liveNavigatingStatusText}>
+                          <Text style={styles.liveNavigatingStatusText} numberOfLines={1}>
                             SATELLITE GPS LIVE ROUTE • REAL-TIME DISPATCH ACTIVE
                           </Text>
                         </View>
@@ -7443,10 +7486,10 @@ export default function App() {
                     onPress={() => toggleItemsExpand(ord.id)}
                     activeOpacity={0.7}
                   >
-                    <Text style={styles.orderItemsToggleText}>
+                    <Text style={[styles.orderItemsToggleText, { flex: 1, marginRight: 6 }]} numberOfLines={1}>
                       🛒 {ord.itemsCount} Provisions Ordered ({formatNaira(ord.subtotal || ord.total)})
                     </Text>
-                    <Text style={styles.orderItemsToggleChevron}>
+                    <Text style={[styles.orderItemsToggleChevron, { flexShrink: 0 }]}>
                       {isItemsOpen ? '▲ Hide Items' : '▼ View Items'}
                     </Text>
                   </TouchableOpacity>
@@ -7455,10 +7498,10 @@ export default function App() {
                     <View style={styles.orderItemsListExpanded}>
                       {(ord.items || []).map((itm, idx) => (
                         <View key={idx} style={styles.orderItemExpandedRow}>
-                          <Text style={styles.orderItemExpandedName}>
+                          <Text style={styles.orderItemExpandedName} numberOfLines={1}>
                             {itm.qty}x {itm.name}
                           </Text>
-                          <Text style={styles.orderItemExpandedPrice}>
+                          <Text style={[styles.orderItemExpandedPrice, { flexShrink: 0 }]}>
                             {formatNaira((itm.price || 0) * itm.qty)}
                           </Text>
                         </View>
@@ -7469,15 +7512,15 @@ export default function App() {
                   {/* Pin verification box (suppressed if order was cancelled) */}
                   {ord.status !== 'Cancelled' && (
                     <View style={styles.pinBox}>
-                      <View style={{ flex: 1 }}>
+                      <View style={{ flex: 1, marginRight: 10 }}>
                         <Text style={styles.pinLabel}>DELIVERY SECURITY PIN</Text>
-                        <Text style={styles.pinInstructions}>
+                        <Text style={styles.pinInstructions} numberOfLines={2}>
                           {ord.status === 'Delivered'
                             ? 'Delivery verified and packages handed over.'
                             : 'Give this 4-digit code to your rider at your door to confirm delivery.'}
                         </Text>
                       </View>
-                      <View style={styles.pinNumberWrap}>
+                      <View style={[styles.pinNumberWrap, { flexShrink: 0 }]}>
                         <Text style={styles.pinNumberText}>{ord.deliveryPin}</Text>
                       </View>
                     </View>
@@ -7493,7 +7536,7 @@ export default function App() {
                       <Text style={styles.confirmHandoverBtnIcon}>📦</Text>
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <Text style={styles.confirmHandoverBtnTitle}>Confirm Package Handover</Text>
-                        <Text style={styles.confirmHandoverBtnSub}>
+                        <Text style={styles.confirmHandoverBtnSub} numberOfLines={1}>
                           Tap to verify PIN ({ord.deliveryPin}) & complete delivery
                         </Text>
                       </View>
@@ -7505,21 +7548,21 @@ export default function App() {
                   {ord.status !== 'Cancelled' && (
                     <View style={styles.boltTrackingSummaryCard}>
                       {ord.boltRider && ord.boltRider.name ? (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
+                        <View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                             <View style={styles.boltRiderAvatarSmall}>
                               <Text style={{ fontSize: 16 }}>🛵</Text>
                             </View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={styles.boltRiderNameSmall}>
+                            <View style={{ flex: 1, marginLeft: 8 }}>
+                              <Text style={styles.boltRiderNameSmall} numberOfLines={1}>
                                 {ord.boltRider.name} (Courier)
                               </Text>
-                              <Text style={styles.boltEtaPillTextSmall}>
+                              <Text style={styles.boltEtaPillTextSmall} numberOfLines={1}>
                                 ⚡ Arrival: {ord.eta || '12 mins'} • {ord.boltRider.rating || '4.95'}★
                               </Text>
                             </View>
                           </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={styles.boltSummaryActionRow}>
                             <TouchableOpacity
                               style={styles.boltToggleMapBtn}
                               onPress={() => toggleBoltMapCollapse(ord.id)}
@@ -7541,79 +7584,85 @@ export default function App() {
                           </View>
                         </View>
                       ) : ord.status === 'Looking for Courier' ? (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
+                        <View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                             <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#EDE9FE' }]}>
                               <Text style={{ fontSize: 16 }}>📡</Text>
                             </View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={[styles.boltRiderNameSmall, { color: '#7C3AED' }]}>
+                            <View style={{ flex: 1, marginLeft: 8 }}>
+                              <Text style={[styles.boltRiderNameSmall, { color: '#7C3AED' }]} numberOfLines={1}>
                                 Looking for Available Courier...
                               </Text>
-                              <Text style={styles.boltEtaPillTextSmall}>
+                              <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
                                 📦 Package ready at shop • Scanning nearby fleet
                               </Text>
                             </View>
                           </View>
-                          <TouchableOpacity
-                            style={styles.boltToggleMapBtn}
-                            onPress={() => toggleBoltMapCollapse(ord.id)}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={styles.boltToggleMapBtnText}>
-                              {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
-                            </Text>
-                          </TouchableOpacity>
+                          <View style={styles.boltSummaryActionRow}>
+                            <TouchableOpacity
+                              style={styles.boltToggleMapBtn}
+                              onPress={() => toggleBoltMapCollapse(ord.id)}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.boltToggleMapBtnText}>
+                                {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       ) : ord.status === 'Preparing' ? (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
+                        <View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                             <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#DBEAFE' }]}>
                               <Text style={{ fontSize: 16 }}>🍳</Text>
                             </View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={[styles.boltRiderNameSmall, { color: '#1D4ED8' }]}>
+                            <View style={{ flex: 1, marginLeft: 8 }}>
+                              <Text style={[styles.boltRiderNameSmall, { color: '#1D4ED8' }]} numberOfLines={1}>
                                 Store Preparing Provisions
                               </Text>
-                              <Text style={styles.boltEtaPillTextSmall}>
+                              <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
                                 Provisions being freshly sorted • Courier dispatch when ready
                               </Text>
                             </View>
                           </View>
-                          <TouchableOpacity
-                            style={styles.boltToggleMapBtn}
-                            onPress={() => toggleBoltMapCollapse(ord.id)}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={styles.boltToggleMapBtnText}>
-                              {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
-                            </Text>
-                          </TouchableOpacity>
+                          <View style={styles.boltSummaryActionRow}>
+                            <TouchableOpacity
+                              style={styles.boltToggleMapBtn}
+                              onPress={() => toggleBoltMapCollapse(ord.id)}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.boltToggleMapBtnText}>
+                                {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       ) : (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
+                        <View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                             <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#FEF3C7' }]}>
                               <Text style={{ fontSize: 16 }}>⏳</Text>
                             </View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={[styles.boltRiderNameSmall, { color: '#B45309' }]}>
+                            <View style={{ flex: 1, marginLeft: 8 }}>
+                              <Text style={[styles.boltRiderNameSmall, { color: '#B45309' }]} numberOfLines={1}>
                                 Awaiting Store Acceptance
                               </Text>
-                              <Text style={styles.boltEtaPillTextSmall}>
+                              <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
                                 Order sent to merchant • Awaiting confirmation
                               </Text>
                             </View>
                           </View>
-                          <TouchableOpacity
-                            style={styles.boltToggleMapBtn}
-                            onPress={() => toggleBoltMapCollapse(ord.id)}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={styles.boltToggleMapBtnText}>
-                              {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
-                            </Text>
-                          </TouchableOpacity>
+                          <View style={styles.boltSummaryActionRow}>
+                            <TouchableOpacity
+                              style={styles.boltToggleMapBtn}
+                              onPress={() => toggleBoltMapCollapse(ord.id)}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.boltToggleMapBtnText}>
+                                {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       )}
 
@@ -7866,7 +7915,7 @@ export default function App() {
 
                   {/* Destination Location Info */}
                   <View style={styles.orderGpsCard}>
-                    <View style={{ flex: 1 }}>
+                    <View style={{ flex: 1, marginRight: 8 }}>
                       <Text style={styles.orderGpsTitle}>📍 DELIVERY DESTINATION</Text>
                       <Text style={styles.orderGpsLandmark} numberOfLines={2}>
                         {ord.customerAddress || ord.deliveryLocation?.landmark || 'Your Delivery Address'}
@@ -7878,7 +7927,7 @@ export default function App() {
                       )}
                     </View>
                     <TouchableOpacity
-                      style={styles.openMapsBtn}
+                      style={[styles.openMapsBtn, { flexShrink: 0 }]}
                       onPress={() =>
                         openExternalGoogleMaps(
                           ord.deliveryLocation?.latitude || 9.0882,
@@ -7893,15 +7942,15 @@ export default function App() {
 
                   {/* Order Footer Row */}
                   <View style={styles.orderFooterRow}>
-                    <View>
-                      <Text style={styles.orderTotalText}>Total: {formatNaira(ord.total)}</Text>
-                      <Text style={styles.orderEtaText}>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <Text style={styles.orderTotalText} numberOfLines={1}>Total: {formatNaira(ord.total)}</Text>
+                      <Text style={styles.orderEtaText} numberOfLines={1}>
                         {ord.status === 'Cancelled' ? 'Status: Cancelled' : `Est. Arrival: ${ord.eta || '15-25 min'}`}
                       </Text>
                     </View>
                     {ord.status !== 'Cancelled' && ord.status !== 'Delivered' && (
                       <TouchableOpacity
-                        style={styles.buyerOrderSupportBtn}
+                        style={[styles.buyerOrderSupportBtn, { flexShrink: 0 }]}
                         onPress={() => {
                           Alert.alert(
                             'GETIT Concierge Support',
@@ -9380,14 +9429,15 @@ export default function App() {
           {/* --- BASKET FULLSCREEN INTERACTIVE DISPATCH MAP OVERLAY --- */}
           {isCartMapFullscreen && (
             <View style={styles.cartFullscreenOverlay}>
-              {/* Top Luxury Navigation & Header Bar */}
+              {/* Top Luxury Navigation & Header Bar (Safe-Area Spaced) */}
               <View style={styles.cartFullscreenHeaderBar}>
                 <TouchableOpacity
                   style={styles.cartFullscreenBackBtn}
                   onPress={() => setIsCartMapFullscreen(false)}
                   activeOpacity={0.8}
+                  hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
                 >
-                  <Text style={styles.cartFullscreenBackBtnText}>← Back to Basket</Text>
+                  <Text style={styles.cartFullscreenBackBtnText}>← Basket</Text>
                 </TouchableOpacity>
 
                 <View style={{ flex: 1, marginHorizontal: 8 }}>
@@ -9405,8 +9455,9 @@ export default function App() {
                   style={styles.cartFullscreenCloseCircle}
                   onPress={() => setIsCartMapFullscreen(false)}
                   activeOpacity={0.8}
+                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
                 >
-                  <Text style={{ fontSize: 16, fontWeight: '800', color: COLORS.textDark }}>✕</Text>
+                  <Text style={{ fontSize: 17, fontWeight: '900', color: COLORS.textDark }}>✕</Text>
                 </TouchableOpacity>
               </View>
 
@@ -9421,6 +9472,14 @@ export default function App() {
                     longitude: (deliveryDestLng + (participatingStores[0]?.longitude || activeCartStoreLng)) / 2,
                     latitudeDelta: Math.max(0.02, Math.abs(deliveryDestLat - (participatingStores[0]?.latitude || activeCartStoreLat)) * 2),
                     longitudeDelta: Math.max(0.02, Math.abs(deliveryDestLng - (participatingStores[0]?.longitude || activeCartStoreLng)) * 2),
+                  }}
+                  onMapReady={() => {
+                    fitCartMapToAllPins(cartFullscreenMapRef, {
+                      top: Platform.OS === 'ios' ? 120 : 100,
+                      right: 45,
+                      bottom: 190,
+                      left: 45,
+                    });
                   }}
                   showsUserLocation={true}
                   showsCompass={true}
@@ -9503,6 +9562,16 @@ export default function App() {
                   ))}
                 </MapView>
 
+                {/* Floating High-Visibility Dismiss Button on Top-Left of Map */}
+                <TouchableOpacity
+                  style={styles.cartFullscreenFloatingExitBtn}
+                  onPress={() => setIsCartMapFullscreen(false)}
+                  activeOpacity={0.8}
+                  hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                >
+                  <Text style={styles.cartFullscreenFloatingExitBtnText}>✕ Close Map</Text>
+                </TouchableOpacity>
+
                 {/* Floating Zoom & Action Cluster on Fullscreen Map */}
                 <View style={styles.cartFullscreenControlsCluster} pointerEvents="box-none">
                   <TouchableOpacity
@@ -9521,7 +9590,14 @@ export default function App() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.cartFullscreenControlBtn, { marginTop: 6 }]}
-                    onPress={() => fitCartMapToAllPins(cartFullscreenMapRef, 60)}
+                    onPress={() =>
+                      fitCartMapToAllPins(cartFullscreenMapRef, {
+                        top: Platform.OS === 'ios' ? 120 : 100,
+                        right: 45,
+                        bottom: 190,
+                        left: 45,
+                      })
+                    }
                     activeOpacity={0.8}
                   >
                     <Text style={{ fontSize: 16 }}>🧭</Text>
@@ -13713,6 +13789,7 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.emeraldDeep,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
   },
   mainScrollView: {
     flex: 1,
@@ -14342,6 +14419,7 @@ const styles = StyleSheet.create({
   modalSafeArea: {
     flex: 1,
     backgroundColor: COLORS.beigeBg,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
   },
   modalHeader: {
     backgroundColor: COLORS.emeraldDeep,
@@ -15580,7 +15658,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: Platform.OS === 'ios' ? 52 : (StatusBar.currentHeight || 24) + 12,
+    paddingBottom: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: COLORS.borderLight,
@@ -15593,7 +15672,7 @@ const styles = StyleSheet.create({
   },
   cartFullscreenBackBtn: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 8,
     backgroundColor: 'rgba(5, 107, 75, 0.1)',
   },
@@ -15614,17 +15693,41 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   cartFullscreenCloseCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  cartFullscreenFloatingExitBtn: {
+    position: 'absolute',
+    top: 14,
+    left: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.90)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    zIndex: 25,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  cartFullscreenFloatingExitBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
   },
   cartFullscreenControlsCluster: {
     position: 'absolute',
-    top: 16,
-    right: 16,
+    top: 14,
+    right: 14,
     alignItems: 'center',
     gap: 8,
     zIndex: 20,
@@ -15651,7 +15754,7 @@ const styles = StyleSheet.create({
   },
   cartFullscreenBottomCard: {
     position: 'absolute',
-    bottom: 20,
+    bottom: Platform.OS === 'ios' ? 28 : 16,
     left: 16,
     right: 16,
     backgroundColor: 'rgba(255, 255, 255, 0.95)',
@@ -16904,16 +17007,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 14,
+    paddingRight: 16,
     paddingBottom: 4,
   },
   ordersFilterTabBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 16,
     backgroundColor: '#F3F4F6',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    flexShrink: 0,
   },
   ordersFilterTabBtnActive: {
     backgroundColor: 'rgba(5, 107, 75, 0.12)',
@@ -17067,6 +17171,16 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  boltSummaryActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(187, 247, 208, 0.45)',
   },
 
   // Profile Tab
@@ -17369,6 +17483,7 @@ const styles = StyleSheet.create({
   merchantSafeArea: {
     flex: 1,
     backgroundColor: COLORS.emeraldDeep,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
   },
   merchantTopHeader: {
     backgroundColor: COLORS.emeraldDeep,
@@ -21386,6 +21501,7 @@ const styles = StyleSheet.create({
   storeMapModalSafeArea: {
     flex: 1,
     backgroundColor: COLORS.beigeBg,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
   },
   storeMapModalHeader: {
     backgroundColor: COLORS.emeraldDeep,
