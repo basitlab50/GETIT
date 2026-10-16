@@ -40,6 +40,7 @@ import {
   getStoreInventory,
   updateDatabaseStore,
   deleteDatabaseStore,
+  parseStoreMetadata,
   findDatabaseUser,
   registerDatabaseUser,
   seedDefaultDatabaseUsers,
@@ -2394,6 +2395,9 @@ export default function App() {
               ? 'heritage'
               : 'gourmet';
 
+            const meta = parseStoreMetadata(dbStore);
+            const isOpenBool = dbStore.is_open !== undefined ? Boolean(dbStore.is_open) : true;
+
             return {
               id: dbStore.id,
               name: dbStore.name,
@@ -2412,9 +2416,15 @@ export default function App() {
               latitude: Number(dbStore.latitude) || 9.0882,
               longitude: Number(dbStore.longitude) || 7.4933,
               phone: dbStore.phone || '+234 800 000 0000',
-              image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+              image: meta.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
               description: `${dbStore.name} — fresh provisions, artisan goods and rapid doorstep delivery across Abuja.`,
               products: prods,
+              isOpen: isOpenBool,
+              is_open: isOpenBool,
+              openTime: meta.openTime,
+              closeTime: meta.closeTime,
+              operatingDays: meta.operatingDays,
+              is24Hours: meta.is24Hours,
             };
           })
         );
@@ -2427,19 +2437,8 @@ export default function App() {
             const existing = prevMap.get(dbStore.id);
             if (!existing) return dbStore;
             return {
-              ...dbStore,
               ...existing,
-              id: dbStore.id,
-              name: existing.name || dbStore.name,
-              address: existing.address || dbStore.address,
-              phone: existing.phone || dbStore.phone,
-              deliveryFee: existing.deliveryFee || dbStore.deliveryFee,
-              is24Hours: existing.is24Hours === true ? true : Boolean(dbStore.is24Hours),
-              openTime: existing.openTime || dbStore.openTime || '08:00 AM',
-              closeTime: existing.closeTime || dbStore.closeTime || '10:00 PM',
-              operatingDays: existing.operatingDays || dbStore.operatingDays || 'Mon - Sun (Daily)',
-              isOpen: existing.isOpen !== undefined ? existing.isOpen : (dbStore.isOpen !== undefined ? dbStore.isOpen : true),
-              image: existing.image || dbStore.image,
+              ...dbStore, // Fresh cloud values override local stale values!
               products: existing.products && existing.products.length > 0 ? existing.products : dbStore.products,
             };
           });
@@ -2463,7 +2462,7 @@ export default function App() {
 
     loadCloudStores();
 
-    // Realtime subscription for newly created stores
+    // Realtime subscription for stores (both new additions and live status/hours updates)
     const unsubscribeStores = subscribeToStores((payload) => {
       if (payload.eventType === 'INSERT' && payload.new) {
         const dbStore = payload.new;
@@ -2476,6 +2475,9 @@ export default function App() {
           : (dbStore.category || '').toLowerCase().includes('herit')
           ? 'heritage'
           : 'gourmet';
+
+        const meta = parseStoreMetadata(dbStore);
+        const isOpenBool = dbStore.is_open !== undefined ? Boolean(dbStore.is_open) : true;
 
         const newStoreObj = {
           id: dbStore.id,
@@ -2495,15 +2497,66 @@ export default function App() {
           latitude: Number(dbStore.latitude) || 9.0882,
           longitude: Number(dbStore.longitude) || 7.4933,
           phone: dbStore.phone || '+234 800 000 0000',
-          image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+          image: meta.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
           description: `${dbStore.name} — partner store live on GETIT Abuja.`,
           products: [],
+          isOpen: isOpenBool,
+          is_open: isOpenBool,
+          openTime: meta.openTime,
+          closeTime: meta.closeTime,
+          operatingDays: meta.operatingDays,
+          is24Hours: meta.is24Hours,
         };
 
         updateAndPersistStores((prev) => {
           if (prev.some((s) => s.id === newStoreObj.id)) return prev;
           return [newStoreObj, ...prev];
         });
+      } else if (payload.eventType === 'UPDATE' && payload.new) {
+        const dbStore = payload.new;
+        const meta = parseStoreMetadata(dbStore);
+        const isOpenBool = dbStore.is_open !== undefined ? Boolean(dbStore.is_open) : true;
+
+        updateAndPersistStores((prev) =>
+          prev.map((s) => {
+            if (s.id !== dbStore.id) return s;
+            return {
+              ...s,
+              name: dbStore.name || s.name,
+              isOpen: isOpenBool,
+              is_open: isOpenBool,
+              openTime: meta.openTime || s.openTime,
+              closeTime: meta.closeTime || s.closeTime,
+              operatingDays: meta.operatingDays || s.operatingDays,
+              is24Hours: meta.is24Hours !== undefined ? meta.is24Hours : s.is24Hours,
+              image: meta.image || s.image,
+            };
+          })
+        );
+
+        setSelectedStore((prev) => {
+          if (!prev || prev.id !== dbStore.id) return prev;
+          return {
+            ...prev,
+            isOpen: isOpenBool,
+            is_open: isOpenBool,
+            openTime: meta.openTime || prev.openTime,
+            closeTime: meta.closeTime || prev.closeTime,
+            operatingDays: meta.operatingDays || prev.operatingDays,
+            is24Hours: meta.is24Hours !== undefined ? meta.is24Hours : prev.is24Hours,
+            image: meta.image || prev.image,
+          };
+        });
+
+        if (merchantStoreId === dbStore.id || currentMerchantStore?.id === dbStore.id) {
+          setStoreOpenStatus(isOpenBool);
+          setStoreTiming({
+            is24Hours: meta.is24Hours,
+            openTime: meta.openTime,
+            closeTime: meta.closeTime,
+            operatingDays: meta.operatingDays,
+          });
+        }
       }
     });
 
@@ -5198,7 +5251,7 @@ export default function App() {
     } catch (e) {}
 
     if (targetStoreId) {
-      updateDatabaseStore(targetStoreId, { isOpen: nextStatus }).catch(console.warn);
+      updateDatabaseStore(targetStoreId, { isOpen: nextStatus, is_open: nextStatus }).catch(console.warn);
     }
 
     Alert.alert(
@@ -5235,7 +5288,14 @@ export default function App() {
         await AsyncStorage.setItem(`getit_store_timing_${targetStoreId}`, JSON.stringify(timingToSave));
         const updatedStore = { ...(currentMerchantStore || {}), ...timingToSave };
         const isNowOpen = isStoreCurrentlyOpen(updatedStore);
-        updateDatabaseStore(targetStoreId, { isOpen: isNowOpen }).catch(console.warn);
+        updateDatabaseStore(targetStoreId, {
+          isOpen: isNowOpen,
+          is_open: isNowOpen,
+          openTime: timingToSave.openTime,
+          closeTime: timingToSave.closeTime,
+          operatingDays: timingToSave.operatingDays,
+          is24Hours: timingToSave.is24Hours,
+        }).catch(console.warn);
       }
     } catch (e) {
       console.warn('AsyncStorage error:', e);

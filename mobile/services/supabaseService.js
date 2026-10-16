@@ -460,6 +460,23 @@ export function subscribeToStores(callback) {
   };
 }
 
+export function parseStoreMetadata(dbStore) {
+  if (!dbStore) return {};
+  let meta = {};
+  if (dbStore.city && typeof dbStore.city === 'string' && dbStore.city.startsWith('{')) {
+    try {
+      meta = JSON.parse(dbStore.city);
+    } catch (e) {}
+  }
+  return {
+    openTime: meta.openTime || dbStore.open_time || '08:00 AM',
+    closeTime: meta.closeTime || dbStore.close_time || '10:00 PM',
+    operatingDays: meta.operatingDays || dbStore.operating_days || 'Mon - Sun (Daily)',
+    is24Hours: meta.is24Hours !== undefined ? Boolean(meta.is24Hours) : Boolean(dbStore.is_24_hours),
+    image: meta.image || dbStore.image_url || dbStore.image,
+  };
+}
+
 export async function updateDatabaseStore(storeId, updates) {
   try {
     const dbUpdates = {};
@@ -473,6 +490,32 @@ export async function updateDatabaseStore(storeId, updates) {
     if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
     if (updates.latitude !== undefined) dbUpdates.latitude = Number(updates.latitude);
     if (updates.longitude !== undefined) dbUpdates.longitude = Number(updates.longitude);
+
+    // Pack timing, 24h flag, and custom image into city column so all devices sync instantly
+    if (
+      updates.openTime !== undefined ||
+      updates.closeTime !== undefined ||
+      updates.operatingDays !== undefined ||
+      updates.is24Hours !== undefined ||
+      updates.image !== undefined
+    ) {
+      let meta = { city: 'Abuja' };
+      try {
+        const { data: curr } = await supabase.from('stores').select('city').eq('id', storeId).maybeSingle();
+        if (curr && curr.city && curr.city.startsWith('{')) {
+          meta = JSON.parse(curr.city);
+        }
+      } catch (e) {}
+
+      if (updates.openTime !== undefined) meta.openTime = updates.openTime;
+      if (updates.closeTime !== undefined) meta.closeTime = updates.closeTime;
+      if (updates.operatingDays !== undefined) meta.operatingDays = updates.operatingDays;
+      if (updates.is24Hours !== undefined) meta.is24Hours = Boolean(updates.is24Hours);
+      if (updates.image !== undefined) meta.image = updates.image;
+      meta.city = 'Abuja';
+
+      dbUpdates.city = JSON.stringify(meta);
+    }
 
     const { data, error } = await supabase
       .from('stores')
