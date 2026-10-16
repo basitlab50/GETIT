@@ -334,7 +334,24 @@ export async function getDatabaseOrders() {
       const roadLegs = (riderMeta.roadLegs && Array.isArray(riderMeta.roadLegs)) ? riderMeta.roadLegs : [];
       const isMultiStore = riderMeta.isMultiStore !== undefined ? riderMeta.isMultiStore : (stops.length > 1);
       const currentStopIndex = Number(riderMeta.currentStopIndex) || 0;
-      const journeyAlert = riderMeta.journeyAlert || null;
+      // Normalize status: if courier is already assigned, order is active and on the way unless delivered/cancelled
+      let normalizedStatus = item.status || 'New Order';
+      if (riderMeta.name && normalizedStatus !== 'Delivered' && normalizedStatus !== 'Cancelled') {
+        normalizedStatus = 'On the Way';
+      }
+
+      // Auto-heal stops up to currentStopIndex
+      const verifiedStops = (stops || []).map((st, idx) => {
+        if (idx <= currentStopIndex && st.pickupStatus !== 'picked_up') {
+          return {
+            ...st,
+            pickupStatus: 'picked_up',
+            status: 'Ready for Pickup',
+            pickedUpAt: st.pickedUpAt || (item.created_at ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '3:30 PM'),
+          };
+        }
+        return st;
+      });
 
       return {
         id: item.id,
@@ -363,17 +380,17 @@ export async function getDatabaseOrders() {
           plate: riderMeta.plate || 'ABJ-492-KW',
           avatar: riderMeta.avatar || '🛵',
         } : null,
-        boltCoords: item.bolt_coords || (stops[0] ? { latitude: Number(stops[0].latitude) || 9.0882, longitude: Number(stops[0].longitude) || 7.4933 } : { latitude: 9.0882, longitude: 7.4933 }),
-        status: item.status || 'New Order',
+        boltCoords: item.bolt_coords || (verifiedStops[0] ? { latitude: Number(verifiedStops[0].latitude) || 9.0882, longitude: Number(verifiedStops[0].longitude) || 7.4933 } : { latitude: 9.0882, longitude: 7.4933 }),
+        status: normalizedStatus,
         eta: item.eta || '20 mins',
         deliveryPin: item.delivery_pin || '2489',
-        pickupPin: item.pickup_pin || (stops[0]?.pickupPin) || '7731',
+        pickupPin: item.pickup_pin || (verifiedStops[0]?.pickupPin) || '7731',
         deliveryLocation: {
           latitude: Number(item.delivery_lat) || 9.0882,
           longitude: Number(item.delivery_lng) || 7.4933,
           notes: item.courier_notes || '',
         },
-        stops: stops,
+        stops: verifiedStops,
         roadRouteCoordinates: roadRouteCoordinates,
         roadLegs: roadLegs,
         isMultiStore: isMultiStore,

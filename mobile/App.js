@@ -2177,9 +2177,6 @@ export default function App() {
           if (
             ord.status === 'Cancelled' ||
             ord.status === 'Delivered' ||
-            ord.status === 'New Order' ||
-            ord.status === 'Preparing' ||
-            ord.status === 'Looking for Courier' ||
             !ord.boltRider ||
             !ord.boltRider.name
           ) {
@@ -2187,6 +2184,20 @@ export default function App() {
           }
 
           const currentStopIdx = ord.currentStopIndex || 0;
+
+          // Auto-heal: Ensure all stops already reached or departed are marked picked_up
+          const verifiedStops = (ord.stops || []).map((st, idx) => {
+            if (idx <= currentStopIdx && st.pickupStatus !== 'picked_up') {
+              return {
+                ...st,
+                pickupStatus: 'picked_up',
+                pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                status: 'Ready for Pickup',
+              };
+            }
+            return st;
+          });
+
           let activeLegPts =
             ord.roadLegs && ord.roadLegs[currentStopIdx] && ord.roadLegs[currentStopIdx].length > 1
               ? ord.roadLegs[currentStopIdx]
@@ -2195,10 +2206,10 @@ export default function App() {
           if (!activeLegPts || activeLegPts.length === 0) {
             const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
             const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
-            const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
+            const firstStore = verifiedStops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
             const wps = [
-              ...(ord.stops && ord.stops.length > 0
-                ? ord.stops.map((s) => ({
+              ...(verifiedStops && verifiedStops.length > 0
+                ? verifiedStops.map((s) => ({
                     latitude: Number(s.latitude) || 9.0882,
                     longitude: Number(s.longitude) || 7.4933,
                   }))
@@ -2217,19 +2228,6 @@ export default function App() {
             const nextIdx = Math.min(currentPointIdx + 1, totalPoints - 1);
             const nextCoord = activeLegPts[nextIdx];
 
-            // Auto-heal: Ensure all stops already reached or departed are marked picked_up
-            const verifiedStops = (ord.stops || []).map((st, idx) => {
-              if (idx <= currentStopIdx && st.pickupStatus !== 'picked_up') {
-                return {
-                  ...st,
-                  pickupStatus: 'picked_up',
-                  pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  status: 'Ready for Pickup',
-                };
-              }
-              return st;
-            });
-
             return {
               ...ord,
               roadPointIndex: nextIdx,
@@ -2240,7 +2238,7 @@ export default function App() {
           }
 
           // Arrived at the end of this leg!
-          const totalLegs = (ord.roadLegs && ord.roadLegs.length > 0) ? ord.roadLegs.length : (ord.stops?.length || 1);
+          const totalLegs = (ord.roadLegs && ord.roadLegs.length > 0) ? ord.roadLegs.length : (verifiedStops?.length || 1);
 
           if (currentStopIdx < totalLegs - 1) {
             // Arrived at intermediate shop (e.g. Shop 2 in multi-store order)
