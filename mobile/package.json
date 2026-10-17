@@ -21,7 +21,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "tunnel": "expo start --tunnel"
+    "tunnel": "expo start --tunnel",
+    "postinstall": "node scripts/patch-expo-asset.js"
   },
   "private": true,
   "devDependencies": {
