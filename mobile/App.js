@@ -598,183 +598,32 @@ const STORE_COVER_PRESETS = [
 // --- Featured Stores Around Me ---
 const STORES_AROUND_ME = [
   {
-    id: 's1',
-    name: 'The Gourmet Emporium',
+    id: 'store-1792192743654',
+    name: 'Mega Stores',
     category: 'gourmet',
-    categoryLabel: 'Gourmet Groceries & Deli',
-    rating: 4.9,
-    reviewCount: '1.4k',
-    distance: '0.9 km',
-    deliveryTime: '15-20 min',
+    categoryLabel: 'Gourmet Groceries & Provisions',
+    rating: 5.0,
+    reviewCount: 'Verified',
+    distance: '0.8 km',
+    deliveryTime: '15-25 min',
     deliveryFee: '₦1,200',
     freeDeliveryThreshold: 25000,
-    tag: 'FEATURED LUXE',
-    badgeColor: COLORS.roseGold,
+    tag: 'FEATURED MEGA STORE',
+    badgeColor: COLORS.emeraldPrimary,
     address: 'Plot 14 Gana Street, Maitama',
-    latitude: 9.0882,
-    longitude: 7.4933,
+    district: 'Maitama, Abuja',
+    latitude: 9.124943,
+    longitude: 7.439559,
     openTime: '08:00 AM',
     closeTime: '10:00 PM',
-    is24Hours: false,
-    operatingDays: 'Weekends Only',
+    is24Hours: true,
+    operatingDays: 'Mon - Sun (Daily)',
     image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
-    description: 'Imported artisanal cheeses, prime truffles, charcuterie, and fine everyday provisions.',
-    products: [
-      { id: 'gp-coca-50cl', name: 'Coca-Cola Original (50 cl, PET bottle)', price: 450, icon: '🥤', imageUrl: '/products/coca-cola-original-50-cl-pet-bottle.png', category: 'Drinks' },
-      { id: 'gp-coca-can', name: 'Coca-Cola Original (33 cl, Can)', price: 550, icon: '🥤', imageUrl: '/products/coca-cola-original-33-cl-can.jpg', category: 'Drinks' },
-      { id: 'gp-coca-zero', name: 'Coca-Cola Zero Sugar (33 cl, Can)', price: 600, icon: '🥤', imageUrl: '/products/coca-cola-zero-sugar-33-cl-can.jpg', category: 'Drinks' },
-      { id: 'gp-fanta-50cl', name: 'Fanta Orange (50 cl, PET bottle)', price: 450, icon: '🍊', imageUrl: '/products/fanta-orange-50-cl-pet-bottle.jpg', category: 'Drinks' },
-      { id: 'gp-sprite-can', name: 'Sprite Lemon-Lime (33 cl, Can)', price: 550, icon: '🍋', imageUrl: '/products/sprite-lemon-lime-33-cl-can.png', category: 'Drinks' },
-      { id: 'gp-malta-can', name: 'Malta Guinness Classic (33 cl, Can)', price: 600, icon: '🍺', imageUrl: '/products/malta-guinness-classic-33-cl-can.jpg', category: 'Drinks' },
-      { id: 'gp-maltina-can', name: 'Maltina Classic Malt (33 cl, Can)', price: 600, icon: '🍺', imageUrl: '/products/maltina-classic-malt-33-cl-can.jpg', category: 'Drinks' },
-      { id: 'gp-eva-water', name: 'Eva Premium Table Water (75 cl, PET bottle)', price: 300, icon: '💧', imageUrl: '/products/eva-premium-table-water-75-cl-pet-bottle.png', category: 'Drinks' },
-      { id: 'gp-redbull-can', name: 'Red Bull Energy Drink (25 cl, Can)', price: 1800, icon: '⚡', imageUrl: '/products/red-bull-energy-drink-25-cl-can.png', category: 'Drinks' },
-      { id: 'gp-milo-500g', name: 'Milo Malted Chocolate Beverage (500g)', price: 3800, icon: '☕', imageUrl: '/products/milo-malted-chocolate-beverage-500-g-pouch-tin.jpg', category: 'Drinks' },
-      { id: 'gp-zobo-50cl', name: 'Fresh Zobo drink (50 cl, Sealed bottle)', price: 700, icon: '🍷', imageUrl: '/products/fresh-zobo-drink-50-cl-sealed-bottle.jpg', category: 'Drinks' },
-      { id: 'gp-kunu-50cl', name: 'Fresh Kunu drink (50 cl, Sealed bottle)', price: 700, icon: '🥛', imageUrl: '/products/fresh-kunu-drink-50-cl-sealed-bottle.jpg', category: 'Drinks' },
-      { id: 'gp-hollandia-1l', name: 'Hollandia Yoghurt drink (1 L, Bottle)', price: 2400, icon: '🥛', imageUrl: '/products/hollandia-yoghurt-drink-1-l-bottle.jpg', category: 'Drinks' },
-      { id: 'gp-lacasera-1l', name: 'La Casera Apple drink (1 L, PET bottle)', price: 850, icon: '🍏', imageUrl: '/products/la-casera-apple-drink-1-l-pet-bottle.png', category: 'Drinks' },
-      { id: 'gp-chi-exotic-1l', name: 'Chi Exotic (1 L, Carton)', price: 2200, icon: '🍍', imageUrl: '/products/chi-exotic-1-l-carton.png', category: 'Drinks' },
-      { id: 'gp1', name: 'Truffle Infused Extra Virgin Oil (250ml)', price: 16500, icon: '🫒', category: 'Pantry' },
-      { id: 'gp2', name: 'Aged Parmigiano Reggiano (300g)', price: 12800, icon: '🧀', category: 'Deli' },
-      { id: 'gp3', name: 'Organic Cold-Pressed Valencia Juices', price: 4200, icon: '🍊', category: 'Beverage' },
-      { id: 'gp4', name: 'Artisanal Gluten-Free Pasta (500g)', price: 5400, icon: '🍝', category: 'Pantry' },
-      { id: 'gp5', name: 'Smoked Atlantic Salmon Fillet (200g)', price: 14200, icon: '🐟', category: 'Deli' },
-      { id: 'gp6', name: 'French Dijon Grain Mustard (210g)', price: 3800, icon: '🍯', category: 'Pantry' },
-      { id: 'gp7', name: 'San Pellegrino Sparkling Water (750ml)', price: 2900, icon: '🍾', category: 'Beverage' },
-      { id: 'gp8', name: 'Kalamata Jumbo Pitted Olives (370g)', price: 6500, icon: '🫒', category: 'Deli' },
-    ],
-  },
-  {
-    id: 's2',
-    name: 'Maison de Fresh Organic',
-    category: 'organic',
-    categoryLabel: 'Farm-to-Table & Produce',
-    rating: 4.8,
-    reviewCount: '890',
-    distance: '1.4 km',
-    deliveryTime: '20-25 min',
-    deliveryFee: '₦1,000',
-    freeDeliveryThreshold: 20000,
-    tag: 'FARM FRESH',
-    badgeColor: COLORS.emeraldPrimary,
-    address: 'Adetokunbo Ademola Crescent, Wuse 2',
-    latitude: 9.0792,
-    longitude: 7.4721,
-    openTime: '08:00 AM',
-    closeTime: '09:00 PM',
-    is24Hours: false,
-    operatingDays: 'Mon - Sun (Daily)',
-    image: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=800&q=80',
-    description: 'Hydroponic crisp greens, vine-ripened heritage tomatoes, and pristine organic berries.',
-    products: [
-      { id: 'op1', name: 'Sweet Roman Heritage Tomatoes (Basket)', price: 9500, icon: '🍅', category: 'Produce' },
-      { id: 'op2', name: 'Fresh Hass Avocados (Pack of 4)', price: 5200, icon: '🥑', category: 'Produce' },
-      { id: 'op3', name: 'Organic Wildflower Raw Honey (500g)', price: 7800, icon: '🍯', category: 'Pantry' },
-      { id: 'op4', name: 'Hydroponic Sweet Bell Peppers Mix', price: 4600, icon: '🫑', category: 'Produce' },
-      { id: 'op5', name: 'Crisp Baby Spinach & Kale (Fresh Pack)', price: 3500, icon: '🥬', category: 'Produce' },
-      { id: 'op6', name: 'Fresh Strawberries & Blueberries Punnet', price: 8400, icon: '🍓', category: 'Produce' },
-      { id: 'op7', name: 'Organic Fresh Rosemary & Thyme Bundle', price: 2200, icon: '🌿', category: 'Produce' },
-      { id: 'op8', name: 'Cold Pressed Virgin Coconut Oil (500ml)', price: 6900, icon: '🥥', category: 'Pantry' },
-    ],
-  },
-  {
-    id: 's3',
-    name: 'L’Artisan Bakery & Patisserie',
-    category: 'bakery',
-    categoryLabel: 'French Bakery & Pastries',
-    rating: 4.9,
-    reviewCount: '2.1k',
-    distance: '1.8 km',
-    deliveryTime: '15-20 min',
-    deliveryFee: '₦800',
-    freeDeliveryThreshold: 15000,
-    tag: 'BAKED HOURLY',
-    badgeColor: COLORS.champagneGold,
-    address: '32 Aminu Kano Way, Wuse 2',
-    latitude: 9.0745,
-    longitude: 7.4768,
-    openTime: '07:00 AM',
-    closeTime: '08:00 PM',
-    is24Hours: false,
-    operatingDays: 'Mon - Sun (Daily)',
-    image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80',
-    description: 'Traditional slow-fermented sourdough loaves, flaky butter croissants, and fine brioche.',
-    products: [
-      { id: 'bp1', name: 'Authentic Butter Croissant (Box of 4)', price: 6800, icon: '🥐', category: 'Pastry' },
-      { id: 'bp2', name: 'Rustic Wild Sourdough Boule (800g)', price: 4900, icon: '🍞', category: 'Bread' },
-      { id: 'bp3', name: 'Pistachio & Rose Macarons (6 Pcs)', price: 8200, icon: '🧁', category: 'Pastry' },
-      { id: 'bp4', name: 'Single-Origin Cold Brew Coffee (330ml)', price: 3500, icon: '☕', category: 'Beverage' },
-      { id: 'bp5', name: 'Pain au Chocolat (Box of 4)', price: 7400, icon: '🍫', category: 'Pastry' },
-      { id: 'bp6', name: 'French Baguette Traditionnelle (2 Pcs)', price: 3800, icon: '🥖', category: 'Bread' },
-      { id: 'bp7', name: 'Vanilla Bean Brioche Loaf (Sliced)', price: 5600, icon: '🍞', category: 'Bread' },
-      { id: 'bp8', name: 'Raspberry & Almond Tart Slice', price: 4500, icon: '🍰', category: 'Pastry' },
-    ],
-  },
-  {
-    id: 's4',
-    name: 'Prime Cellar & Reserve Pantry',
-    category: 'cellar',
-    categoryLabel: 'Sommelier & Luxury Pantry',
-    rating: 5.0,
-    reviewCount: '640',
-    distance: '2.6 km',
-    deliveryTime: '25-30 min',
-    deliveryFee: '₦1,500',
-    freeDeliveryThreshold: 40000,
-    tag: 'VINTAGE SELECTION',
-    badgeColor: COLORS.roseGoldDark,
-    address: 'Yakubu Gowon Crescent, Asokoro',
-    latitude: 9.0435,
-    longitude: 7.5218,
-    openTime: '10:00 AM',
-    closeTime: '11:00 PM',
-    is24Hours: false,
-    operatingDays: 'Mon - Sun (Daily)',
-    image: 'https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?auto=format&fit=crop&w=800&q=80',
-    description: 'Curated reserve wines, European sparkling waters, and rare pantry spices.',
-    products: [
-      { id: 'cp1', name: 'San Pellegrino Sparkling Glass (750ml x 2)', price: 5800, icon: '🍾', category: 'Beverage' },
-      { id: 'cp2', name: 'Spanish Smoked Saffron (Pure 2g)', price: 14500, icon: '🌺', category: 'Pantry' },
-      { id: 'cp3', name: 'Belgian 70% Dark Chocolate Truffles', price: 9200, icon: '🍫', category: 'Sweets' },
-      { id: 'cp4', name: 'Non-Alcoholic Sparkling Rosé Reserve', price: 18500, icon: '🍷', category: 'Beverage' },
-      { id: 'cp5', name: 'White Truffle Butter Spread (100g)', price: 11400, icon: '🧈', category: 'Pantry' },
-      { id: 'cp6', name: 'Royal Caspian Caviar Selection (50g)', price: 45000, icon: '🥫', category: 'Deli' },
-      { id: 'cp7', name: 'Organic Raw Acacia Comb Honey (400g)', price: 10500, icon: '🍯', category: 'Pantry' },
-    ],
-  },
-  {
-    id: 's5',
-    name: "Mama's Heritage Farm & Spice Co.",
-    category: 'heritage',
-    categoryLabel: 'Premium Nigerian Staples',
-    rating: 4.9,
-    reviewCount: '3.2k',
-    distance: '2.1 km',
-    deliveryTime: '20-30 min',
-    deliveryFee: '₦1,000',
-    freeDeliveryThreshold: 25000,
-    tag: 'HERITAGE QUALITY',
-    badgeColor: COLORS.emeraldPrimary,
-    address: 'Utako Commercial District',
-    latitude: 9.0578,
-    longitude: 7.4412,
-    openTime: '07:30 AM',
-    closeTime: '08:30 PM',
-    is24Hours: false,
-    operatingDays: 'Mon - Sun (Daily)',
-    image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?auto=format&fit=crop&w=800&q=80',
-    description: 'Select Benue white yams, stone-free parboiled rice, pure cold-pressed palm oil, and fresh aromatics.',
-    products: [
-      { id: 'hp1', name: 'Benue Select Tubers (5 Giant Size)', price: 15500, icon: '🍠', category: 'Tubers' },
-      { id: 'hp2', name: 'Royal Parboiled Rice (10kg Clean Bag)', price: 23000, icon: '🌾', category: 'Grains' },
-      { id: 'hp3', name: 'Fresh Ata Rodo & Tatashe (Sorted Box)', price: 6500, icon: '🌶️', category: 'Spices' },
-      { id: 'hp4', name: 'Pure Nsukka Palm Oil (4 Litres Jug)', price: 8900, icon: '🫙', category: 'Oils' },
-      { id: 'hp5', name: 'Dry Ground Crayfish (Paint Bucket)', price: 12500, icon: '🦐', category: 'Spices' },
-      { id: 'hp6', name: 'Premium Ijebu Garri (5kg Bag)', price: 7800, icon: '🥣', category: 'Grains' },
-      { id: 'hp7', name: 'Smoked Catfish Crispy Pack (4 Big)', price: 9500, icon: '🐟', category: 'Meat & Fish' },
-      { id: 'hp8', name: 'Fresh Ogbono & Egusi Seed Mix', price: 8200, icon: '🥜', category: 'Spices' },
-    ],
+    description: 'Mega Stores — prime provisions, artisanal goods, groceries and rapid doorstep delivery across Abuja.',
+    phone: '0545802140',
+    isOpen: true,
+    is_open: true,
+    products: [],
   },
 ];
 
@@ -1220,7 +1069,7 @@ export default function App() {
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [activeCategory, setActiveCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [favorites, setFavorites] = useState(['s1', 's3']);
+  const [favorites, setFavorites] = useState(['store-1792192743654']);
 
   // Pinned Map Location State for Customer & Riders
   const mapRef = useRef(null);
@@ -2433,18 +2282,8 @@ export default function App() {
               products: existing.products && existing.products.length > 0 ? existing.products : dbStore.products,
             };
           });
-          const existingIds = new Set(enriched.map((s) => s.id));
-          const remainingStatic = prev.filter((s) => !existingIds.has(s.id));
-          const combined = [...mergedCloud, ...remainingStatic];
-          const uniqueStoreMap = new Map();
-          combined.forEach((s) => {
-            if (s && s.id && !uniqueStoreMap.has(s.id)) {
-              uniqueStoreMap.set(s.id, s);
-            }
-          });
-          const dedupedCombined = Array.from(uniqueStoreMap.values());
-          AsyncStorage.setItem('getit_stores_list', JSON.stringify(dedupedCombined)).catch(console.warn);
-          return dedupedCombined;
+          AsyncStorage.setItem('getit_stores_list', JSON.stringify(mergedCloud)).catch(console.warn);
+          return mergedCloud;
         });
       } catch (err) {
         console.warn('Error loading cloud stores:', err);
@@ -4357,10 +4196,7 @@ export default function App() {
         );
         if (match) return match;
       }
-      const fallback = ord.stops.find(
-        (st) => st.storeName === 'The Gourmet Emporium' || st.storeId === 'store-gourmet'
-      );
-      return fallback || ord.stops[0];
+      return ord.stops[0];
     }
     return null;
   };

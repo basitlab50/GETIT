@@ -40,7 +40,7 @@ export async function getMasterCatalog() {
 }
 
 // 2. Store Inventory
-export async function getStoreInventory(storeId = 'store-fresh-mart') {
+export async function getStoreInventory(storeId = 'store-1792192743654') {
   try {
     const { data, error } = await supabase
       .from('store_inventory')
@@ -64,7 +64,7 @@ export async function getStoreInventory(storeId = 'store-fresh-mart') {
   }
 }
 
-export async function addStoreInventoryItem(storeId = 'store-fresh-mart', item) {
+export async function addStoreInventoryItem(storeId = 'store-1792192743654', item) {
   try {
     const record = {
       id: item.id || `inv-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -127,8 +127,8 @@ export async function createDatabaseOrder(order) {
 
   const record = {
     id: order.id,
-    store_id: order.storeId || order.store_id || (firstStop ? firstStop.storeId : 'store-fresh-mart'),
-    store_name: order.storeName || order.store_name || (firstStop ? firstStop.storeName : 'Fresh Mart Maitama'),
+    store_id: order.storeId || order.store_id || (firstStop ? firstStop.storeId : 'store-1792192743654'),
+    store_name: order.storeName || order.store_name || (firstStop ? firstStop.storeName : 'Mega Stores'),
     customer_name: order.customerName || order.customer_name || 'Customer',
     customer_phone: order.customerPhone || order.customer_phone || '',
     customer_address: order.customerAddress || order.delivery_address || 'Abuja, Nigeria',
@@ -319,8 +319,8 @@ export async function getDatabaseOrders() {
           stops = [
             {
               stopNumber: 1,
-              storeId: item.store_id || 's1',
-              storeName: item.store_name || 'GETIT Store',
+              storeId: item.store_id || 'store-1792192743654',
+              storeName: item.store_name || 'Mega Stores',
               latitude: Number(item.delivery_lat || 9.0882),
               longitude: Number(item.delivery_lng || 7.4933),
               pickupPin: String(item.pickup_pin || '7731'),
@@ -604,7 +604,7 @@ export async function deleteDatabaseStore(storeId) {
     // 1. Reassign any orders referencing this store to default store to prevent foreign key constraint violations
     await supabase
       .from('orders')
-      .update({ store_id: 'store-fresh-mart', store_name: 'Fresh Mart Maitama' })
+      .update({ store_id: 'store-1792192743654', store_name: 'Mega Stores' })
       .eq('store_id', storeId);
 
     // 2. Delete inventory items belonging to this store
