@@ -416,5 +416,28 @@ FIX DETAILS - ACCOUNT ISOLATION & FRESH DATABASE RESET
    - Scoped Merchant Hub branch switcher strictly to stores owned by the logged-in merchant. Unrelated merchants no longer see other partner stores in their branch selector.
 
 ================================================================================
+FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
+================================================================================
+1. Complete Store Wipe (Exclusively Preserved "Mega Stores"):
+   - Purged all legacy test and non-Mega stores from Supabase `stores` table (deleted `store-exclusive`, `store-fresh-mart`, `store-1792277429052`, `store-h-medix`, `s1`).
+   - Retained exclusively `store-1792192743654` ("Mega Stores") and preserved all 51 products in `store_inventory`.
+   - Updated `STORES_AROUND_ME` default and cloud hydration in `mobile/App.js` so only Mega Stores is loaded by default.
+   - Cleaned up local static reviving so old deleted stores never reappear upon reload.
+
+2. Fixed Expo Go Crash (`Cannot find native module 'ExpoAsset'`):
+   - Safely guarded `requireOptionalNativeModule('ExpoAsset')` in `mobile/node_modules/expo-asset/build/ExpoAsset.js`.
+   - Created `mobile/scripts/patch-expo-asset.js` and registered it in `package.json` under `"postinstall"`.
+
+3. Instant Real-Time Synchronization for Buyer Side:
+   - Added `subscribeToStoreInventory` in `mobile/services/supabaseService.js` listening to all `INSERT`, `UPDATE`, `DELETE` events on `public:store_inventory`.
+   - Enhanced `subscribeToStores` in `mobile/App.js` to handle:
+     * `INSERT`: When a merchant creates a new store, it appears instantly on the buyer's screen, and its inventory is fetched immediately.
+     * `UPDATE`: When a store edits its operating hours, open/close status, address, district, latitude, longitude, phone, name, category, or delivery fee, both the store listing and any currently open store details view update immediately without refresh.
+     * `DELETE`: If a store is removed, it vanishes instantly from the buyer's screen.
+   - Catalog Product Real-Time Sync:
+     * When a merchant adds a new product, updates price/image/stock/name, or deletes a product, it updates the store's inventory and the active store modal instantly on the buyer's side.
+   - Zero refresh or restart required for changes to be reflected live.
+
+================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
