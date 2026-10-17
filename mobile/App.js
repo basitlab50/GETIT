@@ -37,6 +37,7 @@ import {
   getStores,
   createDatabaseStore,
   subscribeToStores,
+  subscribeToStoreInventory,
   getStoreInventory,
   updateDatabaseStore,
   deleteDatabaseStore,
@@ -2292,7 +2293,7 @@ export default function App() {
 
     loadCloudStores();
 
-    // Realtime subscription for stores (both new additions and live status/hours updates)
+    // Realtime subscription for stores (both new additions and live status/hours/profile updates)
     const unsubscribeStores = subscribeToStores((payload) => {
       if (payload.eventType === 'INSERT' && payload.new) {
         const dbStore = payload.new;
@@ -2338,14 +2339,35 @@ export default function App() {
           is24Hours: meta.is24Hours,
         };
 
+        // Instantly load inventory for the newly created store
+        getStoreInventory(dbStore.id).then((inv) => {
+          if (inv && inv.length > 0) {
+            newStoreObj.products = inv;
+            updateAndPersistStores((prev) =>
+              prev.map((s) => (s.id === newStoreObj.id ? { ...s, products: inv } : s))
+            );
+          }
+        }).catch(() => {});
+
         updateAndPersistStores((prev) => {
-          if (prev.some((s) => s.id === newStoreObj.id)) return prev;
+          if (prev.some((s) => s.id === newStoreObj.id)) {
+            return prev.map((s) => (s.id === newStoreObj.id ? { ...s, ...newStoreObj } : s));
+          }
           return [newStoreObj, ...prev];
         });
       } else if (payload.eventType === 'UPDATE' && payload.new) {
         const dbStore = payload.new;
         const meta = parseStoreMetadata(dbStore);
         const isOpenBool = dbStore.is_open !== undefined ? Boolean(dbStore.is_open) : true;
+        const categoryKey = (dbStore.category || 'gourmet').toLowerCase().includes('organ')
+          ? 'organic'
+          : (dbStore.category || '').toLowerCase().includes('bake')
+          ? 'bakery'
+          : (dbStore.category || '').toLowerCase().includes('cell')
+          ? 'cellar'
+          : (dbStore.category || '').toLowerCase().includes('herit')
+          ? 'heritage'
+          : 'gourmet';
 
         updateAndPersistStores((prev) =>
           prev.map((s) => {
@@ -2353,6 +2375,14 @@ export default function App() {
             return {
               ...s,
               name: dbStore.name || s.name,
+              category: categoryKey || s.category,
+              categoryLabel: dbStore.category || s.categoryLabel,
+              address: dbStore.address || s.address,
+              district: dbStore.district || s.district,
+              latitude: Number(dbStore.latitude) || s.latitude,
+              longitude: Number(dbStore.longitude) || s.longitude,
+              phone: dbStore.phone || s.phone,
+              deliveryFee: dbStore.delivery_fee ? `₦${Number(dbStore.delivery_fee).toLocaleString()}` : s.deliveryFee,
               isOpen: isOpenBool,
               is_open: isOpenBool,
               openTime: meta.openTime || s.openTime,
@@ -2368,6 +2398,15 @@ export default function App() {
           if (!prev || prev.id !== dbStore.id) return prev;
           return {
             ...prev,
+            name: dbStore.name || prev.name,
+            category: categoryKey || prev.category,
+            categoryLabel: dbStore.category || prev.categoryLabel,
+            address: dbStore.address || prev.address,
+            district: dbStore.district || prev.district,
+            latitude: Number(dbStore.latitude) || prev.latitude,
+            longitude: Number(dbStore.longitude) || prev.longitude,
+            phone: dbStore.phone || prev.phone,
+            deliveryFee: dbStore.delivery_fee ? `₦${Number(dbStore.delivery_fee).toLocaleString()}` : prev.deliveryFee,
             isOpen: isOpenBool,
             is_open: isOpenBool,
             openTime: meta.openTime || prev.openTime,
@@ -2387,12 +2426,116 @@ export default function App() {
             operatingDays: meta.operatingDays,
           });
         }
+      } else if (payload.eventType === 'DELETE' && payload.old) {
+        const deletedId = payload.old.id;
+        updateAndPersistStores((prev) => prev.filter((s) => s.id !== deletedId));
+        setSelectedStore((prev) => (prev && prev.id === deletedId ? null : prev));
+      }
+    });
+
+    // Realtime subscription for store catalog products (instant live reflection on buyer side)
+    const unsubscribeInventory = subscribeToStoreInventory((payload) => {
+      const item = payload.new || payload.old;
+      if (!item || !item.store_id) return;
+      const targetStoreId = item.store_id;
+
+      if (payload.eventType === 'INSERT' && payload.new) {
+        const newProduct = {
+          id: payload.new.id,
+          name: payload.new.name,
+          category: payload.new.category || 'General',
+          price: Number(payload.new.price) || 0,
+          icon: payload.new.icon || '🛍️',
+          imageUrl: payload.new.image_url,
+          outOfStock: Boolean(payload.new.out_of_stock),
+        };
+
+        updateAndPersistStores((prev) =>
+          prev.map((st) => {
+            if (st.id !== targetStoreId) return st;
+            const existing = st.products || [];
+            if (existing.some((p) => p.id === newProduct.id)) {
+              return {
+                ...st,
+                products: existing.map((p) => (p.id === newProduct.id ? newProduct : p)),
+              };
+            }
+            return {
+              ...st,
+              products: [newProduct, ...existing],
+            };
+          })
+        );
+
+        setSelectedStore((prev) => {
+          if (!prev || prev.id !== targetStoreId) return prev;
+          const existing = prev.products || [];
+          if (existing.some((p) => p.id === newProduct.id)) {
+            return {
+              ...prev,
+              products: existing.map((p) => (p.id === newProduct.id ? newProduct : p)),
+            };
+          }
+          return {
+            ...prev,
+            products: [newProduct, ...existing],
+          };
+        });
+      } else if (payload.eventType === 'UPDATE' && payload.new) {
+        const updatedProduct = {
+          id: payload.new.id,
+          name: payload.new.name,
+          category: payload.new.category || 'General',
+          price: Number(payload.new.price) || 0,
+          icon: payload.new.icon || '🛍️',
+          imageUrl: payload.new.image_url,
+          outOfStock: Boolean(payload.new.out_of_stock),
+        };
+
+        updateAndPersistStores((prev) =>
+          prev.map((st) => {
+            if (st.id !== targetStoreId) return st;
+            return {
+              ...st,
+              products: (st.products || []).map((p) => (p.id === updatedProduct.id ? updatedProduct : p)),
+            };
+          })
+        );
+
+        setSelectedStore((prev) => {
+          if (!prev || prev.id !== targetStoreId) return prev;
+          return {
+            ...prev,
+            products: (prev.products || []).map((p) => (p.id === updatedProduct.id ? updatedProduct : p)),
+          };
+        });
+      } else if (payload.eventType === 'DELETE' && payload.old) {
+        const deletedProdId = payload.old.id;
+
+        updateAndPersistStores((prev) =>
+          prev.map((st) => {
+            if (st.id !== targetStoreId) return st;
+            return {
+              ...st,
+              products: (st.products || []).filter((p) => p.id !== deletedProdId),
+            };
+          })
+        );
+
+        setSelectedStore((prev) => {
+          if (!prev || prev.id !== targetStoreId) return prev;
+          return {
+            ...prev,
+            products: (prev.products || []).filter((p) => p.id !== deletedProdId),
+          };
+        });
       }
     });
 
     return () => {
       isMounted = false;
       if (typeof unsubscribeStores === 'function') unsubscribeStores();
+      if (typeof unsubscribeInventory === 'function') unsubscribeInventory();
     };
   }, []);
 

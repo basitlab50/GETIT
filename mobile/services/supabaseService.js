@@ -501,6 +501,23 @@ export function subscribeToStores(callback) {
   };
 }
 
+export function subscribeToStoreInventory(callback) {
+  const channel = supabase
+    .channel('public:store_inventory')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'store_inventory' },
+      payload => {
+        if (callback) callback(payload);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
 export function parseStoreMetadata(dbStore) {
   if (!dbStore) return {};
   let meta = {};
