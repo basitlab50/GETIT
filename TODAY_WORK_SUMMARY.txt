@@ -471,6 +471,18 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        - Fixed inaccurate direct bird-flight Euclidean distance calculation that previously showed multi-stop shops as artificially close (e.g. 200m) while the rider was still far away on the road.
        - Sums the actual remaining turn-by-turn street route segments along `order.roadLegs` plus prior intermediate stops, matching the buyer's live map progress exactly as the courier covers distance on the road.
 
+8. Cross-Device Live Rider Location Sync & Background AppState Reconciliation:
+   - Handover State & Leg Advancement:
+     * When a store owner marks "Hand Over to Bolt Courier" (`completeMerchantOrder`), the order now automatically snaps `boltCoords` to that store's coordinates, advances `currentStopIndex` to the next pending shop (or final home delivery leg if all stops are picked up), and resets `roadPointIndex: 0`.
+     * Persists `currentStopIndex`, `roadPointIndex`, and `boltCoords` to Supabase and broadcasts them over the sub-50ms WebSocket channel (`ORDER_UPDATE`).
+   - Real-Time WebSocket Order Listener:
+     * Added `ORDER_UPDATE` broadcast handling in `subscribeToLiveBroadcast` in `mobile/App.js` so both buyer and merchant devices update in real time without pull-to-refresh.
+   - Self-Healing Active Leg Alignment:
+     * Added self-healing logic across the 2-second simulation timer and the buyer's MapView. If a shop is marked `picked_up`, the active route leg and rider marker are strictly locked to the remaining active leg (or home delivery leg) and never freeze on a completed leg.
+   - AppState Lifecycle Listener:
+     * Added `AppState.addEventListener('change', ...)` in `mobile/App.js` to immediately trigger `syncOrdersFromCloud()` and `loadCloudStores()` whenever the buyer returns from the background or unlocks their phone, keeping rider position and order status completely intact across devices.
+     * Integrated `syncOrdersFromCloud()` into the 3.5s background heartbeat poller for continuous state catchup.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================

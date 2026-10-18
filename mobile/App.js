@@ -19,6 +19,7 @@ import {
   Easing,
   Platform,
   RefreshControl,
+  AppState,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, Polyline } from 'react-native-maps';
@@ -2220,7 +2221,16 @@ export default function App() {
             return ord;
           }
 
-          const currentStopIdx = ord.currentStopIndex || 0;
+          const stops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
+          const firstPendingIdx = stops.findIndex((st) => st.pickupStatus !== 'picked_up');
+          let currentStopIdx = ord.currentStopIndex || 0;
+
+          // Self-heal: If earlier stops are already picked up, advance currentStopIdx to the active leg!
+          if (firstPendingIdx !== -1 && currentStopIdx < firstPendingIdx) {
+            currentStopIdx = firstPendingIdx;
+          } else if (firstPendingIdx === -1 && stops.length > 0 && currentStopIdx < stops.length) {
+            currentStopIdx = stops.length;
+          }
 
           // Auto-heal: Ensure all stops already reached or departed are marked picked_up
           const verifiedStops = (ord.stops || []).map((st, idx) => {
@@ -2836,15 +2846,42 @@ export default function App() {
         handleInventoryPayload({ eventType: event.eventType === 'INVENTORY_INSERT' ? 'INSERT' : 'UPDATE', new: event.item });
       } else if (event.eventType === 'INVENTORY_DELETE') {
         handleInventoryPayload({ eventType: 'DELETE', old: { id: event.itemId, store_id: event.storeId } });
+      } else if (event.eventType === 'ORDER_UPDATE') {
+        const payload = event.payload || event;
+        updateAndPersistOrders((prev) =>
+          prev.map((o) => {
+            if (o.id === payload.orderId) {
+              return {
+                ...o,
+                status: payload.status || o.status,
+                stops: payload.stops || o.stops,
+                currentStopIndex: payload.currentStopIndex !== undefined ? payload.currentStopIndex : o.currentStopIndex,
+                roadPointIndex: payload.roadPointIndex !== undefined ? payload.roadPointIndex : 0,
+                boltCoords: payload.boltCoords || o.boltCoords,
+                journeyAlert: payload.journeyAlert || o.journeyAlert,
+              };
+            }
+            return o;
+          })
+        );
       }
     });
 
-    // 3. Background Heartbeat Poller (Every 3.5s): Guarantees continuous live sync across all devices
+    // 3. Background Heartbeat Poller (Every 3.5s): Guarantees continuous live sync of stores & active orders
     const syncInterval = setInterval(() => {
       if (isMounted) {
         loadCloudStores();
+        syncOrdersFromCloud();
       }
     }, 3500);
+
+    // 4. AppState Lifecycle Listener: When user returns from background / unlocks screen, resync immediately
+    const appStateSub = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active' && isMounted) {
+        loadCloudStores();
+        syncOrdersFromCloud();
+      }
+    });
 
     return () => {
       isMounted = false;
@@ -2852,6 +2889,7 @@ export default function App() {
       if (typeof unsubscribeStores === 'function') unsubscribeStores();
       if (typeof unsubscribeInventory === 'function') unsubscribeInventory();
       if (typeof unsubscribeBroadcast === 'function') unsubscribeBroadcast();
+      if (appStateSub && typeof appStateSub.remove === 'function') appStateSub.remove();
     };
   }, []);
 
@@ -5041,6 +5079,10 @@ export default function App() {
     let updatedStopsList = [];
     let allStopsPickedUp = false;
 
+    let nextStopIndex = 0;
+    let newBoltCoords = null;
+    let newAlert = '';
+
     updateAndPersistOrders((prev) =>
       prev.map((o) => {
         if (o.id !== orderId) return o;
@@ -5071,13 +5113,29 @@ export default function App() {
           allStopsPickedUp = true;
         }
 
-        const newAlert = allStopsPickedUp
-          ? `🎉 All shops handed over! Courier Musa Ibrahim has all packages and is en route to customer.`
-          : `✓ Handed over at ${merchantStoreName}! Courier is collecting remaining shops.`;
+        // Snap rider coordinates to the handed-over store's location
+        const storeCoords = {
+          latitude: Number(targetStore?.latitude) || 9.0882,
+          longitude: Number(targetStore?.longitude) || 7.4933,
+        };
+        newBoltCoords = storeCoords;
+
+        const firstPendingIdx = updatedStopsList.findIndex((st) => st.pickupStatus !== 'picked_up');
+        if (firstPendingIdx !== -1) {
+          nextStopIndex = firstPendingIdx;
+          const nextStoreName = updatedStopsList[firstPendingIdx].storeName || 'the next shop';
+          newAlert = `🔔 Picked up from ${merchantStoreName}! Courier Musa Ibrahim is now riding to ${nextStoreName}.`;
+        } else {
+          nextStopIndex = updatedStopsList.length;
+          newAlert = `🎉 All packages collected! Courier Musa Ibrahim has departed ${merchantStoreName} and is now riding directly to your address.`;
+        }
 
         return {
           ...o,
           stops: updatedStopsList.length > 0 ? updatedStopsList : o.stops,
+          currentStopIndex: nextStopIndex,
+          roadPointIndex: 0,
+          boltCoords: newBoltCoords,
           journeyAlert: newAlert,
           status: 'On the Way',
         };
@@ -5091,6 +5149,10 @@ export default function App() {
 
     updateDatabaseOrderStatus(orderId, {
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
+      currentStopIndex: nextStopIndex,
+      roadPointIndex: 0,
+      boltCoords: newBoltCoords,
+      journeyAlert: newAlert,
       status: 'On the Way',
     }).catch(() => {});
 
@@ -5098,6 +5160,10 @@ export default function App() {
       orderId,
       status: 'On the Way',
       stops: updatedStopsList,
+      currentStopIndex: nextStopIndex,
+      roadPointIndex: 0,
+      boltCoords: newBoltCoords,
+      journeyAlert: newAlert,
     });
   };
 
@@ -8207,7 +8273,14 @@ export default function App() {
                           >
                             {/* 1. Turn-by-Turn Road Route: Starts from Rider to Shop 1, then Shop 2, then Home */}
                             {(() => {
-                              const currentStopIdx = ord.currentStopIndex || 0;
+                              const mapStops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
+                              const firstPendingMapIdx = mapStops.findIndex((st) => st.pickupStatus !== 'picked_up');
+                              let currentStopIdx = ord.currentStopIndex || 0;
+                              if (firstPendingMapIdx !== -1 && currentStopIdx < firstPendingMapIdx) {
+                                currentStopIdx = firstPendingMapIdx;
+                              } else if (firstPendingMapIdx === -1 && mapStops.length > 0 && currentStopIdx < mapStops.length) {
+                                currentStopIdx = mapStops.length;
+                              }
                               const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
                               const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
                               const firstStore = (ord.stops && ord.stops[0]) || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
@@ -8377,7 +8450,14 @@ export default function App() {
 
                             {/* 4. Real-Time Moving Motorbike Courier Marker (SNAPPED DIRECTLY ONTO THE BLUE ROAD LINE) */}
                             {(() => {
-                              const currentStopIdx = ord.currentStopIndex || 0;
+                              const mapStops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
+                              const firstPendingMapIdx = mapStops.findIndex((st) => st.pickupStatus !== 'picked_up');
+                              let currentStopIdx = ord.currentStopIndex || 0;
+                              if (firstPendingMapIdx !== -1 && currentStopIdx < firstPendingMapIdx) {
+                                currentStopIdx = firstPendingMapIdx;
+                              } else if (firstPendingMapIdx === -1 && mapStops.length > 0 && currentStopIdx < mapStops.length) {
+                                currentStopIdx = mapStops.length;
+                              }
                               const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
                               const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
                               const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };

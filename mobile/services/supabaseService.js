@@ -281,6 +281,7 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
       stops: updates.stops !== undefined ? updates.stops : (existingRider.stops || []),
       journeyAlert: updates.journeyAlert !== undefined ? updates.journeyAlert : existingRider.journeyAlert,
       currentStopIndex: updates.currentStopIndex !== undefined ? updates.currentStopIndex : (existingRider.currentStopIndex || 0),
+      roadPointIndex: updates.roadPointIndex !== undefined ? updates.roadPointIndex : (existingRider.roadPointIndex || 0),
     };
 
     if (!updates.boltRider && !existingRider.name) {
@@ -420,6 +421,15 @@ export async function getDatabaseOrders() {
         return st;
       });
 
+      // Self-heal: If earlier stops are picked up, advance currentStopIndex so rider is never on a completed leg!
+      let reconciledStopIndex = currentStopIndex;
+      const firstUnpicked = verifiedStops.findIndex((st) => st.pickupStatus !== 'picked_up');
+      if (firstUnpicked !== -1 && reconciledStopIndex < firstUnpicked) {
+        reconciledStopIndex = firstUnpicked;
+      } else if (firstUnpicked === -1 && verifiedStops.length > 0) {
+        reconciledStopIndex = verifiedStops.length;
+      }
+
       return {
         id: item.id,
         storeId: item.store_id,
@@ -463,7 +473,8 @@ export async function getDatabaseOrders() {
         roadRouteCoordinates: roadRouteCoordinates,
         roadLegs: roadLegs,
         isMultiStore: isMultiStore,
-        currentStopIndex: currentStopIndex,
+        currentStopIndex: reconciledStopIndex,
+        roadPointIndex: Number(riderMeta.roadPointIndex) || 0,
         journeyAlert: journeyAlert,
         timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
         createdAt: item.created_at
