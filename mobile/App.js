@@ -1072,7 +1072,8 @@ function AnimatedStoreDoor({ store, operatingDays, isOpenToday, openTime }) {
 
 
 // =========================================================================
-// STRAIGHT-LINE COURIER TRACKER FOR MERCHANT (ZERO MAP, PURE VECTOR TRACKING)
+// =========================================================================
+// STRAIGHT-LINE COURIER TRACKER FOR MERCHANT (RESPONSIVE ZERO-MAP VECTOR)
 // =========================================================================
 function MerchantStraightLineTracker({ order, currentStore }) {
   if (!order) return null;
@@ -1106,9 +1107,9 @@ function MerchantStraightLineTracker({ order, currentStore }) {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const distKm = 6371 * c;
 
-  const distText = distKm < 0.08 ? 'Arrived at shop' : (distKm < 1 ? Math.round(distKm * 1000) + ' m away' : distKm.toFixed(1) + ' km away');
+  const distText = distKm < 0.08 ? 'Arrived at shop' : (distKm < 1 ? Math.round(distKm * 1000) + 'm away' : distKm.toFixed(1) + 'km away');
   const allocatedMins = Math.max(1, Math.round((distKm / 25) * 60));
-  const etaText = distKm < 0.08 ? 'Arrived outside' : '~' + allocatedMins + ' min' + (allocatedMins === 1 ? '' : 's');
+  const etaText = distKm < 0.08 ? 'Arrived' : '~' + allocatedMins + ' min' + (allocatedMins === 1 ? '' : 's');
 
   const currentRiderStop = order.currentStopIndex || 0;
   let bikePercent = 15;
@@ -1119,10 +1120,10 @@ function MerchantStraightLineTracker({ order, currentStore }) {
     const legPoints = (order.roadLegs && order.roadLegs[0]?.length) || 30;
     const roadIdx = order.roadPointIndex || 0;
     if (distKm < 0.08 || order.stops?.[0]?.pickupStatus === 'picked_up') {
-      bikePercent = 95;
-      statusMessage = '🛵 Courier Musa has arrived outside your shop! Handover PIN: ' + (order.pickupPin || '5821');
+      bikePercent = 90;
+      statusMessage = '🛵 Courier Musa has arrived outside! Handover PIN: ' + (order.pickupPin || '5821');
     } else {
-      const progress = Math.min(92, Math.max(10, Math.round((roadIdx / legPoints) * 100)));
+      const progress = Math.min(86, Math.max(10, Math.round((roadIdx / legPoints) * 100)));
       bikePercent = progress;
       statusMessage = '🚴 Courier Musa is en route directly to your shop (' + distText + ')';
     }
@@ -1136,97 +1137,111 @@ function MerchantStraightLineTracker({ order, currentStore }) {
       const leg0Points = (order.roadLegs && order.roadLegs[0]?.length) || 30;
       const roadIdx = order.roadPointIndex || 0;
       const subProg = Math.min(0.9, Math.max(0.1, roadIdx / leg0Points));
-      bikePercent = Math.round(subProg * 45); // Positioned on segment before 1st stop (5% to 45%)
-      statusMessage = '⏳ Courier Musa is picking up at 1st Stop (' + firstStopName + '). Heading to you next!';
+      bikePercent = Math.round(subProg * 44); // Positioned on segment before 1st stop (5% to 44%)
+      statusMessage = '⏳ Courier is picking up at 1st Stop (' + firstStopName + '). Heading to you next!';
     } else {
       // 1st stop done! Rider is on the leg to this shop
       const leg1Points = (order.roadLegs && order.roadLegs[myStopIndex]?.length) || 30;
       const roadIdx = order.roadPointIndex || 0;
       if (distKm < 0.08) {
-        bikePercent = 95;
-        statusMessage = '🛵 Courier Musa has arrived outside your shop! Handover PIN: ' + (order.pickupPin || '5821');
+        bikePercent = 90;
+        statusMessage = '🛵 Courier Musa has arrived outside! Handover PIN: ' + (order.pickupPin || '5821');
       } else {
-        const subProg = Math.min(0.92, Math.max(0.08, roadIdx / leg1Points));
-        bikePercent = 50 + Math.round(subProg * 45); // Positioned between 1st stop and your shop (54% to 95%)
-        statusMessage = '🚀 1st stop completed! Musa is now riding directly to your shop (' + distText + ')';
+        const subProg = Math.min(0.9, Math.max(0.08, roadIdx / leg1Points));
+        bikePercent = 50 + Math.round(subProg * 40); // Positioned between 1st stop and your shop (54% to 90%)
+        statusMessage = '🚀 1st stop done! Musa is riding directly to your shop (' + distText + ')';
       }
     }
   }
 
+  // Clamped bike percentage strictly between 6% and 88% so the bubble NEVER overflows the card on any screen size
+  const clampedBikePercent = Math.min(88, Math.max(6, bikePercent));
+  const isFirstStopDone = currentRiderStop > 0 || (priorStops[0]?.pickupStatus === 'picked_up');
+  const storeDisplay = currentStore?.name || myStop?.storeName || 'Your Shop';
+
   return (
     <View style={styles.mStraightTrackContainer}>
-      {/* Top Header Row */}
+      {/* 1. Header Row (Auto-wrapping, flex-shrink safe) */}
       <View style={styles.mStraightTrackHeader}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={styles.mStraightTitleGroup}>
           <View style={styles.mStraightRadarDot} />
-          <Text style={styles.mStraightTrackTitle}>LIVE COURIER TRACKER</Text>
+          <Text style={styles.mStraightTrackTitle} numberOfLines={1}>LIVE COURIER TRACKER</Text>
         </View>
         <View style={styles.mStraightEtaPill}>
           <Text style={styles.mStraightEtaText}>⏱️ {etaText} • {distText}</Text>
         </View>
       </View>
 
-      {/* Courier Info Subhead */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <Text style={{ fontSize: 11.5, color: '#94A3B8', fontWeight: '600' }}>
-          Rider: <Text style={{ color: '#F8FAFC', fontWeight: '700' }}>{order.boltRider?.name || 'Musa Ibrahim'}</Text> ({order.boltRider?.vehicle || 'Bajaj Boxer 150'})
+      {/* 2. Courier Info Row (Flex: 1 for rider name, compact PIN badge) */}
+      <View style={styles.mStraightRiderRow}>
+        <Text style={styles.mStraightRiderText} numberOfLines={1}>
+          Rider: <Text style={{ color: '#F8FAFC', fontWeight: '700' }}>{order.boltRider?.name || 'Musa Ibrahim'}</Text>
+          {order.boltRider?.vehicle ? ' (' + order.boltRider.vehicle.split(' ')[0] + ')' : ''}
         </Text>
-        <Text style={{ fontSize: 11, color: '#A7F3D0', fontWeight: '700' }}>
-          Shop PIN: <Text style={{ color: '#34D399', fontWeight: '900' }}>{order.pickupPin || '5821'}</Text>
-        </Text>
+        <View style={styles.mStraightPinBadge}>
+          <Text style={styles.mStraightPinBadgeText}>
+            PIN: <Text style={{ fontWeight: '900', color: '#10B981' }}>{order.pickupPin || '5821'}</Text>
+          </Text>
+        </View>
       </View>
 
-      {/* The Straight Line Track Area */}
+      {/* 3. The Straight Line Track Area (Safe horizontal margins to prevent clipping) */}
       <View style={styles.mStraightLineWrapper}>
-        {/* Background Track Line */}
         <View style={styles.mStraightTrackBackground} />
+        <View style={[styles.mStraightTrackFill, { width: clampedBikePercent + '%' }]} />
 
-        {/* Active Progress Fill */}
-        <View style={[styles.mStraightTrackFill, { width: bikePercent + '%' }]} />
-
-        {/* Start Point Pin (Origin) */}
-        <View style={[styles.mStraightPin, { left: 0 }]}>
+        {/* Origin Node */}
+        <View style={styles.mStraightOriginNode}>
           <View style={styles.mStraightOriginDot} />
         </View>
 
-        {/* Intermediate Stop Pin (Rendered only if there is a stop before this shop!) */}
+        {/* Intermediate Stop Node (if multi-stop) */}
         {hasPriorStops && (
-          <View style={[styles.mStraightPin, { left: '50%', transform: [{ translateX: -12 }] }]}>
+          <View style={styles.mStraightMiddleStopWrapper}>
             <View style={[
               styles.mStraightStopNode,
-              currentRiderStop > 0 ? styles.mStraightStopNodeDone : styles.mStraightStopNodeActive,
+              isFirstStopDone ? styles.mStraightStopNodeDone : styles.mStraightStopNodeActive,
             ]}>
-              <Text style={styles.mStraightStopNodeText}>
-                {currentRiderStop > 0 ? '✓' : '1'}
-              </Text>
+              <Text style={styles.mStraightStopNodeText}>{isFirstStopDone ? '✓' : '1'}</Text>
             </View>
-            <Text style={styles.mStraightStopNodeLabel} numberOfLines={1}>
-              {priorStops[0]?.storeName || '1st Stop'}
-            </Text>
           </View>
         )}
 
-        {/* Destination Pin (Your Store) */}
-        <View style={[styles.mStraightPin, { right: 0 }]}>
+        {/* Destination Store Node */}
+        <View style={styles.mStraightDestNodeWrapper}>
           <View style={styles.mStraightDestNode}>
-            <Text style={{ fontSize: 13 }}>🏪</Text>
+            <Text style={{ fontSize: 11 }}>🏪</Text>
           </View>
-          <Text style={styles.mStraightDestNodeLabel} numberOfLines={1}>
-            Your Shop
-          </Text>
         </View>
 
-        {/* Moving Motorbike Marker */}
-        <View style={[styles.mStraightBikeMarker, { left: bikePercent + '%', transform: [{ translateX: -16 }] }]}>
+        {/* Moving Motorbike Marker (Clamped & centered) */}
+        <View style={[styles.mStraightBikeMarker, { left: clampedBikePercent + '%' }]}>
           <View style={styles.mStraightBikeBubble}>
-            <Text style={{ fontSize: 14 }}>🛵</Text>
+            <Text style={{ fontSize: 13 }}>🛵</Text>
           </View>
         </View>
       </View>
 
-      {/* Dynamic Status / ETA Banner */}
+      {/* 4. Milestone Labels Row (Pure Flexbox - Never spills or clips) */}
+      <View style={styles.mStraightMilestonesRow}>
+        <Text style={styles.mStraightMilestoneLeft} numberOfLines={1}>
+          Dispatched
+        </Text>
+
+        {hasPriorStops && (
+          <Text style={[styles.mStraightMilestoneCenter, isFirstStopDone && { color: '#34D399' }]} numberOfLines={1}>
+            {isFirstStopDone ? '✓ 1st Stop' : '● 1st Stop'}
+          </Text>
+        )}
+
+        <Text style={styles.mStraightMilestoneRight} numberOfLines={1}>
+          {storeDisplay}
+        </Text>
+      </View>
+
+      {/* 5. Status Banner */}
       <View style={styles.mStraightStatusBanner}>
-        <Text style={styles.mStraightStatusText}>
+        <Text style={styles.mStraightStatusText} numberOfLines={2}>
           {statusMessage}
         </Text>
       </View>
@@ -22434,56 +22449,96 @@ const styles = StyleSheet.create({
   mStraightTrackContainer: {
     backgroundColor: '#0F172A',
     borderRadius: 14,
-    padding: 14,
-    marginVertical: 10,
+    padding: 12,
+    marginVertical: 8,
     borderWidth: 1,
     borderColor: '#1E293B',
+    width: '100%',
+    overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
-    shadowRadius: 8,
+    shadowRadius: 6,
     elevation: 4,
   },
   mStraightTrackHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 6,
+  },
+  mStraightTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+    marginRight: 4,
   },
   mStraightRadarDot: {
-    width: 8,
-    height: 8,
+    width: 7,
+    height: 7,
     borderRadius: 4,
     backgroundColor: '#10B981',
     marginRight: 6,
   },
   mStraightTrackTitle: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '900',
     color: '#10B981',
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
   },
   mStraightEtaPill: {
     backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: 'rgba(16, 185, 129, 0.3)',
+    flexShrink: 0,
   },
   mStraightEtaText: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '800',
     color: '#34D399',
   },
+  mStraightRiderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    marginBottom: 8,
+  },
+  mStraightRiderText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '600',
+    flex: 1,
+    flexShrink: 1,
+  },
+  mStraightPinBadge: {
+    backgroundColor: 'rgba(30, 41, 59, 0.9)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 211, 153, 0.25)',
+    flexShrink: 0,
+  },
+  mStraightPinBadgeText: {
+    fontSize: 10.5,
+    color: '#CBD5E1',
+    fontWeight: '700',
+  },
   mStraightLineWrapper: {
-    height: 60,
+    height: 38,
     justifyContent: 'center',
     position: 'relative',
-    marginVertical: 6,
+    marginHorizontal: 12,
+    marginVertical: 4,
   },
   mStraightTrackBackground: {
-    height: 6,
+    height: 5,
     backgroundColor: '#334155',
     borderRadius: 3,
     width: '100%',
@@ -22491,29 +22546,39 @@ const styles = StyleSheet.create({
   mStraightTrackFill: {
     position: 'absolute',
     left: 0,
-    height: 6,
+    height: 5,
     backgroundColor: '#10B981',
     borderRadius: 3,
   },
-  mStraightPin: {
+  mStraightOriginNode: {
     position: 'absolute',
+    left: 0,
+    top: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    top: 15,
+    transform: [{ translateX: -4 }],
   },
   mStraightOriginDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#64748B',
   },
-  mStraightStopNode: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+  mStraightMiddleStopWrapper: {
+    position: 'absolute',
+    left: '50%',
+    top: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
+    transform: [{ translateX: -9 }],
+  },
+  mStraightStopNode: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
     borderColor: '#0F172A',
   },
   mStraightStopNodeActive: {
@@ -22524,34 +22589,26 @@ const styles = StyleSheet.create({
   },
   mStraightStopNodeText: {
     color: '#FFFFFF',
-    fontSize: 10.5,
+    fontSize: 9.5,
     fontWeight: '900',
   },
-  mStraightStopNodeLabel: {
-    fontSize: 9,
-    color: '#94A3B8',
-    fontWeight: '700',
-    marginTop: 3,
-    maxWidth: 80,
-    textAlign: 'center',
+  mStraightDestNodeWrapper: {
+    position: 'absolute',
+    right: 0,
+    top: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    transform: [{ translateX: 10 }],
   },
   mStraightDestNode: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: '#065F46',
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#34D399',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  mStraightDestNodeLabel: {
-    fontSize: 9,
-    color: '#A7F3D0',
-    fontWeight: '800',
-    marginTop: 3,
-    maxWidth: 70,
-    textAlign: 'center',
   },
   mStraightBikeMarker: {
     position: 'absolute',
@@ -22559,35 +22616,66 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
+    transform: [{ translateX: -14 }],
   },
   mStraightBikeBubble: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#1E293B',
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#10B981',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.35,
-    shadowRadius: 4,
-    elevation: 5,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  mStraightMilestonesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 2,
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+  mStraightMilestoneLeft: {
+    fontSize: 9,
+    color: '#64748B',
+    fontWeight: '700',
+    flex: 1,
+    textAlign: 'left',
+  },
+  mStraightMilestoneCenter: {
+    fontSize: 9,
+    color: '#F59E0B',
+    fontWeight: '800',
+    flex: 1,
+    textAlign: 'center',
+  },
+  mStraightMilestoneRight: {
+    fontSize: 9,
+    color: '#A7F3D0',
+    fontWeight: '800',
+    flex: 1,
+    textAlign: 'right',
   },
   mStraightStatusBanner: {
     backgroundColor: 'rgba(30, 41, 59, 0.7)',
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    marginTop: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    marginTop: 2,
     borderLeftWidth: 3,
     borderLeftColor: '#10B981',
   },
   mStraightStatusText: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#E2E8F0',
     fontWeight: '600',
+    lineHeight: 15,
   },
 
 });

@@ -463,6 +463,10 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        - First Shop: Sees a single, direct straight line from [🛵 Rider] ────► [🏪 Your Shop].
        - Second Shop (Multi-Store): The tracker plots the prior stop at the 50% midpoint: [🛵 Rider] ────● [Store 1 (Picking Up)] ────► [🏪 Your Shop]. While the rider is at Store 1, the node displays amber `● Picking Up`. Once completed, it turns green `✓ Picked Up` and advances to the final leg!
      * Handover Security PIN & Rider Info: Shows rider name, vehicle, plate number, and official handover PIN for instant verification.
+     * Universal Responsive Design & Screen Fit:
+       - Restructured all layout elements to dynamic Flexbox with `overflow: 'hidden'`, `width: '100%'`, auto-wrapping headers, and text truncation (`numberOfLines={1}`).
+       - Clamped the moving motorbike marker strictly between 6% and 88% with safe container margins, eliminating clipping at the card edges.
+       - Replaced absolute node labels with a dedicated 3-column Flexbox milestone row (`Dispatched` | `Stop 1` | `Your Shop`), ensuring text never bleeds or goes astray on smaller screens (iPhone SE, compact Androids).
 
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
