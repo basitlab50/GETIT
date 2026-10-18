@@ -226,64 +226,102 @@ export async function triggerNotification({
 
 // A. New Order Created (For Buyer & Merchant)
 export function notifyOrderPlaced(order) {
-  // Buyer alert
+  // Buyer alert (Strictly for buyer)
   triggerNotification({
     title: '🛍️ Order Confirmed & Paid!',
     body: `Your provisions from ${order.storeName} (${order.itemsCount || 1} items) are confirmed and being prepared.`,
     type: 'default',
-    data: { orderId: order.id, status: 'New Order' },
+    data: {
+      orderId: order.id,
+      status: 'New Order',
+      audience: 'buyer',
+      role: 'customer',
+      customerId: order.customerId || order.customer_id,
+      customerPhone: order.customerPhone || order.customer_phone,
+    },
   });
 
-  // Merchant alert (Loud Cash Register Chime)
+  // Merchant alert (Strictly for the store owner)
   triggerNotification({
     title: '🔔 NEW ORDER RECEIVED!',
     body: `New Order #${order.id} for ${order.storeName}! Product value: ₦${Number(order.subtotal || order.total || 0).toLocaleString()}. Tap to start preparing.`,
     type: 'merchant_new_order',
-    data: { orderId: order.id, status: 'New Order', role: 'merchant' },
+    data: {
+      orderId: order.id,
+      status: 'New Order',
+      audience: 'merchant',
+      role: 'merchant',
+      storeId: order.storeId || order.store_id,
+    },
   });
 }
 
-// B. Courier Dispatched to Store
+// B. Courier Dispatched to Store (Strictly for buyer)
 export function notifyCourierDispatched(order, riderName = 'Musa Ibrahim') {
   triggerNotification({
     title: '🛵 Courier Dispatched',
     body: `Courier ${riderName} has been assigned and is riding to ${order.storeName} to collect your packages.`,
     type: 'default',
-    data: { orderId: order.id, status: 'Preparing' },
+    data: {
+      orderId: order.id,
+      status: 'Preparing',
+      audience: 'buyer',
+      role: 'customer',
+      customerId: order.customerId || order.customer_id,
+    },
   });
 }
 
-// C. Order Picked Up & On the Way
+// C. Order Picked Up & On the Way (Strictly for buyer)
 export function notifyOrderOnTheWay(order, riderName = 'Musa Ibrahim') {
   triggerNotification({
     title: '🚀 Courier is On the Road!',
     body: `All packages picked up! Courier ${riderName} is heading directly to your pinned address.`,
     type: 'default',
-    data: { orderId: order.id, status: 'On the Way' },
+    data: {
+      orderId: order.id,
+      status: 'On the Way',
+      audience: 'buyer',
+      role: 'customer',
+      customerId: order.customerId || order.customer_id,
+    },
   });
 }
 
-// D. Courier Arrived at Door / Gate
+// D. Courier Arrived at Door / Gate (Strictly for buyer - NEVER sent to stores)
 export function notifyCourierArrived(order) {
   triggerNotification({
     title: '📍 Courier Has Arrived Outside!',
     body: `Your courier has arrived at your gate! Give your Delivery PIN (${order.deliveryPin}) to collect your provisions.`,
     type: 'arrived',
-    data: { orderId: order.id, status: 'Arrived', pin: order.deliveryPin },
+    data: {
+      orderId: order.id,
+      status: 'Arrived',
+      pin: order.deliveryPin,
+      audience: 'buyer',
+      role: 'customer',
+      customerId: order.customerId || order.customer_id,
+    },
   });
 }
 
-// E. Order Delivered & Review Reminder
+// E. Order Delivered & Review Reminder (Strictly for buyer - NEVER sent to stores)
 export function notifyOrderDelivered(order) {
   triggerNotification({
     title: '✅ Order Delivered Successfully!',
     body: `Your provisions from ${order.storeName} have been delivered. Tap here to rate your food & courier!`,
     type: 'default',
-    data: { orderId: order.id, status: 'Delivered' },
+    data: {
+      orderId: order.id,
+      status: 'Delivered',
+      audience: 'buyer',
+      role: 'customer',
+      customerId: order.customerId || order.customer_id,
+    },
   });
 }
 
-// F. Recurring Acceptance Reminder (Every 1 minute until accepted)
+// F. Recurring Acceptance Reminder (Every 1 minute until accepted - Strictly for store)
 export function notifyMerchantAcceptanceReminder(order, count = 1) {
   const storeName = order.storeName || order.store_name || 'Your store';
   const title = count > 1 ? `🔔 ${count} ORDERS AWAITING ACCEPTANCE!` : '🔔 ORDER ACCEPTANCE REMINDER!';
@@ -295,11 +333,17 @@ export function notifyMerchantAcceptanceReminder(order, count = 1) {
     title,
     body,
     type: 'merchant_new_order',
-    data: { orderId: order.id, status: 'New Order', role: 'merchant' },
+    data: {
+      orderId: order.id,
+      status: 'New Order',
+      audience: 'merchant',
+      role: 'merchant',
+      storeId: order.storeId || order.store_id,
+    },
   });
 }
 
-// G. Recurring Preparation Reminder (Every 1 minute until marked ready)
+// G. Recurring Preparation Reminder (Every 1 minute until marked ready - Strictly for store)
 export function notifyMerchantPrepReminder(order, count = 1) {
   const storeName = order.storeName || order.store_name || 'Your store';
   const title = count > 1 ? `⏱️ ${count} ORDERS IN PREPARATION` : '⏱️ ORDER PREPARATION REMINDER';
@@ -311,6 +355,12 @@ export function notifyMerchantPrepReminder(order, count = 1) {
     title,
     body,
     type: 'merchant_new_order',
-    data: { orderId: order.id, status: 'Preparing', role: 'merchant' },
+    data: {
+      orderId: order.id,
+      status: 'Preparing',
+      audience: 'merchant',
+      role: 'merchant',
+      storeId: order.storeId || order.store_id,
+    },
   });
 }

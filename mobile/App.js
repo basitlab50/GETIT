@@ -1070,6 +1070,170 @@ function AnimatedStoreDoor({ store, operatingDays, isOpenToday, openTime }) {
   );
 }
 
+
+// =========================================================================
+// STRAIGHT-LINE COURIER TRACKER FOR MERCHANT (ZERO MAP, PURE VECTOR TRACKING)
+// =========================================================================
+function MerchantStraightLineTracker({ order, currentStore }) {
+  if (!order) return null;
+
+  const stops = Array.isArray(order.stops) && order.stops.length > 0 ? order.stops : [];
+  let myStopIndex = stops.findIndex(
+    (st) =>
+      (currentStore?.id && st.storeId === currentStore.id) ||
+      (currentStore?.name && st.storeName && st.storeName.toLowerCase() === currentStore.name.toLowerCase())
+  );
+  if (myStopIndex === -1) myStopIndex = 0;
+
+  const priorStops = stops.slice(0, myStopIndex);
+  const hasPriorStops = priorStops.length > 0;
+
+  // Determine Coordinates
+  const myStop = stops[myStopIndex];
+  const storeLat = Number(myStop?.latitude || currentStore?.coordinates?.latitude || 9.0882);
+  const storeLng = Number(myStop?.longitude || currentStore?.coordinates?.longitude || 7.4933);
+
+  const riderLat = Number(order.boltCoords?.latitude || (stops[0]?.latitude ? Number(stops[0].latitude) - 0.015 : 9.0732));
+  const riderLng = Number(order.boltCoords?.longitude || (stops[0]?.longitude ? Number(stops[0].longitude) - 0.012 : 7.4813));
+
+  // Haversine Distance Calculation (km)
+  const dLat = (storeLat - riderLat) * (Math.PI / 180);
+  const dLon = (storeLng - riderLng) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(riderLat * (Math.PI / 180)) * Math.cos(storeLat * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const distKm = 6371 * c;
+
+  const distText = distKm < 0.08 ? 'Arrived at shop' : (distKm < 1 ? Math.round(distKm * 1000) + ' m away' : distKm.toFixed(1) + ' km away');
+  const allocatedMins = Math.max(1, Math.round((distKm / 25) * 60));
+  const etaText = distKm < 0.08 ? 'Arrived outside' : '~' + allocatedMins + ' min' + (allocatedMins === 1 ? '' : 's');
+
+  const currentRiderStop = order.currentStopIndex || 0;
+  let bikePercent = 15;
+  let statusMessage = '';
+
+  if (!hasPriorStops) {
+    // Single Direct Leg: First shop sees a direct straight line from Rider to Shop
+    const legPoints = (order.roadLegs && order.roadLegs[0]?.length) || 30;
+    const roadIdx = order.roadPointIndex || 0;
+    if (distKm < 0.08 || order.stops?.[0]?.pickupStatus === 'picked_up') {
+      bikePercent = 95;
+      statusMessage = '🛵 Courier Musa has arrived outside your shop! Handover PIN: ' + (order.pickupPin || '5821');
+    } else {
+      const progress = Math.min(92, Math.max(10, Math.round((roadIdx / legPoints) * 100)));
+      bikePercent = progress;
+      statusMessage = '🚴 Courier Musa is en route directly to your shop (' + distText + ')';
+    }
+  } else {
+    // Multi-Stop Leg: Second shop sees the intermediate stop before their store
+    const firstStopName = priorStops[0]?.storeName || '1st Shop';
+    const isFirstStopDone = currentRiderStop > 0 || priorStops[0]?.pickupStatus === 'picked_up';
+
+    if (!isFirstStopDone) {
+      // Rider is still heading to or at the 1st stop
+      const leg0Points = (order.roadLegs && order.roadLegs[0]?.length) || 30;
+      const roadIdx = order.roadPointIndex || 0;
+      const subProg = Math.min(0.9, Math.max(0.1, roadIdx / leg0Points));
+      bikePercent = Math.round(subProg * 45); // Positioned on segment before 1st stop (5% to 45%)
+      statusMessage = '⏳ Courier Musa is picking up at 1st Stop (' + firstStopName + '). Heading to you next!';
+    } else {
+      // 1st stop done! Rider is on the leg to this shop
+      const leg1Points = (order.roadLegs && order.roadLegs[myStopIndex]?.length) || 30;
+      const roadIdx = order.roadPointIndex || 0;
+      if (distKm < 0.08) {
+        bikePercent = 95;
+        statusMessage = '🛵 Courier Musa has arrived outside your shop! Handover PIN: ' + (order.pickupPin || '5821');
+      } else {
+        const subProg = Math.min(0.92, Math.max(0.08, roadIdx / leg1Points));
+        bikePercent = 50 + Math.round(subProg * 45); // Positioned between 1st stop and your shop (54% to 95%)
+        statusMessage = '🚀 1st stop completed! Musa is now riding directly to your shop (' + distText + ')';
+      }
+    }
+  }
+
+  return (
+    <View style={styles.mStraightTrackContainer}>
+      {/* Top Header Row */}
+      <View style={styles.mStraightTrackHeader}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={styles.mStraightRadarDot} />
+          <Text style={styles.mStraightTrackTitle}>LIVE COURIER TRACKER</Text>
+        </View>
+        <View style={styles.mStraightEtaPill}>
+          <Text style={styles.mStraightEtaText}>⏱️ {etaText} • {distText}</Text>
+        </View>
+      </View>
+
+      {/* Courier Info Subhead */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <Text style={{ fontSize: 11.5, color: '#94A3B8', fontWeight: '600' }}>
+          Rider: <Text style={{ color: '#F8FAFC', fontWeight: '700' }}>{order.boltRider?.name || 'Musa Ibrahim'}</Text> ({order.boltRider?.vehicle || 'Bajaj Boxer 150'})
+        </Text>
+        <Text style={{ fontSize: 11, color: '#A7F3D0', fontWeight: '700' }}>
+          Shop PIN: <Text style={{ color: '#34D399', fontWeight: '900' }}>{order.pickupPin || '5821'}</Text>
+        </Text>
+      </View>
+
+      {/* The Straight Line Track Area */}
+      <View style={styles.mStraightLineWrapper}>
+        {/* Background Track Line */}
+        <View style={styles.mStraightTrackBackground} />
+
+        {/* Active Progress Fill */}
+        <View style={[styles.mStraightTrackFill, { width: bikePercent + '%' }]} />
+
+        {/* Start Point Pin (Origin) */}
+        <View style={[styles.mStraightPin, { left: 0 }]}>
+          <View style={styles.mStraightOriginDot} />
+        </View>
+
+        {/* Intermediate Stop Pin (Rendered only if there is a stop before this shop!) */}
+        {hasPriorStops && (
+          <View style={[styles.mStraightPin, { left: '50%', transform: [{ translateX: -12 }] }]}>
+            <View style={[
+              styles.mStraightStopNode,
+              currentRiderStop > 0 ? styles.mStraightStopNodeDone : styles.mStraightStopNodeActive,
+            ]}>
+              <Text style={styles.mStraightStopNodeText}>
+                {currentRiderStop > 0 ? '✓' : '1'}
+              </Text>
+            </View>
+            <Text style={styles.mStraightStopNodeLabel} numberOfLines={1}>
+              {priorStops[0]?.storeName || '1st Stop'}
+            </Text>
+          </View>
+        )}
+
+        {/* Destination Pin (Your Store) */}
+        <View style={[styles.mStraightPin, { right: 0 }]}>
+          <View style={styles.mStraightDestNode}>
+            <Text style={{ fontSize: 13 }}>🏪</Text>
+          </View>
+          <Text style={styles.mStraightDestNodeLabel} numberOfLines={1}>
+            Your Shop
+          </Text>
+        </View>
+
+        {/* Moving Motorbike Marker */}
+        <View style={[styles.mStraightBikeMarker, { left: bikePercent + '%', transform: [{ translateX: -16 }] }]}>
+          <View style={styles.mStraightBikeBubble}>
+            <Text style={{ fontSize: 14 }}>🛵</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Dynamic Status / ETA Banner */}
+      <View style={styles.mStraightStatusBanner}>
+        <Text style={styles.mStraightStatusText}>
+          {statusMessage}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 export default function App() {
   const [selectedLocation, setSelectedLocation] = useState('Plot 14 Gana Street, Maitama, Abuja');
   const [locationModalVisible, setLocationModalVisible] = useState(false);
@@ -1141,6 +1305,14 @@ export default function App() {
 
   const [storesList, setStoresList] = useState(STORES_AROUND_ME);
   const [appMode, setAppMode] = useState('customer'); // 'customer' | 'merchant'
+
+  const appModeRef = useRef(appMode);
+  const currentUserRef = useRef(null);
+  const currentMerchantStoreRef = useRef(null);
+
+  useEffect(() => {
+    appModeRef.current = appMode;
+  }, [appMode]);
   const [merchantTab, setMerchantTab] = useState('orders'); // 'orders' | 'inventory' | 'finances' | 'store'
   const [merchantStoreId, setMerchantStoreId] = useState(null); // set dynamically on merchant sign in
   const [merchantOrderFilter, setMerchantOrderFilter] = useState('new'); // 'all' | 'new' | 'preparing' | 'ready' | 'completed'
@@ -3957,6 +4129,32 @@ export default function App() {
     registerForPushNotificationsAsync();
 
     const unsubscribe = subscribeToInAppNotifications((notif) => {
+      const targetAudience = notif.data?.audience;
+      const targetStoreId = notif.data?.storeId;
+      const targetCustomerId = notif.data?.customerId;
+      const currentMode = appModeRef.current;
+      const currentStore = currentMerchantStoreRef.current;
+      const user = currentUserRef.current;
+
+      // Strict Audience Shield:
+      // A. If notification is strictly for buyer (e.g. arrival outside gate, courier on the way, PIN):
+      // NEVER alert the store / merchant screen!
+      if (targetAudience === 'buyer' && currentMode === 'merchant') {
+        return;
+      }
+      // If customerId is provided, only alert if matches current logged-in buyer
+      if (targetAudience === 'buyer' && targetCustomerId && user?.id && user.id !== targetCustomerId) {
+        return;
+      }
+
+      // B. If notification is strictly for merchant (new order, 1-min reminders):
+      // Only alert if the user is in merchant mode and owns the store!
+      if (targetAudience === 'merchant') {
+        if (currentMode !== 'merchant') return;
+        if (targetStoreId && currentStore?.id && targetStoreId !== currentStore.id) {
+          return;
+        }
+      }
       playAudioBeep(notif.type || 'default');
       setActiveToastNotification(notif);
       toastAnimY.setValue(-120);
@@ -4460,6 +4658,14 @@ export default function App() {
     merchantOwnedStores.find((s) => s.id === (merchantStoreId || currentUser?.storeId)) ||
     merchantOwnedStores[0] ||
     (currentUser?.role === 'seller' && currentUser.storeId ? { id: currentUser.storeId, name: currentUser.businessName || 'My Store' } : null);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
+  useEffect(() => {
+    currentMerchantStoreRef.current = currentMerchantStore;
+  }, [currentMerchantStore]);
 
   const getMerchantStopForOrder = (ord, store = currentMerchantStore) => {
     if (!ord) return null;
@@ -10711,35 +10917,11 @@ export default function App() {
 
                           {isReady && (
                             <View style={{ width: '100%' }}>
-                              {ord.deliveryPartner === 'bolt' && !ord.boltRider && (
-                                <TouchableOpacity
-                                  style={styles.mBoltDispatchBtn}
-                                  onPress={() => dispatchBoltCourier(ord.id)}
-                                >
-                                  <Text style={styles.mBoltDispatchBtnText}>
-                                    🟢 Dispatch Bolt Motorbike Courier
-                                  </Text>
-                                </TouchableOpacity>
-                              )}
-
-                              {ord.boltRider && (
-                                <View style={styles.mBoltAssignedCard}>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <Text style={styles.mBoltAssignedTitle}>
-                                      🟢 Bolt Rider: {ord.boltRider.name}
-                                    </Text>
-                                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#047857' }}>
-                                      {ord.eta || '4 mins away'}
-                                    </Text>
-                                  </View>
-                                  <Text style={styles.mBoltAssignedRider}>
-                                    {ord.boltRider.vehicle} • Plate: {ord.boltRider.plate}
-                                  </Text>
-                                  <Text style={{ fontSize: 10.5, color: '#475569', marginTop: 3 }}>
-                                    Tracking: {ord.boltTrackingCode} • Shop Handover PIN: <Text style={{ fontWeight: '800', color: '#047857' }}>{ord.pickupPin}</Text>
-                                  </Text>
-                                </View>
-                              )}
+                              {/* 🚴 Zero-Map Straight Line Courier Tracker */}
+                              <MerchantStraightLineTracker
+                                order={ord}
+                                currentStore={currentMerchantStore}
+                              />
 
                               <TouchableOpacity
                                 style={styles.mCompleteBtn}
@@ -22248,6 +22430,164 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.5,
   },
+
+  mStraightTrackContainer: {
+    backgroundColor: '#0F172A',
+    borderRadius: 14,
+    padding: 14,
+    marginVertical: 10,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  mStraightTrackHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  mStraightRadarDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+    marginRight: 6,
+  },
+  mStraightTrackTitle: {
+    fontSize: 10.5,
+    fontWeight: '900',
+    color: '#10B981',
+    letterSpacing: 0.8,
+  },
+  mStraightEtaPill: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  mStraightEtaText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#34D399',
+  },
+  mStraightLineWrapper: {
+    height: 60,
+    justifyContent: 'center',
+    position: 'relative',
+    marginVertical: 6,
+  },
+  mStraightTrackBackground: {
+    height: 6,
+    backgroundColor: '#334155',
+    borderRadius: 3,
+    width: '100%',
+  },
+  mStraightTrackFill: {
+    position: 'absolute',
+    left: 0,
+    height: 6,
+    backgroundColor: '#10B981',
+    borderRadius: 3,
+  },
+  mStraightPin: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    top: 15,
+  },
+  mStraightOriginDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#64748B',
+  },
+  mStraightStopNode: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#0F172A',
+  },
+  mStraightStopNodeActive: {
+    backgroundColor: '#F59E0B',
+  },
+  mStraightStopNodeDone: {
+    backgroundColor: '#10B981',
+  },
+  mStraightStopNodeText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '900',
+  },
+  mStraightStopNodeLabel: {
+    fontSize: 9,
+    color: '#94A3B8',
+    fontWeight: '700',
+    marginTop: 3,
+    maxWidth: 80,
+    textAlign: 'center',
+  },
+  mStraightDestNode: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#065F46',
+    borderWidth: 2,
+    borderColor: '#34D399',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mStraightDestNodeLabel: {
+    fontSize: 9,
+    color: '#A7F3D0',
+    fontWeight: '800',
+    marginTop: 3,
+    maxWidth: 70,
+    textAlign: 'center',
+  },
+  mStraightBikeMarker: {
+    position: 'absolute',
+    top: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  mStraightBikeBubble: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#1E293B',
+    borderWidth: 2,
+    borderColor: '#10B981',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  mStraightStatusBanner: {
+    backgroundColor: 'rgba(30, 41, 59, 0.7)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginTop: 4,
+    borderLeftWidth: 3,
+    borderLeftColor: '#10B981',
+  },
+  mStraightStatusText: {
+    fontSize: 11,
+    color: '#E2E8F0',
+    fontWeight: '600',
+  },
+
 });
-
-

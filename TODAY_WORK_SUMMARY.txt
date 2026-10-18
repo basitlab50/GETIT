@@ -452,6 +452,18 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - Dynamic Multi-Order Support: Alerts intelligently notify if single or multiple orders are awaiting action (e.g. `🔔 2 ORDERS AWAITING ACCEPTANCE!` or `⏱️ ORDER PREPARATION REMINDER`).
    - Auto-Cleanup: When the status transitions (accepted or marked ready), the corresponding reminder timers and timestamp refs are automatically reset.
 
+7. Buyer vs. Merchant Notification Isolation & Zero-Map Straight-Line Courier Tracker:
+   - Strict Audience Isolation Shield: All notification dispatchers in `mobile/services/notificationService.js` are tagged with explicit `audience: 'buyer'` or `'merchant'`, `role: 'customer'` or `'merchant'`, plus `storeId` and `customerId`. In `mobile/App.js`, `subscribeToInAppNotifications` checks current view state (`appMode`): buyer-specific notifications (courier arrived at destination, delivery PIN alerts, courier en route to buyer address, order delivered) are strictly silenced and hidden from store owners in Merchant Hub.
+   - Multi-Store Pickup Privacy: For multi-store orders, intermediate stops do not send buyer-destined or misleading alerts to other stores. Each store only receives events relevant to their specific leg.
+   - Zero-Map Straight-Line Courier Tracker (`MerchantStraightLineTracker`):
+     * When a store owner marks an order as `Ready for Pickup`, instead of loading a heavy map, the order card displays a sleek, linear progress track.
+     * Real-Time Motorbike Progress: The motorbike marker (🛵) advances along the line in real time as the courier moves towards the shop.
+     * Dynamic ETA & Distance: Computes Haversine distance between live courier coordinates and the store, dynamically showing remaining travel time and distance (e.g., `⏱️ ~3 mins • 1.1 km away`).
+     * Smart Intermediate Stop Handling:
+       - First Shop: Sees a single, direct straight line from [🛵 Rider] ────► [🏪 Your Shop].
+       - Second Shop (Multi-Store): The tracker plots the prior stop at the 50% midpoint: [🛵 Rider] ────● [Store 1 (Picking Up)] ────► [🏪 Your Shop]. While the rider is at Store 1, the node displays amber `● Picking Up`. Once completed, it turns green `✓ Picked Up` and advances to the final leg!
+     * Handover Security PIN & Rider Info: Shows rider name, vehicle, plate number, and official handover PIN for instant verification.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
