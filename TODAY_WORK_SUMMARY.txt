@@ -467,6 +467,9 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        - Restructured all layout elements to dynamic Flexbox with `overflow: 'hidden'`, `width: '100%'`, auto-wrapping headers, and text truncation (`numberOfLines={1}`).
        - Clamped the moving motorbike marker strictly between 6% and 88% with safe container margins, eliminating clipping at the card edges.
        - Replaced absolute node labels with a dedicated 3-column Flexbox milestone row (`Dispatched` | `Stop 1` | `Your Shop`), ensuring text never bleeds or goes astray on smaller screens (iPhone SE, compact Androids).
+     * 1-to-1 Buyer-Merchant Turn-by-Turn Road Distance Reconciliation:
+       - Fixed inaccurate direct bird-flight Euclidean distance calculation that previously showed multi-stop shops as artificially close (e.g. 200m) while the rider was still far away on the road.
+       - Sums the actual remaining turn-by-turn street route segments along `order.roadLegs` plus prior intermediate stops, matching the buyer's live map progress exactly as the courier covers distance on the road.
 
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS

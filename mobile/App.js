@@ -1089,67 +1089,135 @@ function MerchantStraightLineTracker({ order, currentStore }) {
   const priorStops = stops.slice(0, myStopIndex);
   const hasPriorStops = priorStops.length > 0;
 
-  // Determine Coordinates
+  // Haversine formula helper
+  function calcDist(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  // -------------------------------------------------------------------------
+  // ACCURATE TURN-BY-TURN ROAD DISTANCE (RECONCILED 1:1 WITH BUYER MAP ROUTE)
+  // -------------------------------------------------------------------------
   const myStop = stops[myStopIndex];
   const storeLat = Number(myStop?.latitude || currentStore?.coordinates?.latitude || 9.0882);
   const storeLng = Number(myStop?.longitude || currentStore?.coordinates?.longitude || 7.4933);
 
-  const riderLat = Number(order.boltCoords?.latitude || (stops[0]?.latitude ? Number(stops[0].latitude) - 0.015 : 9.0732));
-  const riderLng = Number(order.boltCoords?.longitude || (stops[0]?.longitude ? Number(stops[0].longitude) - 0.012 : 7.4813));
-
-  // Haversine Distance Calculation (km)
-  const dLat = (storeLat - riderLat) * (Math.PI / 180);
-  const dLon = (storeLng - riderLng) * (Math.PI / 180);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(riderLat * (Math.PI / 180)) * Math.cos(storeLat * (Math.PI / 180)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const distKm = 6371 * c;
-
-  const distText = distKm < 0.08 ? 'Arrived at shop' : (distKm < 1 ? Math.round(distKm * 1000) + 'm away' : distKm.toFixed(1) + 'km away');
-  const allocatedMins = Math.max(1, Math.round((distKm / 25) * 60));
-  const etaText = distKm < 0.08 ? 'Arrived' : '~' + allocatedMins + ' min' + (allocatedMins === 1 ? '' : 's');
-
   const currentRiderStop = order.currentStopIndex || 0;
+  const isMyStopCompleted = myStop?.pickupStatus === 'picked_up' || currentRiderStop > myStopIndex;
+
+  let accurateRemainingKm = 0;
+  let activeRoadProgress = 0;
+
+  const roadLegs = order.roadLegs && Array.isArray(order.roadLegs) && order.roadLegs.length > 0 ? order.roadLegs : null;
+
+  if (isMyStopCompleted) {
+    accurateRemainingKm = 0;
+    activeRoadProgress = 1.0;
+  } else if (roadLegs) {
+    // In multi-stop route:
+    // Leg 0: Waypoint 0 (Store 0) -> Waypoint 1 (Store 1)
+    // Leg 1: Waypoint 1 (Store 1) -> Waypoint 2 (Home or Store 2)
+    const legIdxToMe = Math.max(0, myStopIndex === 0 ? 0 : myStopIndex - 1);
+    const activeLeg = roadLegs[currentRiderStop] || roadLegs[0] || [];
+    const roadPtIdx = Math.min(order.roadPointIndex || 0, Math.max(0, activeLeg.length - 1));
+
+    if (currentRiderStop === legIdxToMe) {
+      // Rider is actively traveling on the leg to THIS shop!
+      let remKm = 0;
+      for (let i = roadPtIdx; i < activeLeg.length - 1; i++) {
+        remKm += calcDist(activeLeg[i].latitude, activeLeg[i].longitude, activeLeg[i + 1].latitude, activeLeg[i + 1].longitude);
+      }
+      accurateRemainingKm = remKm;
+      activeRoadProgress = Math.min(1.0, Math.max(0, roadPtIdx / Math.max(1, activeLeg.length - 1)));
+    } else if (currentRiderStop < legIdxToMe) {
+      // Rider is on an earlier leg (picking up at a prior store, e.g. Stop 0 while this is Stop 1)
+      let remCurrentLeg = 0;
+      for (let i = roadPtIdx; i < activeLeg.length - 1; i++) {
+        remCurrentLeg += calcDist(activeLeg[i].latitude, activeLeg[i].longitude, activeLeg[i + 1].latitude, activeLeg[i + 1].longitude);
+      }
+      let intermediateKm = 0;
+      for (let l = currentRiderStop + 1; l <= legIdxToMe; l++) {
+        const intermediateLeg = roadLegs[l] || [];
+        for (let j = 0; j < intermediateLeg.length - 1; j++) {
+          intermediateKm += calcDist(intermediateLeg[j].latitude, intermediateLeg[j].longitude, intermediateLeg[j + 1].latitude, intermediateLeg[j + 1].longitude);
+        }
+      }
+      const hopFallback = Number(myStop?.distanceFromPrevKm) || 1.8;
+      accurateRemainingKm = remCurrentLeg + (intermediateKm > 0.1 ? intermediateKm : hopFallback);
+      activeRoadProgress = Math.min(0.9, Math.max(0.1, roadPtIdx / Math.max(1, activeLeg.length - 1)));
+    } else {
+      accurateRemainingKm = 0;
+      activeRoadProgress = 1.0;
+    }
+  } else {
+    // Fallback if roadLegs are direct or pending
+    const riderLat = Number(order.boltCoords?.latitude || (stops[0]?.latitude ? Number(stops[0].latitude) - 0.012 : 9.0762));
+    const riderLng = Number(order.boltCoords?.longitude || (stops[0]?.longitude ? Number(stops[0].longitude) - 0.010 : 7.4833));
+
+    const directKm = calcDist(riderLat, riderLng, storeLat, storeLng);
+    // Real road distance in city grid is ~1.4x straight line
+    const roadEstimatedKm = directKm * 1.4;
+
+    if (hasPriorStops && currentRiderStop === 0) {
+      const priorHop = Number(myStop?.distanceFromPrevKm) || 1.6;
+      accurateRemainingKm = Math.max(roadEstimatedKm, priorHop + 0.8);
+      activeRoadProgress = 0.25;
+    } else {
+      accurateRemainingKm = roadEstimatedKm;
+      const legPoints = (order.roadLegs && order.roadLegs[0]?.length) || 30;
+      const roadIdx = order.roadPointIndex || 0;
+      activeRoadProgress = Math.min(1.0, Math.max(0.08, roadIdx / legPoints));
+    }
+  }
+
+  // Threshold: under 60 meters means rider has arrived outside the store!
+  const isAtShop = accurateRemainingKm < 0.06 || isMyStopCompleted;
+  const distText = isAtShop
+    ? 'Arrived at shop'
+    : accurateRemainingKm < 1
+    ? Math.round(accurateRemainingKm * 1000) + 'm away'
+    : accurateRemainingKm.toFixed(1) + ' km away';
+
+  // Realistic city transit speed (22 km/h) accounts for turns, traffic, and intersections
+  const allocatedMins = Math.max(1, Math.round((accurateRemainingKm / 22) * 60));
+  const etaText = isAtShop ? 'Arrived outside' : '~' + allocatedMins + ' min' + (allocatedMins === 1 ? '' : 's');
+
   let bikePercent = 15;
   let statusMessage = '';
 
   if (!hasPriorStops) {
     // Single Direct Leg: First shop sees a direct straight line from Rider to Shop
-    const legPoints = (order.roadLegs && order.roadLegs[0]?.length) || 30;
-    const roadIdx = order.roadPointIndex || 0;
-    if (distKm < 0.08 || order.stops?.[0]?.pickupStatus === 'picked_up') {
+    if (isAtShop) {
       bikePercent = 90;
       statusMessage = '🛵 Courier Musa has arrived outside! Handover PIN: ' + (order.pickupPin || '5821');
     } else {
-      const progress = Math.min(86, Math.max(10, Math.round((roadIdx / legPoints) * 100)));
-      bikePercent = progress;
+      bikePercent = Math.min(88, Math.max(8, Math.round(activeRoadProgress * 88)));
       statusMessage = '🚴 Courier Musa is en route directly to your shop (' + distText + ')';
     }
   } else {
     // Multi-Stop Leg: Second shop sees the intermediate stop before their store
     const firstStopName = priorStops[0]?.storeName || '1st Shop';
-    const isFirstStopDone = currentRiderStop > 0 || priorStops[0]?.pickupStatus === 'picked_up';
+    const isFirstStopDone = currentRiderStop > 0 || (priorStops[0]?.pickupStatus === 'picked_up');
 
     if (!isFirstStopDone) {
       // Rider is still heading to or at the 1st stop
-      const leg0Points = (order.roadLegs && order.roadLegs[0]?.length) || 30;
-      const roadIdx = order.roadPointIndex || 0;
-      const subProg = Math.min(0.9, Math.max(0.1, roadIdx / leg0Points));
-      bikePercent = Math.round(subProg * 44); // Positioned on segment before 1st stop (5% to 44%)
-      statusMessage = '⏳ Courier is picking up at 1st Stop (' + firstStopName + '). Heading to you next!';
+      bikePercent = Math.min(44, Math.max(8, Math.round(activeRoadProgress * 44)));
+      statusMessage = '⏳ Courier is picking up at 1st Stop (' + firstStopName + ') • ' + distText + '. Heading to you next!';
     } else {
-      // 1st stop done! Rider is on the leg to this shop
-      const leg1Points = (order.roadLegs && order.roadLegs[myStopIndex]?.length) || 30;
-      const roadIdx = order.roadPointIndex || 0;
-      if (distKm < 0.08) {
+      // 1st stop is done! Rider is on the leg to this shop
+      if (isAtShop) {
         bikePercent = 90;
         statusMessage = '🛵 Courier Musa has arrived outside! Handover PIN: ' + (order.pickupPin || '5821');
       } else {
-        const subProg = Math.min(0.9, Math.max(0.08, roadIdx / leg1Points));
-        bikePercent = 50 + Math.round(subProg * 40); // Positioned between 1st stop and your shop (54% to 90%)
-        statusMessage = '🚀 1st stop done! Musa is riding directly to your shop (' + distText + ')';
+        bikePercent = Math.min(88, Math.max(52, 50 + Math.round(activeRoadProgress * 38)));
+        statusMessage = '🚀 1st stop completed! Musa is riding directly to your shop (' + distText + ')';
       }
     }
   }
