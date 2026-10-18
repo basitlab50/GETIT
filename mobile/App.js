@@ -1141,7 +1141,7 @@ export default function App() {
   const [appMode, setAppMode] = useState('customer'); // 'customer' | 'merchant'
   const [merchantTab, setMerchantTab] = useState('orders'); // 'orders' | 'inventory' | 'finances' | 'store'
   const [merchantStoreId, setMerchantStoreId] = useState(null); // set dynamically on merchant sign in
-  const [merchantOrderFilter, setMerchantOrderFilter] = useState('all'); // 'all' | 'new' | 'preparing' | 'ready' | 'completed'
+  const [merchantOrderFilter, setMerchantOrderFilter] = useState('new'); // 'all' | 'new' | 'preparing' | 'ready' | 'completed'
   const [storeOpenStatus, setStoreOpenStatus] = useState(true);
   const [addProductModalVisible, setAddProductModalVisible] = useState(false);
   const [addModalTab, setAddModalTab] = useState('suggested'); // 'suggested' | 'custom'
@@ -4415,11 +4415,13 @@ export default function App() {
   const getMerchantStopStatus = (ord, store = currentMerchantStore) => {
     const matchingStop = getMerchantStopForOrder(ord, store);
     if (matchingStop) {
+      if (matchingStop.pickupStatus === 'picked_up' || matchingStop.status === 'Completed' || matchingStop.status === 'On the Way') return 'Completed';
+      if (matchingStop.pickupStatus === 'ready' || matchingStop.status === 'Ready for Pickup') return 'Ready for Pickup';
+      if (matchingStop.pickupStatus === 'in_progress_prep' || matchingStop.pickupStatus === 'preparing' || matchingStop.status === 'Preparing') return 'Preparing';
+      if (matchingStop.pickupStatus === 'rejected' || matchingStop.status === 'Rejected') return 'Rejected';
       if (matchingStop.status) return matchingStop.status;
-      if (matchingStop.pickupStatus === 'ready') return 'Ready for Pickup';
-      if (matchingStop.pickupStatus === 'in_progress_prep' || matchingStop.pickupStatus === 'preparing') return 'Preparing';
-      if (matchingStop.pickupStatus === 'rejected') return 'Rejected';
     }
+    if (ord.status === 'Completed' || ord.status === 'Delivered' || ord.status === 'On the Way') return 'Completed';
     return ord.status || 'New Order';
   };
 
@@ -4454,15 +4456,21 @@ export default function App() {
     return false;
   });
 
-  const merchantFilteredOrders = merchantOrders.filter((o) => {
-    const stopStatus = getMerchantStopStatus(o, currentMerchantStore);
-    if (merchantOrderFilter === 'all') return true;
-    if (merchantOrderFilter === 'new') return stopStatus === 'New Order';
-    if (merchantOrderFilter === 'preparing') return stopStatus === 'Preparing';
-    if (merchantOrderFilter === 'ready') return stopStatus === 'Ready for Pickup';
-    if (merchantOrderFilter === 'completed') return stopStatus === 'Completed' || stopStatus === 'On the Way' || o.status === 'Completed' || o.status === 'Delivered';
-    return true;
-  });
+  const merchantFilteredOrders = [...merchantOrders]
+    .sort((a, b) => {
+      const timeA = new Date(a.createdAt || a.created_at || 0).getTime() || 0;
+      const timeB = new Date(b.createdAt || b.created_at || 0).getTime() || 0;
+      return timeB - timeA;
+    })
+    .filter((o) => {
+      const stopStatus = getMerchantStopStatus(o, currentMerchantStore);
+      if (merchantOrderFilter === 'all') return true;
+      if (merchantOrderFilter === 'new') return stopStatus === 'New Order';
+      if (merchantOrderFilter === 'preparing') return stopStatus === 'Preparing';
+      if (merchantOrderFilter === 'ready') return stopStatus === 'Ready for Pickup';
+      if (merchantOrderFilter === 'completed') return stopStatus === 'Completed' || stopStatus === 'On the Way' || o.status === 'Completed' || o.status === 'Delivered';
+      return true;
+    });
 
   const getMerchantOrderProductAmount = (ord) => {
     const matchingStop = getMerchantStopForOrder(ord, currentMerchantStore);
@@ -4666,7 +4674,8 @@ export default function App() {
   };
 
   const completeMerchantOrder = (orderId) => {
-    let merchantStoreName = currentMerchantStore?.name || 'Store';
+    const targetStore = currentMerchantStore || storesList.find((s) => s.id === merchantStoreId);
+    let merchantStoreName = targetStore?.name || 'Store';
     let updatedStopsList = [];
     let allStopsPickedUp = false;
 
@@ -4677,13 +4686,18 @@ export default function App() {
         if (stops.length > 0) {
           updatedStopsList = stops.map((st) => {
             const isTargetShop =
-              (currentMerchantStore && (st.storeId === currentMerchantStore.id || (st.storeName && currentMerchantStore.name && st.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) ||
-              (!currentMerchantStore && st.storeName === 'The Gourmet Emporium');
+              (targetStore && (
+                st.storeId === targetStore.id ||
+                st.storeId === merchantStoreId ||
+                (st.storeName && targetStore.name && st.storeName.toLowerCase().trim() === targetStore.name.toLowerCase().trim())
+              )) ||
+              (!targetStore && !merchantStoreId);
+
             if (isTargetShop) {
-              merchantStoreName = st.storeName;
+              merchantStoreName = st.storeName || merchantStoreName;
               return {
                 ...st,
-                status: 'Ready for Pickup',
+                status: 'Completed',
                 pickupStatus: 'picked_up',
                 pickedUpAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               };
@@ -4717,6 +4731,12 @@ export default function App() {
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
       status: 'On the Way',
     }).catch(() => {});
+
+    broadcastLiveEvent('ORDER_UPDATE', {
+      orderId,
+      status: 'On the Way',
+      stops: updatedStopsList,
+    });
   };
 
   const rejectMerchantOrder = (orderId) => {
@@ -10444,7 +10464,6 @@ export default function App() {
                   contentContainerStyle={{ gap: 8 }}
                 >
                   {[
-                    { id: 'all', label: `All (${merchantOrders.length})` },
                     { id: 'new', label: `New (${merchantOrders.filter((o) => getMerchantStopStatus(o, currentMerchantStore) === 'New Order').length})` },
                     { id: 'preparing', label: `Preparing (${merchantOrders.filter((o) => getMerchantStopStatus(o, currentMerchantStore) === 'Preparing').length})` },
                     { id: 'ready', label: `Ready (${merchantOrders.filter((o) => getMerchantStopStatus(o, currentMerchantStore) === 'Ready for Pickup').length})` },
@@ -10452,6 +10471,7 @@ export default function App() {
                       const s = getMerchantStopStatus(o, currentMerchantStore);
                       return s === 'Completed' || s === 'On the Way' || o.status === 'Completed' || o.status === 'Delivered';
                     }).length})` },
+                    { id: 'all', label: `All (${merchantOrders.length})` },
                   ].map((f) => {
                     const active = merchantOrderFilter === f.id;
                     return (
