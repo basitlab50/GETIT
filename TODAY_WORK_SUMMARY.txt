@@ -434,6 +434,13 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Layer 3 (Background Heartbeat Poller - 3.5s): Runs silent cloud store reconciliation every 3.5 seconds, ensuring even if a device drops its socket connection, goes to sleep, or was backgrounded, it automatically resynchronizes without requiring any pull-to-refresh or app restart.
      * Real-Time Active Store Modal Sync: `loadCloudStores()` and the broadcast listener now update both `storesList` and `selectedStore` simultaneously, so if a buyer is currently viewing a store card or modal when the merchant switches to 24 Hours, the badge (`⚡ Open 24 Hours`) and working hours update live on their screen instantly.
 
+4. Live Catalog Out-of-Stock & Restock Synchronization:
+   - Added `updateStoreInventoryItem(itemId, updates)` to `mobile/services/supabaseService.js` which updates `out_of_stock` in PostgreSQL and broadcasts `INVENTORY_UPDATE` across the WebSocket.
+   - Wired `toggleStock(productId)` in `mobile/App.js` to immediately update local store inventory, `selectedStore`, and persist/broadcast to Supabase.
+   - Updated `handleInventoryPayload` in `mobile/App.js` to process real-time stock toggles and update both the background store catalog and any actively viewed buyer store modal.
+   - Fixed `loadCloudStores()` merging logic so fresh cloud stock states are never discarded in favor of stale local cache.
+   - Added protective `addToCart` check blocking purchase attempts on items currently marked out of stock.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
