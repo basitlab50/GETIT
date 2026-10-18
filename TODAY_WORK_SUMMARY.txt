@@ -441,6 +441,11 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - Fixed `loadCloudStores()` merging logic so fresh cloud stock states are never discarded in favor of stale local cache.
    - Added protective `addToCart` check blocking purchase attempts on items currently marked out of stock.
 
+5. Merchant Courier Handover & Orders Tab Reorganization:
+   - Fixed Courier Handover Action (`completeMerchantOrder`): Corrected the store stop completion status from `'Ready for Pickup'` to `'Completed'` (`pickupStatus: 'picked_up'`). When the merchant taps "🚴 Hand Over to Bolt Courier", the order now transitions immediately to the **Done** state, renders the green `✓ Order Settled & Dispatched` banner, and broadcasts the status update over WebSocket.
+   - Orders Filter Tabs Reorganized: Placed the **`New`** filter tab first and **`All`** last (`New` ➔ `Preparing` ➔ `Ready` ➔ `Done` ➔ `All`), with `New` selected by default on opening the Live Store Orders tab.
+   - Chronological Merchant Order Sorting: Ensured active merchant orders are sorted newest-first so new incoming customer orders are prominently pinned at the top.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
