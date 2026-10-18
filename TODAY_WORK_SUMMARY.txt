@@ -446,6 +446,13 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - Orders Filter Tabs Reorganized: Placed the **`New`** filter tab first and **`All`** last (`New` ➔ `Preparing` ➔ `Ready` ➔ `Done` ➔ `All`), with `New` selected by default on opening the Live Store Orders tab.
    - Chronological Merchant Order Sorting: Ensured active merchant orders are sorted newest-first so new incoming customer orders are prominently pinned at the top.
 
+6. 1-Minute Recurring Merchant Order Reminder Alerts:
+   - Acceptance Reminder Engine: When a store has an order awaiting acceptance (`New Order`), the background reminder loop monitors the order and triggers a high-priority audible chime and device notification (`notifyMerchantAcceptanceReminder`) every 1 minute until accepted.
+   - Preparation Reminder Engine: Once the merchant taps "Accept Order" and the order transitions to `Preparing`, the reminder interval resets and automatically triggers a recurring alert every 1 minute (`notifyMerchantPrepReminder`) until marked `Ready for Courier`.
+   - Dynamic Multi-Order Support: Alerts intelligently notify if single or multiple orders are awaiting action (e.g. `🔔 2 ORDERS AWAITING ACCEPTANCE!` or `⏱️ ORDER PREPARATION REMINDER`).
+   - Auto-Cleanup: When the status transitions (accepted or marked ready), the corresponding reminder timers and timestamp refs are automatically reset.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
+
