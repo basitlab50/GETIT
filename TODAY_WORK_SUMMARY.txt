@@ -483,6 +483,25 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Added `AppState.addEventListener('change', ...)` in `mobile/App.js` to immediately trigger `syncOrdersFromCloud()` and `loadCloudStores()` whenever the buyer returns from the background or unlocks their phone, keeping rider position and order status completely intact across devices.
      * Integrated `syncOrdersFromCloud()` into the 3.5s background heartbeat poller for continuous state catchup.
 
+9. Continuous Wall-Clock Elapsed-Time Deterministic Motorbike Movement Engine:
+   - The Issue:
+     * Previously, rider movement was driven solely by an active React Native `setInterval` tick (`roadPointIndex = roadPointIndex + 1`).
+     * On mobile operating systems (iOS and Android), background JavaScript timers are completely frozen when the screen is locked, minimized, or closed.
+     * Consequently, whenever the user was off the app, the motorbike stayed frozen in place and only resumed advancing when the app was reopened.
+   - Deterministic Wall-Clock Progression Architecture:
+     * Implemented `legStartedAt` timestamps (milliseconds) across all active orders and persisted into Supabase (`bolt_rider.legStartedAt`).
+     * Added pure calculation engine `calculateOrderRiderProgress(ord, now = Date.now())` that evaluates courier progress as a deterministic function of actual wall-clock elapsed time:
+       `elapsedMs = now - legStartedAt;`
+       `calculatedPointIdx = Math.min(totalPoints - 1, Math.floor(elapsedMs / MS_PER_POINT));`
+     * When the user locks the phone, minimizes, or closes the app for 30s, 2 minutes, or 10 minutes:
+       - On app unlock or return (`AppState === 'active'`), `calculateOrderRiderProgress` immediately evaluates elapsed real time and moves the motorbike ahead to the exact coordinate corresponding to real-world time passed.
+       - If enough real time has elapsed to cover the leg, the engine automatically completes the leg, advances to the next stop, or delivers to customer gate with security PIN and arrival chime.
+       - While the app is actively open on the screen, the 2-second interval smoothly glides the rider point-by-point continuously along the tarmac road.
+   - Synchronized Buyer & Merchant Experience:
+     * In `MerchantStraightLineTracker`: Computes `elapsedTrackerIdx` from `order.legStartedAt`, instantly updating remaining kilometers and rider track progress when opened.
+     * In Buyer MapView: Computes `elapsedBuyerMapIdx` from `ord.legStartedAt` so the rider marker is accurately positioned on the blue road line immediately upon viewing.
+     * In `syncOrdersFromCloud` and `loadStoredState`: Catches up all restored orders with `calculateOrderRiderProgress(ord, Date.now())` on app launch.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================

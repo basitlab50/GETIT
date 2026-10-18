@@ -1127,7 +1127,10 @@ function MerchantStraightLineTracker({ order, currentStore }) {
     // Leg 1: Waypoint 1 (Store 1) -> Waypoint 2 (Home or Store 2)
     const legIdxToMe = Math.max(0, myStopIndex === 0 ? 0 : myStopIndex - 1);
     const activeLeg = roadLegs[currentRiderStop] || roadLegs[0] || [];
-    const roadPtIdx = Math.min(order.roadPointIndex || 0, Math.max(0, activeLeg.length - 1));
+    const elapsedTrackerIdx = order.legStartedAt
+      ? Math.min(activeLeg.length - 1, Math.floor((Date.now() - order.legStartedAt) / 2000))
+      : (order.roadPointIndex || 0);
+    const roadPtIdx = Math.min(Math.max(elapsedTrackerIdx, order.roadPointIndex || 0), Math.max(0, activeLeg.length - 1));
 
     if (currentRiderStop === legIdxToMe) {
       // Rider is actively traveling on the leg to THIS shop!
@@ -1173,7 +1176,10 @@ function MerchantStraightLineTracker({ order, currentStore }) {
     } else {
       accurateRemainingKm = roadEstimatedKm;
       const legPoints = (order.roadLegs && order.roadLegs[0]?.length) || 30;
-      const roadIdx = order.roadPointIndex || 0;
+      const elapsedFallbackIdx = order.legStartedAt
+        ? Math.min(legPoints - 1, Math.floor((Date.now() - order.legStartedAt) / 2000))
+        : (order.roadPointIndex || 0);
+      const roadIdx = Math.min(Math.max(elapsedFallbackIdx, order.roadPointIndex || 0), legPoints - 1);
       activeRoadProgress = Math.min(1.0, Math.max(0.08, roadIdx / legPoints));
     }
   }
@@ -1733,13 +1739,15 @@ export default function App() {
                     stops: (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []),
                     roadRouteCoordinates: (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []),
                     roadLegs: (co.roadLegs && co.roadLegs.length > 0) ? co.roadLegs : (existing.roadLegs || []),
-                    roadPointIndex: existing.roadPointIndex !== undefined ? existing.roadPointIndex : 0,
+                    roadPointIndex: Math.max(co.roadPointIndex || 0, existing.roadPointIndex || 0),
+                    legStartedAt: co.legStartedAt || existing.legStartedAt || (existing.roadPointIndex ? Date.now() - existing.roadPointIndex * 2000 : Date.now()),
                     boltCoords: (existing.status === 'On the Way' && existing.boltCoords) ? existing.boltCoords : (co.boltCoords || existing.boltCoords),
                   }
                 : co
             );
           });
-          return Array.from(orderMap.values());
+          const now = Date.now();
+          return Array.from(orderMap.values()).map((o) => calculateOrderRiderProgress(o, now));
         });
       }
     } catch (err) {
@@ -2206,11 +2214,210 @@ export default function App() {
     });
   }, [orders.length, orders[0]?.status]);
 
+  // Deterministic Real-Time Courier Route Calculation based on elapsed wall-clock time
+  function calculateOrderRiderProgress(ord, now = Date.now(), depth = 0) {
+    if (
+      !ord ||
+      depth > 8 ||
+      ord.status === 'Cancelled' ||
+      ord.status === 'Delivered' ||
+      ord.courierArrivedOutside ||
+      !ord.boltRider ||
+      !ord.boltRider.name
+    ) {
+      return ord;
+    }
+
+    const stops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
+    const firstPendingIdx = stops.findIndex((st) => st.pickupStatus !== 'picked_up');
+    let currentStopIdx = ord.currentStopIndex || 0;
+
+    // Self-heal: If earlier stops are already picked up, advance currentStopIdx to the active leg!
+    if (firstPendingIdx !== -1 && currentStopIdx < firstPendingIdx) {
+      currentStopIdx = firstPendingIdx;
+    } else if (firstPendingIdx === -1 && stops.length > 0 && currentStopIdx < stops.length) {
+      currentStopIdx = stops.length;
+    }
+
+    // Auto-heal: Ensure all stops already reached or departed are marked picked_up
+    const verifiedStops = stops.map((st, idx) => {
+      if (idx <= currentStopIdx && st.pickupStatus !== 'picked_up') {
+        return {
+          ...st,
+          pickupStatus: 'picked_up',
+          pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          status: 'Ready for Pickup',
+        };
+      }
+      return st;
+    });
+
+    const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+    const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+    const destCoord = { latitude: homeLat, longitude: homeLng };
+    const totalLegs = (ord.roadLegs && ord.roadLegs.length > 0) ? ord.roadLegs.length : (verifiedStops.length || 1);
+
+    if (currentStopIdx >= totalLegs) {
+      const arrivedAlert = `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin || '2489'}) to collect packages.`;
+      if (!ord.hasNotifiedArrived && !ord.courierArrivedOutside) {
+        notifyCourierArrived(ord);
+        updateDatabaseOrderStatus(ord.id, {
+          stops: verifiedStops,
+          boltCoords: destCoord,
+          eta: 'Arrived outside gate',
+          journeyAlert: arrivedAlert,
+        }).catch(() => {});
+      }
+      return {
+        ...ord,
+        stops: verifiedStops,
+        currentStopIndex: totalLegs,
+        boltCoords: destCoord,
+        hasNotifiedArrived: true,
+        courierArrivedOutside: true,
+        eta: 'Arrived outside gate',
+        journeyAlert: arrivedAlert,
+      };
+    }
+
+    let activeLegPts =
+      ord.roadLegs && ord.roadLegs[currentStopIdx] && ord.roadLegs[currentStopIdx].length > 1
+        ? ord.roadLegs[currentStopIdx]
+        : null;
+
+    if (!activeLegPts || activeLegPts.length === 0) {
+      const firstStore = verifiedStops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
+      const wps = [
+        ...(verifiedStops && verifiedStops.length > 0
+          ? verifiedStops.map((s) => ({
+              latitude: Number(s.latitude) || 9.0882,
+              longitude: Number(s.longitude) || 7.4933,
+            }))
+          : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
+        { latitude: homeLat, longitude: homeLng },
+      ];
+      const directFallback = buildDirectLegsBetweenWaypoints(wps);
+      activeLegPts = directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
+    }
+
+    const totalPoints = Math.max(2, activeLegPts.length);
+    const MS_PER_POINT = 2000;
+    const legDurationMs = Math.max(10000, (totalPoints - 1) * MS_PER_POINT);
+
+    const legStartedAt = Number(ord.legStartedAt) || (now - (ord.roadPointIndex || 0) * MS_PER_POINT);
+    const elapsedMs = Math.max(0, now - legStartedAt);
+
+    if (elapsedMs < legDurationMs) {
+      const calculatedPointIdx = Math.min(totalPoints - 1, Math.floor(elapsedMs / MS_PER_POINT));
+      const nextCoord = activeLegPts[calculatedPointIdx] || activeLegPts[0];
+
+      return {
+        ...ord,
+        roadPointIndex: calculatedPointIdx,
+        boltCoords: nextCoord,
+        stops: verifiedStops,
+        currentStopIndex: currentStopIdx,
+        legStartedAt: legStartedAt,
+        status: 'On the Way',
+      };
+    }
+
+    // Courier has completed this leg!
+    if (currentStopIdx < totalLegs - 1) {
+      const nextStopIdx = currentStopIdx + 1;
+      const leftoverMs = elapsedMs - legDurationMs;
+      const nextLegStartedAt = now - leftoverMs;
+
+      const updatedStops = (ord.stops || []).map((st, idx) => {
+        if (idx <= nextStopIdx) {
+          return {
+            ...st,
+            pickupStatus: 'picked_up',
+            status: 'Ready for Pickup',
+            pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          };
+        }
+        return st;
+      });
+
+      const completedShopName = ord.stops?.[nextStopIdx]?.storeName || ord.stops?.[currentStopIdx]?.storeName || 'Shop';
+      const isHeadingToCustomer = nextStopIdx >= (ord.stops?.length || 1) - 1;
+      const nextDestinationName = isHeadingToCustomer
+        ? 'your delivery address'
+        : (ord.stops?.[nextStopIdx + 1]?.storeName || 'the next shop');
+
+      if (isHeadingToCustomer && !ord.hasNotifiedOnTheWay) {
+        notifyOrderOnTheWay(ord, ord.boltRider?.name || 'Musa Ibrahim');
+      }
+
+      const alertMsg = isHeadingToCustomer
+        ? `🎉 All shops picked up! Courier ${ord.boltRider?.name || 'Musa Ibrahim'} has collected all packages and is now riding directly to your pinned address.`
+        : `🔔 Picked up from ${completedShopName}! Courier ${ord.boltRider?.name || 'Musa Ibrahim'} is now riding on the road to ${nextDestinationName}.`;
+
+      updateDatabaseOrderStatus(ord.id, {
+        status: 'On the Way',
+        stops: updatedStops,
+        currentStopIndex: nextStopIdx,
+        roadPointIndex: 0,
+        legStartedAt: nextLegStartedAt,
+        journeyAlert: alertMsg,
+      }).catch(() => {});
+
+      const intermediateOrder = {
+        ...ord,
+        currentStopIndex: nextStopIdx,
+        roadPointIndex: 0,
+        stops: updatedStops,
+        legStartedAt: nextLegStartedAt,
+        hasNotifiedOnTheWay: isHeadingToCustomer ? true : ord.hasNotifiedOnTheWay,
+        journeyAlert: alertMsg,
+        status: 'On the Way',
+      };
+
+      return calculateOrderRiderProgress(intermediateOrder, now, depth + 1);
+    } else {
+      // Arrived at Customer Delivery Destination!
+      const updatedStops = (verifiedStops || []).map((st) => ({
+        ...st,
+        pickupStatus: 'picked_up',
+        status: 'Ready for Pickup',
+        pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }));
+
+      const arrivedAlert = `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin || '2489'}) to collect packages.`;
+
+      if (!ord.hasNotifiedArrived && !ord.courierArrivedOutside) {
+        notifyCourierArrived(ord);
+        updateDatabaseOrderStatus(ord.id, {
+          stops: updatedStops,
+          boltCoords: destCoord,
+          eta: 'Arrived outside gate',
+          journeyAlert: arrivedAlert,
+        }).catch(() => {});
+      }
+
+      return {
+        ...ord,
+        stops: updatedStops,
+        boltCoords: destCoord,
+        currentStopIndex: totalLegs,
+        roadPointIndex: totalPoints - 1,
+        hasNotifiedArrived: true,
+        courierArrivedOutside: true,
+        eta: 'Arrived outside gate',
+        journeyAlert: arrivedAlert,
+        status: 'On the Way',
+      };
+    }
+  }
+
   // Live Autonomous Multi-Stop Courier Real-Time Route Glide along Real Streets
   useEffect(() => {
     const timer = setInterval(() => {
-      setOrders((prev) =>
-        prev.map((ord) => {
+      setOrders((prev) => {
+        let hasChanges = false;
+        const now = Date.now();
+        const next = prev.map((ord) => {
           if (
             ord.status === 'Cancelled' ||
             ord.status === 'Delivered' ||
@@ -2220,163 +2427,34 @@ export default function App() {
           ) {
             return ord;
           }
-
-          const stops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
-          const firstPendingIdx = stops.findIndex((st) => st.pickupStatus !== 'picked_up');
-          let currentStopIdx = ord.currentStopIndex || 0;
-
-          // Self-heal: If earlier stops are already picked up, advance currentStopIdx to the active leg!
-          if (firstPendingIdx !== -1 && currentStopIdx < firstPendingIdx) {
-            currentStopIdx = firstPendingIdx;
-          } else if (firstPendingIdx === -1 && stops.length > 0 && currentStopIdx < stops.length) {
-            currentStopIdx = stops.length;
-          }
-
-          // Auto-heal: Ensure all stops already reached or departed are marked picked_up
-          const verifiedStops = (ord.stops || []).map((st, idx) => {
-            if (idx <= currentStopIdx && st.pickupStatus !== 'picked_up') {
-              return {
-                ...st,
-                pickupStatus: 'picked_up',
-                pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                status: 'Ready for Pickup',
-              };
+          const updated = calculateOrderRiderProgress(ord, now);
+          if (
+            updated.roadPointIndex !== ord.roadPointIndex ||
+            updated.currentStopIndex !== ord.currentStopIndex ||
+            updated.courierArrivedOutside !== ord.courierArrivedOutside
+          ) {
+            hasChanges = true;
+            if (
+              updated.courierArrivedOutside !== ord.courierArrivedOutside ||
+              updated.currentStopIndex !== ord.currentStopIndex ||
+              (updated.roadPointIndex % 5 === 0)
+            ) {
+              updateDatabaseOrderStatus(updated.id, {
+                status: updated.status,
+                stops: updated.stops,
+                currentStopIndex: updated.currentStopIndex,
+                roadPointIndex: updated.roadPointIndex,
+                legStartedAt: updated.legStartedAt,
+                boltCoords: updated.boltCoords,
+                eta: updated.eta,
+                journeyAlert: updated.journeyAlert,
+              }).catch(() => {});
             }
-            return st;
-          });
-
-          let activeLegPts =
-            ord.roadLegs && ord.roadLegs[currentStopIdx] && ord.roadLegs[currentStopIdx].length > 1
-              ? ord.roadLegs[currentStopIdx]
-              : null;
-
-          if (!activeLegPts || activeLegPts.length === 0) {
-            const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
-            const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
-            const firstStore = verifiedStops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
-            const wps = [
-              ...(verifiedStops && verifiedStops.length > 0
-                ? verifiedStops.map((s) => ({
-                    latitude: Number(s.latitude) || 9.0882,
-                    longitude: Number(s.longitude) || 7.4933,
-                  }))
-                : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
-              { latitude: homeLat, longitude: homeLng },
-            ];
-            const directFallback = buildDirectLegsBetweenWaypoints(wps);
-            activeLegPts = directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
           }
-
-          const currentPointIdx = ord.roadPointIndex || 0;
-          const totalPoints = activeLegPts.length;
-
-          // Advance courier along this leg
-          if (currentPointIdx < totalPoints - 1) {
-            const nextIdx = Math.min(currentPointIdx + 1, totalPoints - 1);
-            const nextCoord = activeLegPts[nextIdx];
-
-            return {
-              ...ord,
-              roadPointIndex: nextIdx,
-              boltCoords: nextCoord,
-              stops: verifiedStops,
-              status: 'On the Way',
-            };
-          }
-
-          // Arrived at the end of this leg!
-          const totalLegs = (ord.roadLegs && ord.roadLegs.length > 0) ? ord.roadLegs.length : (verifiedStops?.length || 1);
-
-          if (currentStopIdx < totalLegs - 1) {
-            // Arrived at intermediate shop (e.g. Shop 2 in multi-store order)
-            const nextStopIdx = currentStopIdx + 1;
-            // Mark all shops up to and including the arrived stop as picked_up!
-            const updatedStops = (ord.stops || []).map((st, idx) => {
-              if (idx <= nextStopIdx) {
-                return {
-                  ...st,
-                  pickupStatus: 'picked_up',
-                  status: 'Ready for Pickup',
-                  pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                };
-              }
-              return st;
-            });
-
-            const completedShopName = ord.stops?.[nextStopIdx]?.storeName || ord.stops?.[currentStopIdx]?.storeName || 'Shop';
-            const isHeadingToCustomer = nextStopIdx >= (ord.stops?.length || 1) - 1;
-            const nextDestinationName = isHeadingToCustomer
-              ? 'your delivery address'
-              : (ord.stops?.[nextStopIdx + 1]?.storeName || 'the next shop');
-
-            // 🔔 Audio Beep & Push: Alert buyer when all packages are picked up and courier is en route to gate!
-            if (isHeadingToCustomer && !ord.hasNotifiedOnTheWay) {
-              notifyOrderOnTheWay(ord, ord.boltRider?.name || 'Musa Ibrahim');
-            }
-
-            const alertMsg = isHeadingToCustomer
-              ? `🎉 All shops picked up! Courier ${ord.boltRider?.name || 'Musa Ibrahim'} has collected all packages and is now riding directly to your pinned address.`
-              : `🔔 Picked up from ${completedShopName}! Courier ${ord.boltRider?.name || 'Musa Ibrahim'} is now riding on the road to ${nextDestinationName}.`;
-
-            // Cloud sync to Supabase so both buyer and merchant devices see the pickup in real time!
-            updateDatabaseOrderStatus(ord.id, {
-              status: 'On the Way',
-              stops: updatedStops,
-              currentStopIndex: nextStopIdx,
-              journeyAlert: alertMsg,
-            }).catch(() => {});
-
-            return {
-              ...ord,
-              currentStopIndex: nextStopIdx,
-              roadPointIndex: 0,
-              stops: updatedStops,
-              hasNotifiedOnTheWay: isHeadingToCustomer ? true : ord.hasNotifiedOnTheWay,
-              journeyAlert: alertMsg,
-              status: 'On the Way',
-            };
-          } else {
-            // If courier already arrived outside gate, halt timer cleanly
-            if (ord.courierArrivedOutside || ord.hasNotifiedArrived) {
-              return ord;
-            }
-
-            // Arrived at Customer Delivery Destination!
-            const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
-            const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
-            const destCoord = { latitude: homeLat, longitude: homeLng };
-
-            const updatedStops = (verifiedStops || []).map((st) => ({
-              ...st,
-              pickupStatus: 'picked_up',
-              status: 'Ready for Pickup',
-              pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            }));
-
-            // 🔔 Audio Beep & Push: Courier arrived outside gate (ONLY ONCE!)
-            notifyCourierArrived(ord);
-
-            const arrivedAlert = `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin}) to collect packages.`;
-
-            updateDatabaseOrderStatus(ord.id, {
-              stops: updatedStops,
-              boltCoords: destCoord,
-              eta: 'Arrived outside gate',
-              journeyAlert: arrivedAlert,
-            }).catch(() => {});
-
-            return {
-              ...ord,
-              stops: updatedStops,
-              boltCoords: destCoord,
-              hasNotifiedArrived: true,
-              courierArrivedOutside: true,
-              eta: 'Arrived outside gate',
-              journeyAlert: arrivedAlert,
-            };
-          }
-        })
-      );
+          return updated;
+        });
+        return hasChanges ? next : prev;
+      });
     }, 2000);
     return () => clearInterval(timer);
   }, []);
@@ -2465,6 +2543,9 @@ export default function App() {
                 boltCoords: updated.bolt_coords || o.boltCoords,
                 eta: updated.eta || o.eta,
                 courierSearching: updated.status === 'Looking for Courier',
+                currentStopIndex: riderPayload.currentStopIndex !== undefined ? Number(riderPayload.currentStopIndex) : o.currentStopIndex,
+                roadPointIndex: riderPayload.roadPointIndex !== undefined ? Number(riderPayload.roadPointIndex) : o.roadPointIndex,
+                legStartedAt: riderPayload.legStartedAt !== undefined ? Number(riderPayload.legStartedAt) : o.legStartedAt,
               };
             }
             return o;
@@ -2857,6 +2938,7 @@ export default function App() {
                 stops: payload.stops || o.stops,
                 currentStopIndex: payload.currentStopIndex !== undefined ? payload.currentStopIndex : o.currentStopIndex,
                 roadPointIndex: payload.roadPointIndex !== undefined ? payload.roadPointIndex : 0,
+                legStartedAt: payload.legStartedAt !== undefined ? payload.legStartedAt : (o.legStartedAt || Date.now()),
                 boltCoords: payload.boltCoords || o.boltCoords,
                 journeyAlert: payload.journeyAlert || o.journeyAlert,
               };
@@ -2878,6 +2960,7 @@ export default function App() {
     // 4. AppState Lifecycle Listener: When user returns from background / unlocks screen, resync immediately
     const appStateSub = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active' && isMounted) {
+        setOrders((prev) => prev.map((ord) => calculateOrderRiderProgress(ord, Date.now())));
         loadCloudStores();
         syncOrdersFromCloud();
       }
@@ -3035,8 +3118,10 @@ export default function App() {
         try {
           const cloudOrders = await getDatabaseOrders();
           if (cloudOrders && cloudOrders.length > 0) {
-            setOrders(cloudOrders);
-            await AsyncStorage.setItem('getit_orders', JSON.stringify(cloudOrders));
+            const now = Date.now();
+            const caughtUp = cloudOrders.map((ord) => calculateOrderRiderProgress(ord, now));
+            setOrders(caughtUp);
+            await AsyncStorage.setItem('getit_orders', JSON.stringify(caughtUp));
           } else {
             setOrders([]);
             await AsyncStorage.removeItem('getit_orders');
@@ -3046,7 +3131,10 @@ export default function App() {
           const storedOrders = await AsyncStorage.getItem('getit_orders');
           if (storedOrders) {
             try {
-              setOrders(JSON.parse(storedOrders));
+              const parsed = JSON.parse(storedOrders);
+              const now = Date.now();
+              const caughtUp = (parsed || []).map((ord) => calculateOrderRiderProgress(ord, now));
+              setOrders(caughtUp);
             } catch (e) {}
           }
         }
@@ -5053,6 +5141,8 @@ export default function App() {
                 journeyAlert: dispatchedAlert,
                 courierSearching: false,
                 eta: '12-15 mins (Courier Matched)',
+                legStartedAt: Date.now(),
+                roadPointIndex: 0,
               };
             }
             return o;
@@ -5068,6 +5158,8 @@ export default function App() {
           boltCoords: riderCoords,
           journeyAlert: dispatchedAlert,
           eta: '12-15 mins (Courier Matched)',
+          legStartedAt: Date.now(),
+          roadPointIndex: 0,
         }).catch(() => {});
       }, 3500);
     }
@@ -5130,11 +5222,13 @@ export default function App() {
           newAlert = `🎉 All packages collected! Courier Musa Ibrahim has departed ${merchantStoreName} and is now riding directly to your address.`;
         }
 
+        const now = Date.now();
         return {
           ...o,
           stops: updatedStopsList.length > 0 ? updatedStopsList : o.stops,
           currentStopIndex: nextStopIndex,
           roadPointIndex: 0,
+          legStartedAt: now,
           boltCoords: newBoltCoords,
           journeyAlert: newAlert,
           status: 'On the Way',
@@ -5147,10 +5241,12 @@ export default function App() {
       `Packages for ${merchantStoreName} have been handed over to courier Musa Ibrahim.`
     );
 
+    const handoverTime = Date.now();
     updateDatabaseOrderStatus(orderId, {
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
       currentStopIndex: nextStopIndex,
       roadPointIndex: 0,
+      legStartedAt: handoverTime,
       boltCoords: newBoltCoords,
       journeyAlert: newAlert,
       status: 'On the Way',
@@ -5162,6 +5258,7 @@ export default function App() {
       stops: updatedStopsList,
       currentStopIndex: nextStopIndex,
       roadPointIndex: 0,
+      legStartedAt: handoverTime,
       boltCoords: newBoltCoords,
       journeyAlert: newAlert,
     });
@@ -8479,15 +8576,17 @@ export default function App() {
                                   ? ord.roadLegs[currentStopIdx]
                                   : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
 
-                              const pointIdx = Math.min(ord.roadPointIndex || 0, Math.max(0, activeRoadPts.length - 1));
+                              const elapsedBuyerMapIdx = ord.legStartedAt
+                                ? Math.min(activeRoadPts.length - 1, Math.floor((Date.now() - ord.legStartedAt) / 2000))
+                                : (ord.roadPointIndex || 0);
+                              const pointIdx = Math.min(Math.max(elapsedBuyerMapIdx, ord.roadPointIndex || 0), Math.max(0, activeRoadPts.length - 1));
                               const firstStoreCoord = {
                                 latitude: Number(firstStore.latitude) || 9.0882,
                                 longitude: Number(firstStore.longitude) || 7.4933,
                               };
                               const riderOnBlueLine =
-                                ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
-                                  ? ord.boltCoords
-                                  : activeRoadPts[pointIdx] || firstStoreCoord;
+                                activeRoadPts[pointIdx] ||
+                                (ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude) ? ord.boltCoords : firstStoreCoord);
 
                               return Boolean(ord.boltRider && ord.boltRider.name) ? (
                                 <Marker

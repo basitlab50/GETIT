@@ -180,6 +180,8 @@ export async function createDatabaseOrder(order) {
     roadLegs: order.roadLegs || [],
     isMultiStore: Boolean(order.isMultiStore || (order.stops && order.stops.length > 1)),
     currentStopIndex: Number(order.currentStopIndex) || 0,
+    roadPointIndex: Number(order.roadPointIndex) || 0,
+    legStartedAt: Number(order.legStartedAt) || Date.now(),
     journeyAlert: order.journeyAlert || null,
   };
 
@@ -282,6 +284,7 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
       journeyAlert: updates.journeyAlert !== undefined ? updates.journeyAlert : existingRider.journeyAlert,
       currentStopIndex: updates.currentStopIndex !== undefined ? updates.currentStopIndex : (existingRider.currentStopIndex || 0),
       roadPointIndex: updates.roadPointIndex !== undefined ? updates.roadPointIndex : (existingRider.roadPointIndex || 0),
+      legStartedAt: updates.legStartedAt !== undefined ? updates.legStartedAt : (existingRider.legStartedAt || Date.now()),
     };
 
     if (!updates.boltRider && !existingRider.name) {
@@ -475,6 +478,7 @@ export async function getDatabaseOrders() {
         isMultiStore: isMultiStore,
         currentStopIndex: reconciledStopIndex,
         roadPointIndex: Number(riderMeta.roadPointIndex) || 0,
+        legStartedAt: Number(riderMeta.legStartedAt) || (item.created_at ? new Date(item.created_at).getTime() : Date.now()),
         journeyAlert: journeyAlert,
         timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
         createdAt: item.created_at
