@@ -1701,59 +1701,62 @@ export default function App() {
   };
 
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
+  const isSyncingOrdersRef = useRef(false);
 
-  // Cross-device order synchronization with Supabase (Bidirectional)
-  const syncOrdersFromCloud = async () => {
-    setIsRefreshingOrders(true);
+  // Cross-device order synchronization with Supabase (Bidirectional & non-blocking)
+  const syncOrdersFromCloud = async (isManual = false) => {
+    if (isSyncingOrdersRef.current) return;
+    isSyncingOrdersRef.current = true;
+    if (isManual) setIsRefreshingOrders(true);
     try {
       // 1. Flush any pending offline orders
       await flushPendingOfflineOrders().catch(() => {});
 
-      // 2. Fetch current cloud orders
+      // 2. Fetch current cloud orders (Single fetch!)
       const cloudOrders = await getDatabaseOrders();
-      const cloudOrderIds = new Set((cloudOrders || []).map((o) => o.id));
+      if (!cloudOrders || cloudOrders.length === 0) return;
 
-      // 3. Bidirectional Push: If this device has any local orders not yet in Supabase, upload them!
+      const cloudOrderIds = new Set(cloudOrders.map((o) => o.id));
+
+      // 3. Bidirectional Push: If this device has local orders not yet in Supabase, upload them in background
       for (const localOrd of orders) {
         if (!localOrd.isDemo && !cloudOrderIds.has(localOrd.id)) {
           await createDatabaseOrder(localOrd).catch(console.warn);
         }
       }
 
-      // 4. Re-fetch freshest combined cloud orders
-      const freshest = await getDatabaseOrders();
-      if (freshest && freshest.length > 0) {
-        updateAndPersistOrders((prev) => {
-          const orderMap = new Map();
-          prev.forEach((o) => orderMap.set(o.id, o));
-          freshest.forEach((co) => {
-            const existing = orderMap.get(co.id);
-            orderMap.set(
-              co.id,
-              existing
-                ? {
-                    ...existing,
-                    ...co,
-                    status: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.status || existing.status),
-                    eta: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.eta || existing.eta),
-                    stops: (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []),
-                    roadRouteCoordinates: (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []),
-                    roadLegs: (co.roadLegs && co.roadLegs.length > 0) ? co.roadLegs : (existing.roadLegs || []),
-                    roadPointIndex: Math.max(co.roadPointIndex || 0, existing.roadPointIndex || 0),
-                    legStartedAt: co.legStartedAt || existing.legStartedAt || (existing.roadPointIndex ? Date.now() - existing.roadPointIndex * 2000 : Date.now()),
-                    boltCoords: (existing.status === 'On the Way' && existing.boltCoords) ? existing.boltCoords : (co.boltCoords || existing.boltCoords),
-                  }
-                : co
-            );
-          });
-          const now = Date.now();
-          return Array.from(orderMap.values()).map((o) => calculateOrderRiderProgress(o, now));
+      // 4. Update orders state cleanly without triggering visual reload loops
+      updateAndPersistOrders((prev) => {
+        const orderMap = new Map();
+        prev.forEach((o) => orderMap.set(o.id, o));
+        cloudOrders.forEach((co) => {
+          const existing = orderMap.get(co.id);
+          orderMap.set(
+            co.id,
+            existing
+              ? {
+                  ...existing,
+                  ...co,
+                  status: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.status || existing.status),
+                  eta: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.eta || existing.eta),
+                  stops: (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []),
+                  roadRouteCoordinates: (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []),
+                  roadLegs: (co.roadLegs && co.roadLegs.length > 0) ? co.roadLegs : (existing.roadLegs || []),
+                  roadPointIndex: Math.max(co.roadPointIndex || 0, existing.roadPointIndex || 0),
+                  legStartedAt: co.legStartedAt || existing.legStartedAt || Date.now(),
+                  boltCoords: (existing.status === 'On the Way' && existing.boltCoords) ? existing.boltCoords : (co.boltCoords || existing.boltCoords),
+                }
+              : co
+          );
         });
-      }
+        const now = Date.now();
+        return Array.from(orderMap.values()).map((o) => calculateOrderRiderProgress(o, now));
+      });
     } catch (err) {
       console.warn('Sync orders from cloud error:', err);
     } finally {
-      setIsRefreshingOrders(false);
+      if (isManual) setIsRefreshingOrders(false);
+      isSyncingOrdersRef.current = false;
     }
   };
 
@@ -2147,14 +2150,17 @@ export default function App() {
     return buildDirectLegsBetweenWaypoints(waypointCoords);
   };
 
-  // Auto-fetch real-world street road directions for active orders
+  const fetchedRoutesRef = useRef(new Set());
+  // Auto-fetch real-world street road directions for active orders (at most once per order ID)
   useEffect(() => {
     orders.forEach((ord) => {
       if (
         ord.status !== 'Cancelled' &&
         ord.status !== 'Delivered' &&
-        (!ord.roadLegs || !Array.isArray(ord.roadLegs) || ord.roadLegs.length === 0 || !ord.roadLegs[0] || ord.roadLegs[0].length < 2)
+        (!ord.roadLegs || !Array.isArray(ord.roadLegs) || ord.roadLegs.length === 0 || !ord.roadLegs[0] || ord.roadLegs[0].length < 2) &&
+        !fetchedRoutesRef.current.has(ord.id)
       ) {
+        fetchedRoutesRef.current.add(ord.id);
         const stopsList = ord.stops && ord.stops.length > 0 ? ord.stops : [];
         const firstStore = stopsList[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
         const dest = ord.deliveryLocation || pinnedLocation || { latitude: 9.0882, longitude: 7.4933 };
@@ -2371,7 +2377,7 @@ export default function App() {
     };
   }
 
-    // Live Autonomous Multi-Stop Courier Real-Time Route Glide along Real Streets
+  // Live Autonomous Multi-Stop Courier Real-Time Route Glide along Real Streets (Pure local animation)
   useEffect(() => {
     const timer = setInterval(() => {
       setOrders((prev) => {
@@ -2394,22 +2400,6 @@ export default function App() {
             updated.courierArrivedOutside !== ord.courierArrivedOutside
           ) {
             hasChanges = true;
-            if (
-              updated.courierArrivedOutside !== ord.courierArrivedOutside ||
-              updated.currentStopIndex !== ord.currentStopIndex ||
-              (updated.roadPointIndex % 5 === 0)
-            ) {
-              updateDatabaseOrderStatus(updated.id, {
-                status: updated.status,
-                stops: updated.stops,
-                currentStopIndex: updated.currentStopIndex,
-                roadPointIndex: updated.roadPointIndex,
-                legStartedAt: updated.legStartedAt,
-                boltCoords: updated.boltCoords,
-                eta: updated.eta,
-                journeyAlert: updated.journeyAlert,
-              }).catch(() => {});
-            }
           }
           return updated;
         });
@@ -2909,20 +2899,20 @@ export default function App() {
       }
     });
 
-    // 3. Background Heartbeat Poller (Every 3.5s): Guarantees continuous live sync of stores & active orders
+    // 3. Background Heartbeat Poller (Every 15s): Guarantees live sync of stores & active orders
     const syncInterval = setInterval(() => {
       if (isMounted) {
         loadCloudStores();
-        syncOrdersFromCloud();
+        syncOrdersFromCloud(false);
       }
-    }, 3500);
+    }, 15000);
 
-    // 4. AppState Lifecycle Listener: When user returns from background / unlocks screen, resync immediately
+    // 4. AppState Lifecycle Listener: When user returns from background / unlocks screen, catch up elapsed time
     const appStateSub = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active' && isMounted) {
         setOrders((prev) => prev.map((ord) => calculateOrderRiderProgress(ord, Date.now())));
         loadCloudStores();
-        syncOrdersFromCloud();
+        syncOrdersFromCloud(false);
       }
     });
 
@@ -7718,7 +7708,7 @@ export default function App() {
           refreshControl={
             <RefreshControl
               refreshing={isRefreshingOrders}
-              onRefresh={syncOrdersFromCloud}
+              onRefresh={() => syncOrdersFromCloud(true)}
               tintColor={COLORS.emeraldPrimary}
               colors={[COLORS.emeraldPrimary]}
             />
@@ -7732,7 +7722,7 @@ export default function App() {
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <TouchableOpacity
-                onPress={syncOrdersFromCloud}
+                onPress={() => syncOrdersFromCloud(true)}
                 style={[styles.ordersClearHistoryBtn, { marginRight: 6, backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}
                 activeOpacity={0.7}
               >

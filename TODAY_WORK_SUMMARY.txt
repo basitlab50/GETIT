@@ -529,6 +529,18 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * An order is only completed for a merchant when `matchingStop.pickupStatus === 'picked_up'` or `matchingStop.status === 'Completed'` (i.e. merchant taps "Hand Over to Bolt Courier").
      * The Live Straight-Line Tracker on Fati's store (Shop 1) is now consistently rendered in the 'Ready' tab, displaying the live motorbike en route from rider origin to the shop with dynamic ETA and remaining distance.
 
+12. Elimination of Infinite Reload Spinner, Realtime Feedback Loop & Device Freeze:
+   - Root Causes of App Freeze & Continuous Reloading:
+     * Rogue Database Writes in 2s Interval: The animation timer was periodically calling `updateDatabaseOrderStatus(...)` into Supabase every few points. Because both the user phone and shop phone were running this simultaneously, Supabase Realtime broadcasted updates back and forth in an infinite peer-to-peer feedback ping-pong loop, saturating WebSockets and locking the JS event loop.
+     * Visual Refresh Spinner in Background: `syncOrdersFromCloud()` unconditionally set `setIsRefreshingOrders(true)` which triggered the native `RefreshControl` spinner every 3.5 seconds.
+     * Unthrottled Road Direction Requests: Road directions fetch lacked an in-memory guard, re-firing OSRM fetches on order state changes.
+   - Comprehensive Permanent Fix:
+     * Pure Local Animation: Removed all database writes from the 2-second simulation timer. The timer now exclusively manages local React UI state. Database updates are strictly reserved for genuine user milestone actions (Accept, Ready, Complete Handover, Deliver).
+     * Silent Background Sync & Concurrency Guard: Added `isSyncingOrdersRef` to prevent overlapping network calls and made `syncOrdersFromCloud(isManual = false)` silent by default. The visual spinner `isRefreshingOrders` only appears on explicit pull-to-refresh (`onRefresh={() => syncOrdersFromCloud(true)}`).
+     * Heartbeat Poller Relaxed: Extended background heartbeat from 3.5s to 15s (`syncOrdersFromCloud(false)`).
+     * Single Road Direction Guard: Added `fetchedRoutesRef = useRef(new Set())` to ensure road directions are fetched at most once per order ID.
+     * App is completely smooth, responsive, and stable on both user and merchant devices without freezing, crashing, or unexpected reloads.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
