@@ -517,6 +517,18 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Merchant Straight-Line Tracker Formula: Fixed `legIdxToMe = myStopIndex` so each store's linear track accurately monitors the courier's approach on that specific leg.
      * Realistic Abuja Street Transit Pace: Tuned `MS_PER_POINT = 3000ms` (~1.5 minutes per leg), providing smooth, steady real-time movement on both buyer map and merchant cards whether the app is active, minimized, or closed.
 
+11. Resolution of Merchant 'Ready' vs 'Done' Glitch & Live Tracker Restoration:
+   - Root Cause of premature 'Done' and Tracker Disappearance:
+     * When courier Musa was dispatched, order `status` transitioned to `'On the Way'`.
+     * In `mobile/App.js`, 5 legacy lines checked `if (ord.status === 'On the Way' || stopStatus === 'On the Way') return 'Completed'`.
+     * This caused the merchant app to mistakenly treat the courier traveling to the shop as order completion (`isDone = true`).
+     * As a result, the card flipped to "✓ Order Settled & Dispatched", flickered/glitched between 'Ready' and 'Done', and hid the Live Straight-Line Tracker (`MerchantStraightLineTracker`).
+   - Fix Implementation:
+     * Removed all instances of `|| ord.status === 'On the Way'` and `|| stopStatus === 'On the Way'` from completion checks in `getMerchantStopStatus`, `merchantFilteredOrders`, `isDone`, and tab badge counts.
+     * For merchants, `'On the Way'` strictly maps to `'Ready for Pickup'` with `isReady = true` and `isDone = false`.
+     * An order is only completed for a merchant when `matchingStop.pickupStatus === 'picked_up'` or `matchingStop.status === 'Completed'` (i.e. merchant taps "Hand Over to Bolt Courier").
+     * The Live Straight-Line Tracker on Fati's store (Shop 1) is now consistently rendered in the 'Ready' tab, displaying the live motorbike en route from rider origin to the shop with dynamic ETA and remaining distance.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
