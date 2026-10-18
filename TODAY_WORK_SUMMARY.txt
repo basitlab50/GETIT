@@ -502,6 +502,21 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * In Buyer MapView: Computes `elapsedBuyerMapIdx` from `ord.legStartedAt` so the rider marker is accurately positioned on the blue road line immediately upon viewing.
      * In `syncOrdersFromCloud` and `loadStoredState`: Catches up all restored orders with `calculateOrderRiderProgress(ord, Date.now())` on app launch.
 
+10. Multi-Stop Leg Alignment, Stop Handover Preservation & Anti-Auto-Pickup Fix:
+   - Root Cause of the Reload Auto-Pickup Bug:
+     * Previously, `verifiedStops` in `supabaseService.js` and `App.js` evaluated `if (idx <= currentStopIndex)` and marked stops as `picked_up`. When `currentStopIndex` was 1 (en route to Shop 2), index 1 satisfied `<=` and was erroneously marked `picked_up` upon reload without Shop 2 merchant ever tapping "Hand Over"!
+     * Additionally, `legStartedAt` fallback used `item.created_at` (10-20 minutes in the past), which caused elapsed time on reload to vastly exceed the leg duration and skip all remaining legs instantly.
+     * Furthermore, `roadWaypoints` originally started directly at Shop 1 instead of RiderOrigin, which misaligned Leg 0 (Shop 1 -> Shop 2) with Leg 1 (Shop 2 -> Customer), skipping Shop 2 entirely.
+   - Comprehensive Architectural Rectification:
+     * Leg Alignment: Added `riderStart` to `roadWaypoints` so legs align 1:1 with real-world stages:
+       - Leg 0: Courier Origin -> Shop 1 (Courier rides to Shop 1)
+       - Leg 1: Shop 1 -> Shop 2 (Courier rides from Shop 1 to Shop 2)
+       - Leg 2: Shop 2 -> Customer (Courier rides from Shop 2 to Customer)
+     * Handover Strictness: Changed `idx <= currentStopIndex` to `idx < currentStopIndex`. The active shop (`idx === currentStopIndex`) is strictly preserved as pending/arrived and NEVER auto-marked `picked_up`.
+     * Waiting at Store: When the courier covers the leg to a shop (`elapsedMs >= legDurationMs`), the rider marker parks outside that shop (`roadPointIndex = totalPoints - 1`) and WAITS. Only when the merchant taps "Hand Over to Bolt Courier" (`completeMerchantOrder`) does the shop transition to `picked_up` and the next leg begins.
+     * Merchant Straight-Line Tracker Formula: Fixed `legIdxToMe = myStopIndex` so each store's linear track accurately monitors the courier's approach on that specific leg.
+     * Realistic Abuja Street Transit Pace: Tuned `MS_PER_POINT = 3000ms` (~1.5 minutes per leg), providing smooth, steady real-time movement on both buyer map and merchant cards whether the app is active, minimized, or closed.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================

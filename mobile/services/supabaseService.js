@@ -411,9 +411,9 @@ export async function getDatabaseOrders() {
         normalizedStatus = 'On the Way';
       }
 
-      // Auto-heal stops up to currentStopIndex
+      // Strictly preserve stop statuses: Only prior completed stops (idx < currentStopIndex)
       const verifiedStops = (stops || []).map((st, idx) => {
-        if (idx <= currentStopIndex && st.pickupStatus !== 'picked_up') {
+        if (idx < currentStopIndex && st.pickupStatus !== 'picked_up') {
           return {
             ...st,
             pickupStatus: 'picked_up',
@@ -424,14 +424,7 @@ export async function getDatabaseOrders() {
         return st;
       });
 
-      // Self-heal: If earlier stops are picked up, advance currentStopIndex so rider is never on a completed leg!
-      let reconciledStopIndex = currentStopIndex;
-      const firstUnpicked = verifiedStops.findIndex((st) => st.pickupStatus !== 'picked_up');
-      if (firstUnpicked !== -1 && reconciledStopIndex < firstUnpicked) {
-        reconciledStopIndex = firstUnpicked;
-      } else if (firstUnpicked === -1 && verifiedStops.length > 0) {
-        reconciledStopIndex = verifiedStops.length;
-      }
+      const reconciledStopIndex = currentStopIndex;
 
       return {
         id: item.id,
@@ -478,7 +471,7 @@ export async function getDatabaseOrders() {
         isMultiStore: isMultiStore,
         currentStopIndex: reconciledStopIndex,
         roadPointIndex: Number(riderMeta.roadPointIndex) || 0,
-        legStartedAt: Number(riderMeta.legStartedAt) || (item.created_at ? new Date(item.created_at).getTime() : Date.now()),
+        legStartedAt: Number(riderMeta.legStartedAt) || (normalizedStatus === 'On the Way' ? Date.now() : 0),
         journeyAlert: journeyAlert,
         timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
         createdAt: item.created_at
