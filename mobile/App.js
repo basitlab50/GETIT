@@ -29,6 +29,7 @@ import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
 import { REAL_ROAD_LEGS, REAL_ROAD_POINTS, REAL_ROAD_WAYPOINTS } from './realRoadRouteData';
 import {
   addStoreInventoryItem,
+  updateStoreInventoryItem,
   createDatabaseOrder,
   getDatabaseOrders,
   updateDatabaseOrderStatus,
@@ -2282,7 +2283,7 @@ export default function App() {
             return {
               ...existing,
               ...dbStore, // Fresh cloud values override local stale values!
-              products: existing.products && existing.products.length > 0 ? existing.products : dbStore.products,
+              products: (dbStore.products && dbStore.products.length > 0) ? dbStore.products : (existing.products || []),
             };
           });
           AsyncStorage.setItem('getit_stores_list', JSON.stringify(mergedCloud)).catch(console.warn);
@@ -2496,22 +2497,28 @@ export default function App() {
           };
         });
       } else if (payload.eventType === 'UPDATE' && payload.new) {
-        const updatedProduct = {
-          id: payload.new.id,
-          name: payload.new.name,
-          category: payload.new.category || 'General',
-          price: Number(payload.new.price) || 0,
-          icon: payload.new.icon || '🛍️',
-          imageUrl: payload.new.image_url,
-          outOfStock: Boolean(payload.new.out_of_stock),
-        };
+        const itemNew = payload.new;
+        const targetProdId = itemNew.id;
+        const isOutOfStock = Boolean(
+          itemNew.out_of_stock !== undefined ? itemNew.out_of_stock : itemNew.outOfStock
+        );
 
         updateAndPersistStores((prev) =>
           prev.map((st) => {
             if (st.id !== targetStoreId) return st;
             return {
               ...st,
-              products: (st.products || []).map((p) => (p.id === updatedProduct.id ? updatedProduct : p)),
+              products: (st.products || []).map((p) => {
+                if (p.id !== targetProdId) return p;
+                return {
+                  ...p,
+                  ...(itemNew.name ? { name: itemNew.name } : {}),
+                  ...(itemNew.price !== undefined ? { price: Number(itemNew.price) } : {}),
+                  ...(itemNew.icon ? { icon: itemNew.icon } : {}),
+                  ...(itemNew.image_url || itemNew.imageUrl ? { imageUrl: itemNew.image_url || itemNew.imageUrl } : {}),
+                  outOfStock: isOutOfStock,
+                };
+              }),
             };
           })
         );
@@ -2520,7 +2527,17 @@ export default function App() {
           if (!prev || prev.id !== targetStoreId) return prev;
           return {
             ...prev,
-            products: (prev.products || []).map((p) => (p.id === updatedProduct.id ? updatedProduct : p)),
+            products: (prev.products || []).map((p) => {
+              if (p.id !== targetProdId) return p;
+              return {
+                ...p,
+                ...(itemNew.name ? { name: itemNew.name } : {}),
+                ...(itemNew.price !== undefined ? { price: Number(itemNew.price) } : {}),
+                ...(itemNew.icon ? { icon: itemNew.icon } : {}),
+                ...(itemNew.image_url || itemNew.imageUrl ? { imageUrl: itemNew.image_url || itemNew.imageUrl } : {}),
+                outOfStock: isOutOfStock,
+              };
+            }),
           };
         });
       } else if (payload.eventType === 'DELETE' && payload.old) {
@@ -3145,6 +3162,15 @@ export default function App() {
       store ||
       selectedStore ||
       storesList.find((s) => s.id === product.storeId || s.name === product.storeName);
+
+    if (product && product.outOfStock) {
+      Alert.alert(
+        'Sold Out',
+        `"${product.name}" is currently out of stock and unavailable for order.`,
+        [{ text: 'Understood', style: 'default' }]
+      );
+      return;
+    }
 
     if (targetStore && !isStoreCurrentlyOpen(targetStore)) {
       Alert.alert(
@@ -4748,19 +4774,44 @@ export default function App() {
   };
 
   const toggleStock = (productId) => {
+    const targetStoreId = currentMerchantStore?.id || merchantStoreId;
+    let nextOutOfStock = true;
+    let targetProduct = null;
+
     updateAndPersistStores((prev) =>
       prev.map((store) => {
-        if (store.id === merchantStoreId) {
+        if (store.id === targetStoreId) {
+          const currentProd = (store.products || []).find((p) => p.id === productId);
+          targetProduct = currentProd;
+          nextOutOfStock = !currentProd?.outOfStock;
           return {
             ...store,
-            products: store.products.map((p) =>
-              p.id === productId ? { ...p, outOfStock: !p.outOfStock } : p
+            products: (store.products || []).map((p) =>
+              p.id === productId ? { ...p, outOfStock: nextOutOfStock } : p
             ),
           };
         }
         return store;
       })
     );
+
+    // Keep selectedStore immediately in sync if buyer or preview has it open
+    setSelectedStore((prev) => {
+      if (!prev || prev.id !== targetStoreId) return prev;
+      return {
+        ...prev,
+        products: (prev.products || []).map((p) =>
+          p.id === productId ? { ...p, outOfStock: nextOutOfStock } : p
+        ),
+      };
+    });
+
+    // Update in Supabase & broadcast live to all buyers over WebSocket
+    updateStoreInventoryItem(productId, {
+      outOfStock: nextOutOfStock,
+      storeId: targetStoreId,
+      productObj: targetProduct,
+    }).catch((e) => console.log('Supabase inventory stock update error:', e?.message));
   };
 
   const handlePickCustomProductImage = async () => {

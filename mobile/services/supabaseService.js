@@ -92,6 +92,64 @@ export async function addStoreInventoryItem(storeId = 'store-1792192743654', ite
   }
 }
 
+export async function updateStoreInventoryItem(itemId, updates = {}) {
+  try {
+    const dbUpdates = {};
+    if (updates.outOfStock !== undefined) dbUpdates.out_of_stock = Boolean(updates.outOfStock);
+    if (updates.out_of_stock !== undefined) dbUpdates.out_of_stock = Boolean(updates.out_of_stock);
+    if (updates.price !== undefined) dbUpdates.price = Number(updates.price);
+    if (updates.name !== undefined) dbUpdates.name = updates.name;
+    if (updates.imageUrl !== undefined) dbUpdates.image_url = updates.imageUrl;
+    if (updates.icon !== undefined) dbUpdates.icon = updates.icon;
+
+    let { data, error } = await supabase
+      .from('store_inventory')
+      .update(dbUpdates)
+      .eq('id', itemId)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Update store_inventory error:', error.message);
+    }
+
+    // If item row didn't exist in Supabase yet, upsert it gracefully so it exists
+    if (!data && updates.productObj) {
+      const p = updates.productObj;
+      const fullRecord = {
+        id: itemId,
+        store_id: updates.storeId || p.storeId || 'store-1792192743654',
+        name: p.name || 'Product',
+        category: p.category || 'General',
+        price: Number(p.price) || 0,
+        icon: p.icon || '🛍️',
+        image_url: p.imageUrl || null,
+        out_of_stock: dbUpdates.out_of_stock !== undefined ? dbUpdates.out_of_stock : false,
+      };
+      const { data: upsertData } = await supabase
+        .from('store_inventory')
+        .upsert(fullRecord, { onConflict: 'id' })
+        .select()
+        .maybeSingle();
+      data = upsertData;
+    }
+
+    const finalItem = data || { id: itemId, ...dbUpdates };
+    const targetStoreId = finalItem.store_id || updates.storeId;
+
+    broadcastLiveEvent('INVENTORY_UPDATE', {
+      itemId,
+      storeId: targetStoreId,
+      item: finalItem,
+    });
+
+    return finalItem;
+  } catch (err) {
+    console.error('Failed to update store inventory item in Supabase:', err);
+    return null;
+  }
+}
+
 export async function removeStoreInventoryItem(itemId) {
   try {
     const { error } = await supabase
