@@ -63,6 +63,8 @@ import {
   notifyOrderOnTheWay,
   notifyCourierArrived,
   notifyOrderDelivered,
+  notifyMerchantAcceptanceReminder,
+  notifyMerchantPrepReminder,
 } from './services/notificationService';
 import { getProductImageSource } from './assets/productImages';
 
@@ -3995,6 +3997,69 @@ export default function App() {
     return unsubscribe;
   }, []);
 
+  // --- 1-MINUTE MERCHANT RECURRING REMINDER ENGINE (ACCEPTANCE & PREPARATION) ---
+  const lastMerchantReminderRef = useRef({});
+
+  useEffect(() => {
+    // Check every 10 seconds for orders requiring a 1-minute reminder
+    const reminderInterval = setInterval(() => {
+      if (!currentUser) return;
+
+      const myOrders = merchantOrders;
+      if (!myOrders || myOrders.length === 0) {
+        lastMerchantReminderRef.current = {};
+        return;
+      }
+
+      const now = Date.now();
+      const ONE_MINUTE = 60 * 1000;
+
+      // 1. Orders awaiting acceptance (New Order)
+      const awaitingAcceptance = myOrders.filter(
+        (o) => getMerchantStopStatus(o, currentMerchantStore) === 'New Order'
+      );
+
+      if (awaitingAcceptance.length > 0) {
+        if (!lastMerchantReminderRef.current.newOrdersInit) {
+          lastMerchantReminderRef.current.newOrdersInit = now;
+          lastMerchantReminderRef.current.lastNewReminder = now;
+        } else {
+          const lastTime = lastMerchantReminderRef.current.lastNewReminder || 0;
+          if (now - lastTime >= ONE_MINUTE) {
+            lastMerchantReminderRef.current.lastNewReminder = now;
+            notifyMerchantAcceptanceReminder(awaitingAcceptance[0], awaitingAcceptance.length);
+          }
+        }
+      } else {
+        delete lastMerchantReminderRef.current.newOrdersInit;
+        delete lastMerchantReminderRef.current.lastNewReminder;
+      }
+
+      // 2. Orders currently in preparation (Preparing)
+      const inPreparation = myOrders.filter(
+        (o) => getMerchantStopStatus(o, currentMerchantStore) === 'Preparing'
+      );
+
+      if (inPreparation.length > 0) {
+        if (!lastMerchantReminderRef.current.prepOrdersInit) {
+          lastMerchantReminderRef.current.prepOrdersInit = now;
+          lastMerchantReminderRef.current.lastPrepReminder = now;
+        } else {
+          const lastTime = lastMerchantReminderRef.current.lastPrepReminder || 0;
+          if (now - lastTime >= ONE_MINUTE) {
+            lastMerchantReminderRef.current.lastPrepReminder = now;
+            notifyMerchantPrepReminder(inPreparation[0], inPreparation.length);
+          }
+        }
+      } else {
+        delete lastMerchantReminderRef.current.prepOrdersInit;
+        delete lastMerchantReminderRef.current.lastPrepReminder;
+      }
+    }, 10000);
+
+    return () => clearInterval(reminderInterval);
+  }, [merchantOrders, currentMerchantStore, currentUser]);
+
   const openReviewModalForOrder = (ord) => {
     if (!ord) return;
     setTargetReviewOrder(ord);
@@ -4501,6 +4566,10 @@ export default function App() {
   );
 
   const acceptMerchantOrder = (orderId) => {
+    if (lastMerchantReminderRef.current) {
+      lastMerchantReminderRef.current.prepOrdersInit = Date.now();
+      lastMerchantReminderRef.current.lastPrepReminder = Date.now();
+    }
     let storeAcceptedName = currentMerchantStore?.name || 'Store';
     let allStopsAccepted = true;
     let anyStopAccepted = true;
@@ -4563,6 +4632,10 @@ export default function App() {
   };
 
   const readyMerchantOrder = (orderId) => {
+    if (lastMerchantReminderRef.current) {
+      delete lastMerchantReminderRef.current.prepOrdersInit;
+      delete lastMerchantReminderRef.current.lastPrepReminder;
+    }
     let storeReadyName = currentMerchantStore?.name || 'Store';
     let allStopsReady = true;
     let updatedStopsList = [];

@@ -282,3 +282,35 @@ export function notifyOrderDelivered(order) {
     data: { orderId: order.id, status: 'Delivered' },
   });
 }
+
+// F. Recurring Acceptance Reminder (Every 1 minute until accepted)
+export function notifyMerchantAcceptanceReminder(order, count = 1) {
+  const storeName = order.storeName || order.store_name || 'Your store';
+  const title = count > 1 ? `🔔 ${count} ORDERS AWAITING ACCEPTANCE!` : '🔔 ORDER ACCEPTANCE REMINDER!';
+  const body = count > 1
+    ? `You have ${count} pending orders for ${storeName}. Please review and tap "Accept Order" to begin preparing.`
+    : `Order #${order.id} for ${storeName} is waiting for your acceptance. Tap to accept and start preparing.`;
+
+  triggerNotification({
+    title,
+    body,
+    type: 'merchant_new_order',
+    data: { orderId: order.id, status: 'New Order', role: 'merchant' },
+  });
+}
+
+// G. Recurring Preparation Reminder (Every 1 minute until marked ready)
+export function notifyMerchantPrepReminder(order, count = 1) {
+  const storeName = order.storeName || order.store_name || 'Your store';
+  const title = count > 1 ? `⏱️ ${count} ORDERS IN PREPARATION` : '⏱️ ORDER PREPARATION REMINDER';
+  const body = count > 1
+    ? `${count} orders for ${storeName} are currently being prepared. Don't forget to tap "Mark Ready for Courier" when packaged!`
+    : `Order #${order.id} is being prepared at ${storeName}. Don't forget to tap "Mark Ready for Courier" when packaged!`;
+
+  triggerNotification({
+    title,
+    body,
+    type: 'merchant_new_order',
+    data: { orderId: order.id, status: 'Preparing', role: 'merchant' },
+  });
+}
