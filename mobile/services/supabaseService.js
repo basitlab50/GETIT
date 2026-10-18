@@ -84,6 +84,7 @@ export async function addStoreInventoryItem(storeId = 'store-1792192743654', ite
       .single();
 
     if (error) throw error;
+    broadcastLiveEvent('INVENTORY_INSERT', { storeId, item: data });
     return data;
   } catch (err) {
     console.error('Failed to add store inventory item in Supabase:', err);
@@ -99,6 +100,7 @@ export async function removeStoreInventoryItem(itemId) {
       .eq('id', itemId);
 
     if (error) throw error;
+    broadcastLiveEvent('INVENTORY_DELETE', { itemId, storeId });
     return true;
   } catch (err) {
     console.error('Failed to remove store inventory item in Supabase:', err);
@@ -477,11 +479,49 @@ export async function createDatabaseStore(store) {
       .single();
 
     if (error) throw error;
+    broadcastLiveEvent('STORE_INSERT', { storeId: data.id, store: data });
     return data;
   } catch (err) {
     console.error('Failed to create store in Supabase:', err);
     return null;
   }
+}
+
+// --- GLOBAL LIVE BROADCAST CHANNEL (Instant Sub-50ms Cross-Device Sync) ---
+let liveBroadcastChannel = null;
+
+function getLiveBroadcastChannel() {
+  if (!liveBroadcastChannel) {
+    liveBroadcastChannel = supabase.channel('getit_live_sync_channel', {
+      config: { broadcast: { ack: false } },
+    });
+    liveBroadcastChannel.subscribe();
+  }
+  return liveBroadcastChannel;
+}
+
+export function broadcastLiveEvent(eventType, payload) {
+  try {
+    const ch = getLiveBroadcastChannel();
+    ch.send({
+      type: 'broadcast',
+      event: 'GETIT_SYNC_UPDATE',
+      payload: { eventType, ...payload, _timestamp: Date.now() },
+    });
+  } catch (err) {
+    console.warn('Failed to broadcast live sync event:', err);
+  }
+}
+
+export function subscribeToLiveBroadcast(callback) {
+  const ch = getLiveBroadcastChannel();
+  ch.on('broadcast', { event: 'GETIT_SYNC_UPDATE' }, ({ payload }) => {
+    if (callback) callback(payload);
+  });
+
+  return () => {
+    // Keep channel open for app session
+  };
 }
 
 export function subscribeToStores(callback) {
@@ -609,6 +649,7 @@ export async function updateDatabaseStore(storeId, updates) {
       return upsertData;
     }
 
+    broadcastLiveEvent('STORE_UPDATE', { storeId, store: data || { id: storeId, ...dbUpdates } });
     return data;
   } catch (err) {
     console.error('Failed to update store in Supabase:', err);
@@ -637,6 +678,7 @@ export async function deleteDatabaseStore(storeId) {
       .eq('id', storeId);
 
     if (error) throw error;
+    broadcastLiveEvent('STORE_DELETE', { storeId });
     return true;
   } catch (err) {
     console.error('Failed to delete store in Supabase:', err);

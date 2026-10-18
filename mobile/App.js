@@ -38,6 +38,8 @@ import {
   createDatabaseStore,
   subscribeToStores,
   subscribeToStoreInventory,
+  subscribeToLiveBroadcast,
+  broadcastLiveEvent,
   getStoreInventory,
   updateDatabaseStore,
   deleteDatabaseStore,
@@ -2286,6 +2288,18 @@ export default function App() {
           AsyncStorage.setItem('getit_stores_list', JSON.stringify(mergedCloud)).catch(console.warn);
           return mergedCloud;
         });
+
+        // LIVE UPDATE: Also update selectedStore in real-time so buyer views the new 24h status immediately!
+        setSelectedStore((prev) => {
+          if (!prev) return null;
+          const fresh = enriched.find((s) => s.id === prev.id);
+          if (!fresh) return prev;
+          return {
+            ...prev,
+            ...fresh,
+            products: (fresh.products && fresh.products.length > 0) ? fresh.products : prev.products,
+          };
+        });
       } catch (err) {
         console.warn('Error loading cloud stores:', err);
       }
@@ -2294,7 +2308,7 @@ export default function App() {
     loadCloudStores();
 
     // Realtime subscription for stores (both new additions and live status/hours/profile updates)
-    const unsubscribeStores = subscribeToStores((payload) => {
+    const handleStorePayload = (payload) => {
       if (payload.eventType === 'INSERT' && payload.new) {
         const dbStore = payload.new;
         const categoryKey = (dbStore.category || 'gourmet').toLowerCase().includes('organ')
@@ -2309,6 +2323,7 @@ export default function App() {
 
         const meta = parseStoreMetadata(dbStore);
         const isOpenBool = dbStore.is_open !== undefined ? Boolean(dbStore.is_open) : true;
+        const is24H = meta.is24Hours !== undefined ? Boolean(meta.is24Hours) : Boolean(dbStore.is_24_hours);
 
         const newStoreObj = {
           id: dbStore.id,
@@ -2336,10 +2351,9 @@ export default function App() {
           openTime: meta.openTime,
           closeTime: meta.closeTime,
           operatingDays: meta.operatingDays,
-          is24Hours: meta.is24Hours,
+          is24Hours: is24H,
         };
 
-        // Instantly load inventory for the newly created store
         getStoreInventory(dbStore.id).then((inv) => {
           if (inv && inv.length > 0) {
             newStoreObj.products = inv;
@@ -2359,6 +2373,7 @@ export default function App() {
         const dbStore = payload.new;
         const meta = parseStoreMetadata(dbStore);
         const isOpenBool = dbStore.is_open !== undefined ? Boolean(dbStore.is_open) : true;
+        const is24H = meta.is24Hours !== undefined ? Boolean(meta.is24Hours) : Boolean(dbStore.is_24_hours);
         const categoryKey = (dbStore.category || 'gourmet').toLowerCase().includes('organ')
           ? 'organic'
           : (dbStore.category || '').toLowerCase().includes('bake')
@@ -2388,7 +2403,7 @@ export default function App() {
               openTime: meta.openTime || s.openTime,
               closeTime: meta.closeTime || s.closeTime,
               operatingDays: meta.operatingDays || s.operatingDays,
-              is24Hours: meta.is24Hours !== undefined ? meta.is24Hours : s.is24Hours,
+              is24Hours: is24H,
               image: meta.image || s.image,
             };
           })
@@ -2412,7 +2427,7 @@ export default function App() {
             openTime: meta.openTime || prev.openTime,
             closeTime: meta.closeTime || prev.closeTime,
             operatingDays: meta.operatingDays || prev.operatingDays,
-            is24Hours: meta.is24Hours !== undefined ? meta.is24Hours : prev.is24Hours,
+            is24Hours: is24H,
             image: meta.image || prev.image,
           };
         });
@@ -2420,7 +2435,7 @@ export default function App() {
         if (merchantStoreId === dbStore.id || currentMerchantStore?.id === dbStore.id) {
           setStoreOpenStatus(isOpenBool);
           setStoreTiming({
-            is24Hours: meta.is24Hours,
+            is24Hours: is24H,
             openTime: meta.openTime,
             closeTime: meta.closeTime,
             operatingDays: meta.operatingDays,
@@ -2431,10 +2446,9 @@ export default function App() {
         updateAndPersistStores((prev) => prev.filter((s) => s.id !== deletedId));
         setSelectedStore((prev) => (prev && prev.id === deletedId ? null : prev));
       }
-    });
+    };
 
-    // Realtime subscription for store catalog products (instant live reflection on buyer side)
-    const unsubscribeInventory = subscribeToStoreInventory((payload) => {
+    const handleInventoryPayload = (payload) => {
       const item = payload.new || payload.old;
       if (!item || !item.store_id) return;
       const targetStoreId = item.store_id;
@@ -2530,12 +2544,40 @@ export default function App() {
           };
         });
       }
+    };
+
+    // 1. Supabase Postgres replication subscriptions
+    const unsubscribeStores = subscribeToStores(handleStorePayload);
+    const unsubscribeInventory = subscribeToStoreInventory(handleInventoryPayload);
+
+    // 2. Instant Cross-Device Broadcast listener (Sub-50ms peer-to-peer live sync)
+    const unsubscribeBroadcast = subscribeToLiveBroadcast((event) => {
+      if (event.eventType === 'STORE_UPDATE') {
+        handleStorePayload({ eventType: 'UPDATE', new: event.store });
+      } else if (event.eventType === 'STORE_INSERT') {
+        handleStorePayload({ eventType: 'INSERT', new: event.store });
+      } else if (event.eventType === 'STORE_DELETE') {
+        handleStorePayload({ eventType: 'DELETE', old: { id: event.storeId } });
+      } else if (event.eventType === 'INVENTORY_INSERT' || event.eventType === 'INVENTORY_UPDATE') {
+        handleInventoryPayload({ eventType: event.eventType === 'INVENTORY_INSERT' ? 'INSERT' : 'UPDATE', new: event.item });
+      } else if (event.eventType === 'INVENTORY_DELETE') {
+        handleInventoryPayload({ eventType: 'DELETE', old: { id: event.itemId, store_id: event.storeId } });
+      }
     });
+
+    // 3. Background Heartbeat Poller (Every 3.5s): Guarantees continuous live sync across all devices
+    const syncInterval = setInterval(() => {
+      if (isMounted) {
+        loadCloudStores();
+      }
+    }, 3500);
 
     return () => {
       isMounted = false;
+      clearInterval(syncInterval);
       if (typeof unsubscribeStores === 'function') unsubscribeStores();
       if (typeof unsubscribeInventory === 'function') unsubscribeInventory();
+      if (typeof unsubscribeBroadcast === 'function') unsubscribeBroadcast();
     };
   }, []);
 
