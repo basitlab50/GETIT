@@ -650,3 +650,64 @@ export function getProductImageSource(imageUrl) {
   }
   return null;
 }
+
+// Pre-computed image key tokens for sub-millisecond keyword lookup across all 653 products
+const PRECOMPUTED_IMAGE_KEYS = Object.keys(PRODUCT_IMAGES).map((key) => {
+  const cleanKey = key
+    .replace(/^\/products\//, '')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/-getit[a-z0-9]+$/i, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .toLowerCase()
+    .trim();
+  const tokens = cleanKey
+    .split(/\s+/)
+    .filter((t) => t.length > 1 && !['bottle', 'can', 'pet', 'gfp', 'pack', 'pcs'].includes(t));
+  return { key, cleanKey, tokens };
+});
+
+export function matchCatalogImageByName(productName, fallbackCatalog = []) {
+  if (!productName || typeof productName !== 'string') return null;
+
+  const rawClean = productName.toLowerCase().replace(/[^a-z0-9]+/gi, ' ').trim();
+  const nameTokens = rawClean.split(/\s+/).filter((t) => t.length > 1);
+  if (nameTokens.length === 0) return null;
+
+  // 1. Direct match against existing store catalog items
+  if (Array.isArray(fallbackCatalog) && fallbackCatalog.length > 0) {
+    for (const prod of fallbackCatalog) {
+      if (!prod || !prod.name) continue;
+      const existingClean = prod.name.toLowerCase().replace(/[^a-z0-9]+/gi, ' ').trim();
+      if ((existingClean === rawClean || existingClean.includes(rawClean) || rawClean.includes(existingClean)) && (prod.imageUrl || prod.imageUri)) {
+        return prod.imageUrl || prod.imageUri;
+      }
+    }
+  }
+
+  // 2. Direct or substring match in PRECOMPUTED_IMAGE_KEYS
+  for (const item of PRECOMPUTED_IMAGE_KEYS) {
+    if (item.cleanKey === rawClean || item.cleanKey.includes(rawClean) || rawClean.includes(item.cleanKey)) {
+      return item.key;
+    }
+  }
+
+  // 3. High-confidence Token Score Matching
+  let bestMatch = null;
+  let highestScore = 0;
+
+  for (const item of PRECOMPUTED_IMAGE_KEYS) {
+    let matchCount = 0;
+    for (const token of nameTokens) {
+      if (item.tokens.includes(token)) {
+        matchCount += token.length >= 4 ? 2 : 1;
+      }
+    }
+    if (matchCount >= 2 && matchCount > highestScore) {
+      highestScore = matchCount;
+      bestMatch = item.key;
+    }
+  }
+
+  return bestMatch;
+}
+

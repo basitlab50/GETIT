@@ -68,7 +68,7 @@ import {
   notifyMerchantAcceptanceReminder,
   notifyMerchantPrepReminder,
 } from './services/notificationService';
-import { getProductImageSource } from './assets/productImages';
+import { getProductImageSource, matchCatalogImageByName } from './assets/productImages';
 
 const { width } = Dimensions.get('window');
 
@@ -759,12 +759,15 @@ function parseInventoryText(text) {
         }
         if (name && price > 0) {
           const { category, icon } = guessCategoryAndIcon(name, cat);
+          const autoMatchedImage = matchCatalogImageByName(name);
           products.push({
             id: `imp-${Math.random().toString(36).substr(2, 7)}-${Date.now().toString().slice(-4)}`,
             name,
             price,
             category,
             icon,
+            imageUrl: autoMatchedImage || null,
+            imageUri: autoMatchedImage || null,
             outOfStock: false,
           });
         }
@@ -801,13 +804,17 @@ function parseInventoryText(text) {
       }
 
       if (name && price > 0) {
-        const { category, icon } = guessCategoryAndIcon(name, catPart);
+        const cleanName = name.replace(/^["']|["']$/g, '');
+        const { category, icon } = guessCategoryAndIcon(cleanName, catPart);
+        const autoMatchedImage = matchCatalogImageByName(cleanName);
         products.push({
           id: `imp-${Math.random().toString(36).substr(2, 7)}-${Date.now().toString().slice(-4)}`,
-          name: name.replace(/^["']|["']$/g, ''),
+          name: cleanName,
           price,
           category,
           icon,
+          imageUrl: autoMatchedImage || null,
+          imageUri: autoMatchedImage || null,
           outOfStock: false,
         });
       }
@@ -6974,23 +6981,27 @@ export default function App() {
               // 🔄 Automatic Price & Detail Update (No duplicates!)
               const prevItem = updatedList[existingIdx];
               const newPrice = Number(newP.price) > 0 ? Number(newP.price) : prevItem.price;
+              const resolvedImage = newP.imageUrl || prevItem.imageUrl || prevItem.imageUri || matchCatalogImageByName(newP.name);
               const merged = {
                 ...prevItem,
                 price: newPrice,
                 category: newP.category || prevItem.category,
-                imageUrl: newP.imageUrl || prevItem.imageUrl,
-                imageUri: newP.imageUrl || prevItem.imageUri,
+                imageUrl: resolvedImage,
+                imageUri: resolvedImage,
                 icon: newP.icon || prevItem.icon,
               };
               updatedList[existingIdx] = merged;
               updatedPriceCount++;
               itemsToCloudSync.push({ action: 'update', item: merged });
             } else {
-              // ➕ Brand New Product
+              // ➕ Brand New Product (Auto-lookup photo in 653 pre-encoded library)
+              const resolvedImage = newP.imageUrl || matchCatalogImageByName(newP.name);
               const brandNew = {
                 ...newP,
                 id: newP.id || `prod-bulk-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
                 price: Number(newP.price) || 0,
+                imageUrl: resolvedImage || null,
+                imageUri: resolvedImage || null,
                 outOfStock: false,
               };
               updatedList.unshift(brandNew);
@@ -13102,13 +13113,20 @@ export default function App() {
                 <View style={{ gap: 8, marginTop: 8 }}>
                   {bulkParsedProducts.map((p, idx) => (
                     <View key={p.id || idx} style={styles.bulkPreviewItemCard}>
-                      <Text style={{ fontSize: 22, marginRight: 10 }}>{p.icon || '🛍️'}</Text>
+                      {getProductImageSource(p.imageUrl || p.imageUri) ? (
+                        <Image
+                          source={getProductImageSource(p.imageUrl || p.imageUri)}
+                          style={{ width: 34, height: 34, borderRadius: 6, marginRight: 10, resizeMode: 'contain' }}
+                        />
+                      ) : (
+                        <Text style={{ fontSize: 22, marginRight: 10 }}>{p.icon || '🛍️'}</Text>
+                      )}
                       <View style={{ flex: 1, marginRight: 8 }}>
                         <Text style={styles.bulkPreviewItemName} numberOfLines={1}>
                           {p.name}
                         </Text>
                         <Text style={styles.bulkPreviewItemMeta}>
-                          {p.category}
+                          {p.category} {p.imageUrl ? '• 📸 Photo Matched' : ''}
                         </Text>
                       </View>
                       <Text style={styles.bulkPreviewItemPrice}>{formatNaira(p.price)}</Text>
