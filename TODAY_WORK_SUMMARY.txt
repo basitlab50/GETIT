@@ -554,6 +554,18 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Comprehensive Status Resolution: `handleStorePayload` and `loadCloudStores` now evaluate `isOpenBool` across `dbStore.isOpen`, `dbStore.is_open`, and `meta.isOpen`, setting `isOpen`, `is_open`, `status: isOpenBool ? 'open' : 'closed'`, and `isClosed: !isOpenBool`.
      * Immediate Buyer UI Reaction: When a merchant pauses or resumes their store, all buyer devices instantly update their map pins ('Open Now' vs 'Closed', green vs gray), store cards (closed door overlay on/off), and store detail screen (browsing/cart restrictions toggle) in real time without requiring the user to reload the app.
 
+14. Resolution of Paused Transaction & Courier Movement Before First Store:
+   - Root Causes of Order Pausing / Not Reaching the First Store:
+     * Multi-Store Dispatch Gate: In `readyMerchantOrder` (`mobile/App.js`), `shouldDispatch` was guarded by `allStopsReady || updatedStopsList.length <= 1`. On multi-store orders, when the first shop marked ready, dispatch was blocked because subsequent shops were still preparing, leaving the order paused indefinitely in 'Preparing' with Musa never dispatched.
+     * Route Geometry Missing Leg 0 (Rider to First Store): In `useEffect` route auto-fetcher, waypoints only included stores and the customer (`[...stopsList, dest]`), omitting `riderStart`. This resulted in Leg 0 being `Stop 1 -> Stop 2` instead of `Rider -> Stop 1`, resetting `roadPointIndex` to 0 and dropping the rider off at the store rather than allowing the straight line transit to run.
+     * Ephemeral `Date.now()` Resets from Cloud Sync: In `mobile/services/supabaseService.js` (`getDatabaseOrders`), missing `legStartedAt` fell back to `Date.now()`. On every 15s poll or active tab switch, `syncOrdersFromCloud` clobbered the device's local `existing.legStartedAt` with a freshly generated timestamp, resetting elapsed transit time (`now - legStartedAt`) to 0 and pausing the courier.
+     * Undefined `dispatchBoltCourier`: The UI button "Dispatch Bolt Motorbike Courier" called `dispatchBoltCourier`, which was previously undefined.
+   - Comprehensive Permanent Fix:
+     * Priority Dispatch on First Store Ready: `shouldDispatch` now checks `allStopsReady || updatedStopsList.length <= 1 || isFirstStopReady`. As soon as Store 1 is ready, Musa is immediately matched and dispatched to Store 1 while remaining stores continue packaging.
+     * Strict Waypoint Route Consistency: `useEffect` route fetcher now always prepends `riderStart` (`[riderStart, ...stopsList, dest]`), guaranteeing Leg 0 is always the route from courier origin to Store 1 and preserving existing `roadPointIndex` and coordinates.
+     * Protected Elapsed Time Timer: `syncOrdersFromCloud` now prioritizes `existing.legStartedAt || co.legStartedAt`, preventing background syncs from resetting the rider's progress. `getDatabaseOrders` returns `0` instead of `Date.now()` when unrecorded.
+     * Implemented `dispatchBoltCourier`: Added `dispatchBoltCourier` mapped directly to `readyMerchantOrder(orderId)` so clicking the dispatch button triggers the courier dispatch sequence reliably.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================

@@ -1743,7 +1743,7 @@ export default function App() {
                   roadRouteCoordinates: (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []),
                   roadLegs: (co.roadLegs && co.roadLegs.length > 0) ? co.roadLegs : (existing.roadLegs || []),
                   roadPointIndex: Math.max(co.roadPointIndex || 0, existing.roadPointIndex || 0),
-                  legStartedAt: co.legStartedAt || existing.legStartedAt || Date.now(),
+                  legStartedAt: existing.legStartedAt || co.legStartedAt || Date.now(),
                   boltCoords: (existing.status === 'On the Way' && existing.boltCoords) ? existing.boltCoords : (co.boltCoords || existing.boltCoords),
                 }
               : co
@@ -2165,8 +2165,13 @@ export default function App() {
         const firstStore = stopsList[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
         const dest = ord.deliveryLocation || pinnedLocation || { latitude: 9.0882, longitude: 7.4933 };
 
-        // Waypoints strictly start at the first pinned store and end at the customer home
+        // Waypoints strictly begin at rider origin, visit every participating store, and terminate at customer destination
+        const riderStart = ord.riderOrigin || {
+          latitude: Number(firstStore.latitude || 9.0882) - 0.0090,
+          longitude: Number(firstStore.longitude || 7.4933) - 0.0080,
+        };
         const waypoints = [
+          riderStart,
           ...(stopsList.length > 0
             ? stopsList.map((s) => ({
                 latitude: Number(s.latitude) || 9.0882,
@@ -2181,9 +2186,9 @@ export default function App() {
 
         fetchRealRoadDirections(waypoints).then((result) => {
           if (result && result.roadPoints && result.roadPoints.length > 0) {
-            // Update stops with their snapped pinpoint coordinates directly on the road!
+            // Update stops with their snapped pinpoint coordinates directly on the road (sIdx 0 -> snappedWaypoints[1])
             const updatedStops = (ord.stops || []).map((st, sIdx) => {
-              const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx] : null;
+              const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx + 1] : null;
               return {
                 ...st,
                 snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.0882,
@@ -2208,8 +2213,8 @@ export default function App() {
                       snappedDeliveryLocation: snappedDest
                         ? { ...o.deliveryLocation, latitude: snappedDest.latitude, longitude: snappedDest.longitude }
                         : o.deliveryLocation,
-                      roadPointIndex: 0,
-                      boltCoords: result.roadPoints[0],
+                      roadPointIndex: o.roadPointIndex || 0,
+                      boltCoords: (o.roadPointIndex && result.roadPoints[o.roadPointIndex]) || o.boltCoords || result.roadPoints[0],
                     }
                   : o
               )
@@ -2907,8 +2912,8 @@ export default function App() {
                 status: payload.status || o.status,
                 stops: payload.stops || o.stops,
                 currentStopIndex: payload.currentStopIndex !== undefined ? payload.currentStopIndex : o.currentStopIndex,
-                roadPointIndex: payload.roadPointIndex !== undefined ? payload.roadPointIndex : 0,
-                legStartedAt: payload.legStartedAt !== undefined ? payload.legStartedAt : (o.legStartedAt || Date.now()),
+                roadPointIndex: payload.roadPointIndex !== undefined ? payload.roadPointIndex : o.roadPointIndex,
+                legStartedAt: payload.legStartedAt !== undefined ? payload.legStartedAt : o.legStartedAt,
                 boltCoords: payload.boltCoords || o.boltCoords,
                 journeyAlert: payload.journeyAlert || o.journeyAlert,
               };
@@ -5024,6 +5029,10 @@ export default function App() {
     }).catch(() => {});
   };
 
+  const dispatchBoltCourier = (orderId) => {
+    readyMerchantOrder(orderId);
+  };
+
   const readyMerchantOrder = (orderId) => {
     if (lastMerchantReminderRef.current) {
       delete lastMerchantReminderRef.current.prepOrdersInit;
@@ -5049,7 +5058,8 @@ export default function App() {
       allStopsReady = updatedStopsList.every((st) => st.status === 'Ready for Pickup');
     }
 
-    const shouldDispatch = allStopsReady || updatedStopsList.length <= 1;
+    const isFirstStopReady = updatedStopsList[0] && (updatedStopsList[0].status === 'Ready for Pickup' || updatedStopsList[0].pickupStatus === 'ready');
+    const shouldDispatch = allStopsReady || updatedStopsList.length <= 1 || isFirstStopReady;
     const initialStatus = shouldDispatch ? 'Looking for Courier' : 'Preparing';
     const initialAlert = stops.length > 1
       ? (allStopsReady

@@ -471,7 +471,7 @@ export async function getDatabaseOrders() {
         isMultiStore: isMultiStore,
         currentStopIndex: reconciledStopIndex,
         roadPointIndex: Number(riderMeta.roadPointIndex) || 0,
-        legStartedAt: Number(riderMeta.legStartedAt) || (normalizedStatus === 'On the Way' ? Date.now() : 0),
+        legStartedAt: Number(riderMeta.legStartedAt) || 0,
         journeyAlert: journeyAlert,
         timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
         createdAt: item.created_at
