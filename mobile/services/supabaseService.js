@@ -150,7 +150,7 @@ export async function updateStoreInventoryItem(itemId, updates = {}) {
   }
 }
 
-export async function removeStoreInventoryItem(itemId) {
+export async function removeStoreInventoryItem(itemId, storeId = null) {
   try {
     const { error } = await supabase
       .from('store_inventory')
@@ -165,6 +165,7 @@ export async function removeStoreInventoryItem(itemId) {
     return false;
   }
 }
+
 
 // 3. Orders & Realtime Sync
 export async function createDatabaseOrder(order) {

@@ -43,6 +43,7 @@ import {
   subscribeToLiveBroadcast,
   broadcastLiveEvent,
   getStoreInventory,
+  removeStoreInventoryItem,
   updateDatabaseStore,
   deleteDatabaseStore,
   parseStoreMetadata,
@@ -1424,6 +1425,15 @@ export default function App() {
   const [customProductCategory, setCustomProductCategory] = useState('Pantry');
   const [customProductIcon, setCustomProductIcon] = useState('🛍️');
   const [customProductImage, setCustomProductImage] = useState(null);
+  // Merchant Inventory Search & Product Editing State
+  const [merchantInventorySearch, setMerchantInventorySearch] = useState('');
+  const [editProductModalVisible, setEditProductModalVisible] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [editProductName, setEditProductName] = useState('');
+  const [editProductPrice, setEditProductPrice] = useState('');
+  const [editProductCategory, setEditProductCategory] = useState('Pantry');
+  const [editProductImage, setEditProductImage] = useState(null);
+  const [isSavingProductEdit, setIsSavingProductEdit] = useState(false);
   const [newProductName, setNewProductName] = useState('');
   const [newProductPrice, setNewProductPrice] = useState('');
   const [newProductCategory, setNewProductCategory] = useState('Pantry');
@@ -5487,6 +5497,136 @@ export default function App() {
       storeId: targetStoreId,
       productObj: targetProduct,
     }).catch((e) => console.log('Supabase inventory stock update error:', e?.message));
+  };
+
+  const handleOpenEditProduct = (prod) => {
+    if (!prod) return;
+    setEditingProduct(prod);
+    setEditProductName(prod.name || '');
+    setEditProductPrice(String(prod.price || ''));
+    setEditProductCategory(prod.category || 'Pantry');
+    setEditProductImage(prod.imageUrl || prod.imageUri || null);
+    setEditProductModalVisible(true);
+  };
+
+  const handlePickEditProductImage = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/*'],
+        copyToCacheDirectory: true,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        setEditProductImage(res.assets[0].uri);
+      }
+    } catch (err) {
+      console.warn('Error picking image', err);
+      Alert.alert('Upload Error', 'Could not access the selected photo.');
+    }
+  };
+
+  const handleSaveProductEdits = async () => {
+    if (!editingProduct) return;
+    const trimmedName = editProductName.trim();
+    if (!trimmedName) {
+      Alert.alert('Product Name Required', 'Please provide a valid product name.');
+      return;
+    }
+    const cleanPrice = Number(String(editProductPrice).replace(/[^0-9]/g, ''));
+    if (!cleanPrice || cleanPrice <= 0) {
+      Alert.alert('Valid Price Required', 'Please enter a valid selling price in Naira.');
+      return;
+    }
+
+    setIsSavingProductEdit(true);
+    const targetStoreId = currentMerchantStore?.id || merchantStoreId;
+
+    const updatedProd = {
+      ...editingProduct,
+      name: trimmedName,
+      price: cleanPrice,
+      category: editProductCategory,
+      imageUrl: editProductImage,
+      imageUri: editProductImage,
+    };
+
+    updateAndPersistStores((prev) =>
+      prev.map((st) => {
+        if (st.id !== targetStoreId) return st;
+        return {
+          ...st,
+          products: (st.products || []).map((p) => (p.id === editingProduct.id ? updatedProd : p)),
+        };
+      })
+    );
+
+    setSelectedStore((prev) => {
+      if (!prev || prev.id !== targetStoreId) return prev;
+      return {
+        ...prev,
+        products: (prev.products || []).map((p) => (p.id === editingProduct.id ? updatedProd : p)),
+      };
+    });
+
+    // Supabase cloud persistence & WebSocket broadcast to buyers
+    await updateStoreInventoryItem(editingProduct.id, {
+      storeId: targetStoreId,
+      name: trimmedName,
+      price: cleanPrice,
+      category: editProductCategory,
+      imageUrl: editProductImage,
+      productObj: updatedProd,
+    }).catch((e) => console.log('Supabase product edit notice:', e?.message));
+
+    setIsSavingProductEdit(false);
+    setEditProductModalVisible(false);
+    setEditingProduct(null);
+    Alert.alert('✓ Product Updated', `"${trimmedName}" price updated to ${formatNaira(cleanPrice)} across GETIT!`);
+  };
+
+  const handleDeleteProduct = (productId, productName = 'this product') => {
+    const targetStoreId = currentMerchantStore?.id || merchantStoreId;
+    Alert.alert(
+      'Remove Product from Store',
+      `Are you sure you want to permanently remove "${productName}" from your store catalog?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            updateAndPersistStores((prev) =>
+              prev.map((st) => {
+                if (st.id !== targetStoreId) return st;
+                return {
+                  ...st,
+                  products: (st.products || []).filter((p) => p.id !== productId),
+                };
+              })
+            );
+
+            setSelectedStore((prev) => {
+              if (!prev || prev.id !== targetStoreId) return prev;
+              return {
+                ...prev,
+                products: (prev.products || []).filter((p) => p.id !== productId),
+              };
+            });
+
+            if (editProductModalVisible) {
+              setEditProductModalVisible(false);
+              setEditingProduct(null);
+            }
+
+            // Sync deletion to Supabase Cloud
+            await removeStoreInventoryItem(productId, targetStoreId).catch((e) =>
+              console.log('Supabase product remove notice:', e?.message)
+            );
+
+            Alert.alert('✓ Removed', `"${productName}" was removed from your store shelf.`);
+          },
+        },
+      ]
+    );
   };
 
   const handlePickCustomProductImage = async () => {
@@ -11441,52 +11581,142 @@ export default function App() {
                   </View>
                 </View>
 
+                {/* 🔍 Instant Product Search Bar */}
+                <View style={styles.inventorySearchWrapper}>
+                  <Text style={{ fontSize: 15, marginRight: 8 }}>🔍</Text>
+                  <TextInput
+                    style={styles.inventorySearchInput}
+                    placeholder="Search products by name or category..."
+                    placeholderTextColor="#94A3B8"
+                    value={merchantInventorySearch}
+                    onChangeText={setMerchantInventorySearch}
+                    autoCapitalize="none"
+                    clearButtonMode="while-editing"
+                  />
+                  {merchantInventorySearch.length > 0 && (
+                    <TouchableOpacity
+                      style={styles.inventorySearchClearBtn}
+                      onPress={() => setMerchantInventorySearch('')}
+                    >
+                      <Text style={styles.inventorySearchClearText}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {merchantInventorySearch.length > 0 && (
+                  <View style={styles.inventorySearchMetaRow}>
+                    <Text style={styles.inventorySearchMetaText}>
+                      Showing {
+                        (currentMerchantStore?.products || []).filter(
+                          (p) =>
+                            p.name.toLowerCase().includes(merchantInventorySearch.toLowerCase()) ||
+                            (p.category && p.category.toLowerCase().includes(merchantInventorySearch.toLowerCase()))
+                        ).length
+                      } of {currentMerchantStore?.products?.length || 0} items
+                    </Text>
+                    <TouchableOpacity onPress={() => setMerchantInventorySearch('')}>
+                      <Text style={styles.inventorySearchResetText}>Clear</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 {/* Product List */}
-                <View style={{ marginTop: 12 }}>
-                  {currentMerchantStore?.products.map((p) => (
-                    <View key={p.id} style={styles.inventoryItemCard}>
-                      {getProductImageSource(p.imageUrl || p.imageUri) ? (
-                        <Image
-                          source={getProductImageSource(p.imageUrl || p.imageUri)}
-                          style={[styles.inventoryItemImageThumbnail, { resizeMode: 'contain' }]}
-                        />
-                      ) : (
-                        <Text style={{ fontSize: 26, marginRight: 12 }}>{p.icon || '🛍️'}</Text>
-                      )}
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.inventoryItemName}>{p.name}</Text>
-                        <Text style={styles.inventoryItemCategory}>{p.category} • {formatNaira(p.price)}</Text>
-                        <View style={{ marginTop: 4 }}>
-                          {p.outOfStock ? (
-                            <View style={styles.stockTagRed}>
-                              <Text style={styles.stockTagRedText}>🔴 Out of Stock</Text>
-                            </View>
-                          ) : (
-                            <View style={styles.stockTagGreen}>
-                              <Text style={styles.stockTagGreenText}>🟢 Available in Shop</Text>
-                            </View>
-                          )}
+                <View style={{ marginTop: 4 }}>
+                  {(() => {
+                    const allProducts = currentMerchantStore?.products || [];
+                    const filteredProducts = merchantInventorySearch.trim().length > 0
+                      ? allProducts.filter(
+                          (p) =>
+                            p.name.toLowerCase().includes(merchantInventorySearch.toLowerCase()) ||
+                            (p.category && p.category.toLowerCase().includes(merchantInventorySearch.toLowerCase()))
+                        )
+                      : allProducts;
+
+                    if (filteredProducts.length === 0) {
+                      return (
+                        <View style={styles.inventoryEmptySearchCard}>
+                          <Text style={{ fontSize: 32, marginBottom: 6 }}>🔍</Text>
+                          <Text style={styles.inventoryEmptySearchTitle}>No Products Found</Text>
+                          <Text style={styles.inventoryEmptySearchSub}>
+                            No items in your catalog match "{merchantInventorySearch}".
+                          </Text>
+                          <TouchableOpacity
+                            style={styles.inventoryEmptyClearBtn}
+                            onPress={() => setMerchantInventorySearch('')}
+                          >
+                            <Text style={styles.inventoryEmptyClearBtnText}>View All Products</Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    }
+
+                    return filteredProducts.map((p) => (
+                      <View key={p.id} style={styles.inventoryItemCard}>
+                        {getProductImageSource(p.imageUrl || p.imageUri) ? (
+                          <Image
+                            source={getProductImageSource(p.imageUrl || p.imageUri)}
+                            style={[styles.inventoryItemImageThumbnail, { resizeMode: 'contain' }]}
+                          />
+                        ) : (
+                          <Text style={{ fontSize: 26, marginRight: 12 }}>{p.icon || '🛍️'}</Text>
+                        )}
+                        <View style={{ flex: 1, marginRight: 6 }}>
+                          <Text style={styles.inventoryItemName} numberOfLines={1}>{p.name}</Text>
+                          <Text style={styles.inventoryItemCategory} numberOfLines={1}>
+                            {p.category} • <Text style={{ color: '#056B4B', fontWeight: '800' }}>{formatNaira(p.price)}</Text>
+                          </Text>
+                          <View style={{ marginTop: 4 }}>
+                            {p.outOfStock ? (
+                              <View style={styles.stockTagRed}>
+                                <Text style={styles.stockTagRedText}>🔴 Out of Stock</Text>
+                              </View>
+                            ) : (
+                              <View style={styles.stockTagGreen}>
+                                <Text style={styles.stockTagGreenText}>🟢 Available in Shop</Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+
+                        {/* Action Cluster: Edit Price, Restock/Out, Delete */}
+                        <View style={styles.inventoryItemActionsCluster}>
+                          <TouchableOpacity
+                            style={styles.inventoryEditPriceBtn}
+                            onPress={() => handleOpenEditProduct(p)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.inventoryEditPriceBtnText}>✏️ Edit</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.stockToggleActionBtn,
+                              p.outOfStock ? styles.btnMakeAvailable : styles.btnMakeOutOfStock,
+                            ]}
+                            onPress={() => toggleStock(p.id)}
+                            activeOpacity={0.7}
+                          >
+                            <Text
+                              style={[
+                                styles.stockToggleActionText,
+                                p.outOfStock ? { color: '#047857' } : { color: '#B91C1C' },
+                              ]}
+                            >
+                              {p.outOfStock ? 'Restock ✓' : 'Out ✕'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.inventoryDeleteSmallBtn}
+                            onPress={() => handleDeleteProduct(p.id, p.name)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={{ fontSize: 13 }}>🗑️</Text>
+                          </TouchableOpacity>
                         </View>
                       </View>
-
-                      <TouchableOpacity
-                        style={[
-                          styles.stockToggleActionBtn,
-                          p.outOfStock ? styles.btnMakeAvailable : styles.btnMakeOutOfStock,
-                        ]}
-                        onPress={() => toggleStock(p.id)}
-                      >
-                        <Text
-                          style={[
-                            styles.stockToggleActionText,
-                            p.outOfStock ? { color: '#047857' } : { color: '#B91C1C' },
-                          ]}
-                        >
-                          {p.outOfStock ? 'Restock ✓' : 'Out of Stock ✕'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
+                    ));
+                  })()}
                 </View>
               </ScrollView>
             )}
@@ -11976,6 +12206,168 @@ export default function App() {
           </SafeAreaView>
         </View>
       )}
+
+      {/* ========================================================================= */}
+      {/* --- EDIT PRODUCT & PRICE MODAL --- */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={editProductModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => {
+          setEditProductModalVisible(false);
+          setEditingProduct(null);
+        }}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => {
+                setEditProductModalVisible(false);
+                setEditingProduct(null);
+              }}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Cancel</Text>
+            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={styles.modalHeaderTitle}>✏️ Edit Product</Text>
+              <Text style={styles.modalHeaderSubtitle}>
+                {editingProduct?.name || 'Store Catalog'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.inventoryModalDeleteBtn}
+              onPress={() => editingProduct && handleDeleteProduct(editingProduct.id, editingProduct.name)}
+            >
+              <Text style={styles.inventoryModalDeleteText}>🗑️ Delete</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView
+            style={{ flex: 1, backgroundColor: COLORS.beigeBg }}
+            contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.customHeroCard}>
+              {/* Product Photo Section */}
+              <Text style={styles.customFieldLabel}>PRODUCT PHOTO</Text>
+              {editProductImage ? (
+                <View style={styles.customImagePreviewWrap}>
+                  <Image
+                    source={getProductImageSource(editProductImage) || { uri: editProductImage }}
+                    style={styles.customImagePreview}
+                    resizeMode="contain"
+                  />
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                    <TouchableOpacity
+                      style={styles.changePhotoBtn}
+                      onPress={handlePickEditProductImage}
+                    >
+                      <Text style={styles.changePhotoBtnText}>📸 Change Photo</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.customRemoveImageBtn}
+                      onPress={() => setEditProductImage(null)}
+                    >
+                      <Text style={styles.customRemoveImageText}>✕ Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.customUploadBox}
+                  onPress={handlePickEditProductImage}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ fontSize: 32, marginBottom: 6 }}>📸</Text>
+                  <Text style={styles.customUploadTitle}>Tap to Upload Real Product Photo</Text>
+                  <Text style={styles.customUploadSub}>
+                    Pick from gallery or take a quick photo of your shelf item
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Product Name */}
+              <Text style={[styles.customFieldLabel, { marginTop: 16 }]}>PRODUCT TITLE</Text>
+              <TextInput
+                style={styles.customTextInput}
+                value={editProductName}
+                onChangeText={setEditProductName}
+                placeholder="e.g. Golden Penny Spaghetti"
+                placeholderTextColor="#94A3B8"
+              />
+
+              {/* Price in Naira */}
+              <Text style={[styles.customFieldLabel, { marginTop: 16 }]}>SELLING PRICE (₦ NAIRA)</Text>
+              <View style={styles.editPriceInputRow}>
+                <Text style={styles.editPriceCurrencyPrefix}>₦</Text>
+                <TextInput
+                  style={styles.editPriceNumericInput}
+                  value={editProductPrice}
+                  onChangeText={(txt) => setEditProductPrice(txt.replace(/[^0-9]/g, ''))}
+                  placeholder="e.g. 1500"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                />
+              </View>
+
+              {/* Quick Price Increment Chips */}
+              <View style={styles.quickPriceChipsRow}>
+                {[100, 200, 500, 1000].map((delta) => (
+                  <TouchableOpacity
+                    key={delta}
+                    style={styles.quickPriceChip}
+                    onPress={() => {
+                      const cur = Number(String(editProductPrice).replace(/[^0-9]/g, '')) || 0;
+                      setEditProductPrice(String(cur + delta));
+                    }}
+                  >
+                    <Text style={styles.quickPriceChipText}>+₦{delta}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Category */}
+              <Text style={[styles.customFieldLabel, { marginTop: 16 }]}>CATEGORY</Text>
+              <View style={styles.customCatChoicesRow}>
+                {['Produce', 'Pantry', 'Drinks', 'Biscuits', 'Household', 'Deli/Bakery'].map((cat) => (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[
+                      styles.customCatChoicePill,
+                      editProductCategory === cat && styles.customCatChoicePillActive,
+                    ]}
+                    onPress={() => setEditProductCategory(cat)}
+                  >
+                    <Text
+                      style={[
+                        styles.customCatChoiceText,
+                        editProductCategory === cat && styles.customCatChoiceTextActive,
+                      ]}
+                    >
+                      {cat}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Save Changes Button */}
+              <TouchableOpacity
+                style={[styles.saveProductEditBtn, isSavingProductEdit && { opacity: 0.6 }]}
+                onPress={handleSaveProductEdits}
+                disabled={isSavingProductEdit}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.saveProductEditBtnText}>
+                  {isSavingProductEdit ? 'Saving Changes...' : '✓ Save Product & Price Updates'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
 
       {/* --- ENHANCED ADD PRODUCT & INVENTORY ONBOARDING MODAL --- */}
       <Modal
@@ -19078,11 +19470,208 @@ const styles = StyleSheet.create({
     color: '#DC2626',
     fontWeight: '700',
   },
-  stockToggleActionBtn: {
-    paddingHorizontal: 10,
+  inventorySearchWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  inventorySearchInput: {
+    flex: 1,
+    fontSize: 12.5,
+    color: COLORS.textDark,
+    padding: 0,
+  },
+  inventorySearchClearBtn: {
+    padding: 4,
+    marginLeft: 6,
+  },
+  inventorySearchClearText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '800',
+  },
+  inventorySearchMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    paddingHorizontal: 2,
+  },
+  inventorySearchMetaText: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+  },
+  inventorySearchResetText: {
+    fontSize: 11,
+    color: COLORS.emeraldPrimary,
+    fontWeight: '700',
+  },
+  inventoryEmptySearchCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    marginTop: 6,
+  },
+  inventoryEmptySearchTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    marginBottom: 4,
+  },
+  inventoryEmptySearchSub: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+    marginBottom: 12,
+    lineHeight: 16,
+  },
+  inventoryEmptyClearBtn: {
+    backgroundColor: COLORS.emeraldDeep,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  inventoryEmptyClearBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  inventoryItemActionsCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginLeft: 4,
+  },
+  inventoryEditPriceBtn: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#CBD5E1',
+    borderWidth: 1,
+    paddingHorizontal: 8,
     paddingVertical: 6,
     borderRadius: 8,
-    marginLeft: 8,
+  },
+  inventoryEditPriceBtnText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  inventoryDeleteSmallBtn: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+    borderWidth: 1,
+    paddingHorizontal: 7,
+    paddingVertical: 5,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inventoryModalDeleteBtn: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FCA5A5',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  inventoryModalDeleteText: {
+    color: '#DC2626',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  editPriceInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: COLORS.emeraldPrimary,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    marginTop: 4,
+  },
+  editPriceCurrencyPrefix: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: COLORS.emeraldDeep,
+    marginRight: 6,
+  },
+  editPriceNumericInput: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    paddingVertical: 10,
+  },
+  quickPriceChipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    flexWrap: 'wrap',
+  },
+  quickPriceChip: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  quickPriceChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  saveProductEditBtn: {
+    backgroundColor: COLORS.emeraldDeep,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 22,
+    shadowColor: COLORS.emeraldDeep,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  saveProductEditBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '800',
+  },
+  changePhotoBtn: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#6EE7B7',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    alignItems: 'center',
+  },
+  changePhotoBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  stockToggleActionBtn: {
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 8,
     borderWidth: 1,
   },
   btnMakeAvailable: {

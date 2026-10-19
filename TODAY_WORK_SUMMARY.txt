@@ -630,8 +630,28 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Timer Continuity & Immediate Status Transition: Removed `ord.courierArrivedOutside` from the timer skip condition and added `updated.status !== ord.status` to `hasChanges` so the `'Delivered'` transition commits to React state instantly.
      * Zero-Delay Review Modal Launch: Removed the 600ms `setTimeout` in the auto-launch review hook; `openReviewModalForOrder(deliveredOrder)` is invoked immediately on the very same tick that the order delivers.
 
+20. Complete Merchant Inventory Management & Bulk Product Editing Suite:
+   - Enhancements Implemented:
+     * 🔍 Instant Inventory Search Bar:
+       - Added live, debounce-free search input (`merchantInventorySearch`) directly above the product catalog in the Merchant Inventory tab.
+       - Filters instantly across product titles and category tags in real time without lag.
+       - Displays dynamic results counter (e.g. `Showing 4 of 51 items`), clear button (`✕`), and custom empty search card with "View All Products" reset button when no items match.
+     * ✏️ Direct Product & Price Editing Modal:
+       - Added `[ ✏️ Edit ]` button to every product card in the merchant's catalog.
+       - Opens dedicated Edit Product Modal allowing the merchant to update selling price (₦), product name, category, and photo.
+       - Features dedicated currency input prefix (`₦`) and quick-increment chips (`+₦100`, `+₦200`, `+₦500`, `+₦1,000`) for one-tap inflation/market adjustments.
+       - Propagates updates immediately to local AsyncStorage, Supabase `store_inventory`, and broadcasts `INVENTORY_UPDATE` across WebSockets to buyer devices with zero page refresh.
+     * 🗑️ Discontinued Product Removal / Deletion:
+       - Added `[ 🗑️ ]` delete buttons on item cards and within the Edit Product Modal.
+       - Safe deletion with native confirmation dialog (`Alert.alert('Remove Product from Store', ...)`).
+       - Fixed `removeStoreInventoryItem` signature in `mobile/services/supabaseService.js` to accept `storeId`, deleting from PostgreSQL `store_inventory` and broadcasting `INVENTORY_DELETE` to instantly remove the item from all buyer carts and store catalogs.
+     * 📸 Real-Time Product Photo Picker & Replacement:
+       - Enabled document/gallery photo picking (`handlePickEditProductImage` and `handlePickCustomProductImage` via `DocumentPicker.getDocumentAsync`) for both newly created custom products and existing catalog items.
+       - Displays live photo preview thumbnail with one-tap "📸 Change Photo" and "✕ Remove" actions.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
+
 
 
