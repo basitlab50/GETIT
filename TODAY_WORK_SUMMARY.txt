@@ -665,6 +665,20 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        - In the Bulk Import Preview table, recognized products now display their actual high-res photo thumbnail and a `• 📸 Photo Matched` indicator before publishing.
        - Dispatches live to both merchant inventory and buyer store catalogs seamlessly.
 
+22. iPad / iOS Native Foreground Loud Audio Chime Integration:
+   - Problem Identified:
+     * When new orders arrived on an iPad or iOS device in the foreground, the device was completely silent.
+     * Web Audio API (`window.AudioContext`) does not exist in native React Native, and `Vibration.vibrate()` has no effect on iPads because iPad hardware contains no vibration motors.
+     * Legacy `expo-av` was previously removed due to `ExponentAV` native binary deprecation in modern Expo Go builds.
+   - Comprehensive Permanent Fix:
+     * Installed Expo SDK 57 compatible `expo-audio` module.
+     * Configured iOS `AVAudioSession` globally via `ExpoAudio.setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'mixWithOthers' })`. Setting `playsInSilentMode: true` ensures audio alerts play audibly through the device speakers even when the physical side mute switch or software silent mode is engaged.
+     * Implemented `playNativeAudioChime` in `mobile/services/notificationService.js`:
+       - Loads native audio assets `require('../assets/sounds/merchant_order.wav')` for incoming merchant orders and `require('../assets/sounds/chime.wav')` for customer milestones.
+       - Replays at full volume (`player.volume = 1.0; player.seekTo(0); player.play()`).
+       - Gracefully falls back to Web Audio API synthesis in browser/hybrid environments, ensuring zero crashes across any platform.
+     * Scheduled OS notifications (`Notifications.scheduleNotificationAsync` with `sound: 'default'`) continue to ensure lock-screen and background alerts ring.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================

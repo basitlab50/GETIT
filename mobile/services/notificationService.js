@@ -32,9 +32,60 @@ const recentNotificationTimestamps = new Map();
 let lastVibrationTime = 0;
 
 // =========================================================================
-// 2. AUDIO SYNTHESIZER (INSTANT LUXURY BEEP & CHIME)
-// Works seamlessly across web, hybrid, and mobile devices
+// 2. NATIVE AUDIO INITIALIZER & CHIME SYNTHESIZER
+// Guarantees audible chime on iPad & iOS even if device is in silent mode
 // =========================================================================
+let ExpoAudio = null;
+let merchantPlayer = null;
+let chimePlayer = null;
+
+try {
+  ExpoAudio = require('expo-audio');
+  if (ExpoAudio && ExpoAudio.setAudioModeAsync) {
+    ExpoAudio.setAudioModeAsync({
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'mixWithOthers',
+    }).catch((e) => console.log('expo-audio mode init note:', e?.message));
+  }
+} catch (e) {
+  console.log('expo-audio load notice:', e?.message);
+}
+
+async function playNativeAudioChime(type = 'default') {
+  if (!ExpoAudio || !ExpoAudio.createAudioPlayer) return false;
+  try {
+    if (ExpoAudio.setAudioModeAsync) {
+      await ExpoAudio.setAudioModeAsync({
+        playsInSilentMode: true,
+        shouldPlayInBackground: true,
+        interruptionMode: 'mixWithOthers',
+      }).catch(() => {});
+    }
+
+    if (type === 'merchant_new_order') {
+      if (!merchantPlayer) {
+        merchantPlayer = ExpoAudio.createAudioPlayer(require('../assets/sounds/merchant_order.wav'));
+      }
+      merchantPlayer.volume = 1.0;
+      await merchantPlayer.seekTo(0).catch(() => {});
+      merchantPlayer.play();
+      return true;
+    } else {
+      if (!chimePlayer) {
+        chimePlayer = ExpoAudio.createAudioPlayer(require('../assets/sounds/chime.wav'));
+      }
+      chimePlayer.volume = 1.0;
+      await chimePlayer.seekTo(0).catch(() => {});
+      chimePlayer.play();
+      return true;
+    }
+  } catch (err) {
+    console.log('Native audio play error (falling back to web/synth):', err?.message);
+    return false;
+  }
+}
+
 export function playAudioBeep(type = 'default') {
   try {
     const now = Date.now();
@@ -48,53 +99,58 @@ export function playAudioBeep(type = 'default') {
       }
     }
 
-    // Web Audio API Synthesis (Browser & Hybrid Web View)
-    if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const ctx = new AudioCtx();
+    // 1. Play Native iOS/iPad/Android Audio Chime (Loud speaker playback)
+    playNativeAudioChime(type).then((played) => {
+      if (played) return; // Native chime successfully played
 
-      if (type === 'merchant_new_order') {
-        // High-energy 4-note ascending chime: C5 (523Hz) -> E5 (659Hz) -> G5 (784Hz) -> C6 (1046Hz)
-        const notes = [523.25, 659.25, 783.99, 1046.5];
-        notes.forEach((freq, idx) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          const startTime = ctx.currentTime + idx * 0.12;
+      // 2. Web Audio API Synthesis Fallback (Browser & Hybrid Web View)
+      if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const ctx = new AudioCtx();
 
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq, startTime);
+        if (type === 'merchant_new_order') {
+          // High-energy 4-note ascending chime: C5 (523Hz) -> E5 (659Hz) -> G5 (784Hz) -> C6 (1046Hz)
+          const notes = [523.25, 659.25, 783.99, 1046.5];
+          notes.forEach((freq, idx) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            const startTime = ctx.currentTime + idx * 0.12;
 
-          gain.gain.setValueAtTime(0.28, startTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.35);
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, startTime);
 
-          osc.connect(gain);
-          gain.connect(ctx.destination);
+            gain.gain.setValueAtTime(0.28, startTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.35);
 
-          osc.start(startTime);
-          osc.stop(startTime + 0.36);
-        });
-      } else {
-        // Soft luxury 2-note concierge chime: E5 (659Hz) -> B5 (987Hz)
-        const notes = [659.25, 987.77];
-        notes.forEach((freq, idx) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          const startTime = ctx.currentTime + idx * 0.14;
+            osc.connect(gain);
+            gain.connect(ctx.destination);
 
-          osc.type = 'triangle';
-          osc.frequency.setValueAtTime(freq, startTime);
+            osc.start(startTime);
+            osc.stop(startTime + 0.36);
+          });
+        } else {
+          // Soft luxury 2-note concierge chime: E5 (659Hz) -> B5 (987Hz)
+          const notes = [659.25, 987.77];
+          notes.forEach((freq, idx) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            const startTime = ctx.currentTime + idx * 0.14;
 
-          gain.gain.setValueAtTime(0.22, startTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.45);
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, startTime);
 
-          osc.connect(gain);
-          gain.connect(ctx.destination);
+            gain.gain.setValueAtTime(0.22, startTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.45);
 
-          osc.start(startTime);
-          osc.stop(startTime + 0.46);
-        });
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.start(startTime);
+            osc.stop(startTime + 0.46);
+          });
+        }
       }
-    }
+    }).catch(() => {});
   } catch (err) {
     console.log('Audio beep notice:', err?.message);
   }
