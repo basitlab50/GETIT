@@ -6942,7 +6942,7 @@ export default function App() {
     setBulkParsedProducts((prev) => prev.filter((_, idx) => idx !== index));
   };
 
-  const handleConfirmBulkImport = () => {
+  const handleConfirmBulkImport = async () => {
     if (bulkParsedProducts.length === 0) {
       Alert.alert(
         'No Products Found',
@@ -6951,28 +6951,132 @@ export default function App() {
       return;
     }
 
+    const targetStoreId = currentMerchantStore?.id || merchantStoreId;
+    let updatedPriceCount = 0;
+    let newProductCount = 0;
+    const itemsToCloudSync = [];
+
     updateAndPersistStores((prev) =>
       prev.map((store) => {
-        if (store.id === merchantStoreId) {
+        if (store.id === targetStoreId) {
+          const existingProducts = store.products || [];
+          const updatedList = [...existingProducts];
+
+          bulkParsedProducts.forEach((newP) => {
+            // Check if product already exists by exact ID or matching product name
+            const existingIdx = updatedList.findIndex(
+              (p) =>
+                (newP.id && p.id === newP.id) ||
+                (p.name && newP.name && p.name.trim().toLowerCase() === newP.name.trim().toLowerCase())
+            );
+
+            if (existingIdx !== -1) {
+              // 🔄 Automatic Price & Detail Update (No duplicates!)
+              const prevItem = updatedList[existingIdx];
+              const newPrice = Number(newP.price) > 0 ? Number(newP.price) : prevItem.price;
+              const merged = {
+                ...prevItem,
+                price: newPrice,
+                category: newP.category || prevItem.category,
+                imageUrl: newP.imageUrl || prevItem.imageUrl,
+                imageUri: newP.imageUrl || prevItem.imageUri,
+                icon: newP.icon || prevItem.icon,
+              };
+              updatedList[existingIdx] = merged;
+              updatedPriceCount++;
+              itemsToCloudSync.push({ action: 'update', item: merged });
+            } else {
+              // ➕ Brand New Product
+              const brandNew = {
+                ...newP,
+                id: newP.id || `prod-bulk-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+                price: Number(newP.price) || 0,
+                outOfStock: false,
+              };
+              updatedList.unshift(brandNew);
+              newProductCount++;
+              itemsToCloudSync.push({ action: 'add', item: brandNew });
+            }
+          });
+
           return {
             ...store,
-            products: [...bulkParsedProducts, ...store.products],
+            products: updatedList,
           };
         }
         return store;
       })
     );
 
-    const count = bulkParsedProducts.length;
+    // Update active buyer store modal view if open
+    setSelectedStore((prev) => {
+      if (!prev || prev.id !== targetStoreId) return prev;
+      const existingProducts = prev.products || [];
+      const updatedList = [...existingProducts];
+
+      bulkParsedProducts.forEach((newP) => {
+        const existingIdx = updatedList.findIndex(
+          (p) =>
+            (newP.id && p.id === newP.id) ||
+            (p.name && newP.name && p.name.trim().toLowerCase() === newP.name.trim().toLowerCase())
+        );
+
+        if (existingIdx !== -1) {
+          const prevItem = updatedList[existingIdx];
+          updatedList[existingIdx] = {
+            ...prevItem,
+            price: Number(newP.price) > 0 ? Number(newP.price) : prevItem.price,
+            category: newP.category || prevItem.category,
+            imageUrl: newP.imageUrl || prevItem.imageUrl,
+            imageUri: newP.imageUrl || prevItem.imageUri,
+          };
+        } else {
+          updatedList.unshift({
+            ...newP,
+            id: newP.id || `prod-bulk-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+            outOfStock: false,
+          });
+        }
+      });
+
+      return {
+        ...prev,
+        products: updatedList,
+      };
+    });
+
+    // Cloud synchronization & WebSocket broadcast in background
+    Promise.all(
+      itemsToCloudSync.map((syncTask) => {
+        if (syncTask.action === 'update') {
+          return updateStoreInventoryItem(syncTask.item.id, {
+            storeId: targetStoreId,
+            name: syncTask.item.name,
+            price: syncTask.item.price,
+            category: syncTask.item.category,
+            imageUrl: syncTask.item.imageUrl,
+            productObj: syncTask.item,
+          });
+        } else {
+          return addStoreInventoryItem(targetStoreId, syncTask.item);
+        }
+      })
+    ).catch((err) => console.log('Bulk cloud sync notice:', err?.message));
+
     setBulkImportModalVisible(false);
     setBulkImportText('');
     setBulkParsedProducts([]);
     setBulkSelectedFileName('');
-    Alert.alert(
-      'Catalog Onboarding Success! 🎉',
-      `Successfully imported ${count} new products with live pricing into ${currentMerchantStore?.name}! Customers can now order these items.`
-    );
+
+    const successMsg = updatedPriceCount > 0 && newProductCount > 0
+      ? `Updated prices for ${updatedPriceCount} existing items and added ${newProductCount} new items to ${currentMerchantStore?.name || 'your store'}!`
+      : updatedPriceCount > 0
+      ? `Successfully updated prices for ${updatedPriceCount} existing items in your catalogue!`
+      : `Successfully published ${newProductCount} new items to your catalogue!`;
+
+    Alert.alert('Catalog Updated! 🎉', successMsg);
   };
+
 
   // Filtered stores on homepage with dynamic distance from buyer pin
   const buyerActiveLat = pinnedLocation?.latitude || mapCoords?.latitude || 9.0882;
