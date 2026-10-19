@@ -1079,6 +1079,12 @@ function AnimatedStoreDoor({ store, operatingDays, isOpenToday, openTime }) {
 function MerchantStraightLineTracker({ order, currentStore }) {
   if (!order) return null;
 
+  const [, setStraightLineTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setStraightLineTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   const stops = Array.isArray(order.stops) && order.stops.length > 0 ? order.stops : [];
   let myStopIndex = stops.findIndex(
     (st) =>
@@ -2310,10 +2316,10 @@ export default function App() {
     }
 
     const totalPoints = Math.max(2, activeLegPts.length);
-    const MS_PER_POINT = 3000; // Realistic 3 seconds per point (~1.5 minutes per leg on Abuja streets)
+    const MS_PER_POINT = 2000; // Smooth 2 seconds per point for visible, responsive progress
     const legDurationMs = Math.max(15000, (totalPoints - 1) * MS_PER_POINT);
 
-    const legStartedAt = Number(ord.legStartedAt) || (now - (ord.roadPointIndex || 0) * MS_PER_POINT);
+    const legStartedAt = Number(ord.legStartedAt) || now;
     const elapsedMs = Math.max(0, now - legStartedAt);
 
     if (elapsedMs < legDurationMs) {
@@ -2402,7 +2408,10 @@ export default function App() {
           if (
             updated.roadPointIndex !== ord.roadPointIndex ||
             updated.currentStopIndex !== ord.currentStopIndex ||
-            updated.courierArrivedOutside !== ord.courierArrivedOutside
+            updated.courierArrivedOutside !== ord.courierArrivedOutside ||
+            updated.legStartedAt !== ord.legStartedAt ||
+            updated.boltCoords?.latitude !== ord.boltCoords?.latitude ||
+            updated.boltCoords?.longitude !== ord.boltCoords?.longitude
           ) {
             hasChanges = true;
           }
@@ -2410,7 +2419,7 @@ export default function App() {
         });
         return hasChanges ? next : prev;
       });
-    }, 2000);
+    }, 1500);
     return () => clearInterval(timer);
   }, []);
 
@@ -2910,12 +2919,16 @@ export default function App() {
               return {
                 ...o,
                 status: payload.status || o.status,
+                boltStatus: payload.boltStatus || o.boltStatus,
+                boltRider: payload.boltRider || o.boltRider,
                 stops: payload.stops || o.stops,
                 currentStopIndex: payload.currentStopIndex !== undefined ? payload.currentStopIndex : o.currentStopIndex,
                 roadPointIndex: payload.roadPointIndex !== undefined ? payload.roadPointIndex : o.roadPointIndex,
                 legStartedAt: payload.legStartedAt !== undefined ? payload.legStartedAt : o.legStartedAt,
                 boltCoords: payload.boltCoords || o.boltCoords,
                 journeyAlert: payload.journeyAlert || o.journeyAlert,
+                eta: payload.eta || o.eta,
+                courierSearching: payload.courierSearching !== undefined ? payload.courierSearching : o.courierSearching,
               };
             }
             return o;
@@ -5110,45 +5123,49 @@ export default function App() {
         };
 
         const firstStop = (updatedStopsList && updatedStopsList[0]) || { latitude: 9.0882, longitude: 7.4933 };
-        const riderCoords = {
-          latitude: Number(firstStop.latitude) || 9.0882,
-          longitude: Number(firstStop.longitude) || 7.4933,
+        const targetOrder = orders.find((o) => o.id === orderId);
+        const riderStartCoords = targetOrder?.riderOrigin || {
+          latitude: Number(firstStop.latitude || 9.0882) - 0.0090,
+          longitude: Number(firstStop.longitude || 7.4933) - 0.0080,
         };
 
         const dispatchedAlert = `🚴 Courier ${assignedRider.name} matched! Heading to ${storeReadyName} for pickup.`;
+        const dispatchNow = Date.now();
+
+        const dispatchPayload = {
+          status: 'On the Way',
+          boltStatus: 'IN_TRANSIT',
+          boltRider: assignedRider,
+          boltCoords: riderStartCoords,
+          journeyAlert: dispatchedAlert,
+          courierSearching: false,
+          eta: '12-15 mins (Courier Matched)',
+          legStartedAt: dispatchNow,
+          roadPointIndex: 0,
+          currentStopIndex: 0,
+        };
 
         updateAndPersistOrders((prev) =>
           prev.map((o) => {
             if (o.id === orderId) {
               return {
                 ...o,
-                status: 'On the Way',
-                boltStatus: 'IN_TRANSIT',
-                boltRider: assignedRider,
-                boltCoords: riderCoords,
-                journeyAlert: dispatchedAlert,
-                courierSearching: false,
-                eta: '12-15 mins (Courier Matched)',
-                legStartedAt: Date.now(),
-                roadPointIndex: 0,
+                ...dispatchPayload,
               };
             }
             return o;
           })
         );
 
+        // Immediate sub-50ms peer-to-peer broadcast so buyer screen sees rider dispatched instantly
+        broadcastLiveEvent('ORDER_UPDATE', {
+          orderId,
+          ...dispatchPayload,
+        });
+
         notifyCourierDispatched({ id: orderId, storeName: storeReadyName }, assignedRider.name);
 
-        updateDatabaseOrderStatus(orderId, {
-          status: 'On the Way',
-          boltStatus: 'IN_TRANSIT',
-          boltRider: assignedRider,
-          boltCoords: riderCoords,
-          journeyAlert: dispatchedAlert,
-          eta: '12-15 mins (Courier Matched)',
-          legStartedAt: Date.now(),
-          roadPointIndex: 0,
-        }).catch(() => {});
+        updateDatabaseOrderStatus(orderId, dispatchPayload).catch(() => {});
       }, 3500);
     }
   };

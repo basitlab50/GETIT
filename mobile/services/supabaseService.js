@@ -304,9 +304,15 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
       .maybeSingle();
 
     if (error) throw error;
+    try {
+      broadcastLiveEvent('ORDER_UPDATE', { orderId, ...updates, ...mergedRider });
+    } catch (bErr) {}
     return data;
   } catch (err) {
     console.error('Failed to update order status in Supabase:', err);
+    try {
+      broadcastLiveEvent('ORDER_UPDATE', { orderId, ...updates });
+    } catch (bErr) {}
     return null;
   }
 }

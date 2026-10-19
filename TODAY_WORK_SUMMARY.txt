@@ -566,6 +566,18 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Protected Elapsed Time Timer: `syncOrdersFromCloud` now prioritizes `existing.legStartedAt || co.legStartedAt`, preventing background syncs from resetting the rider's progress. `getDatabaseOrders` returns `0` instead of `Date.now()` when unrecorded.
      * Implemented `dispatchBoltCourier`: Added `dispatchBoltCourier` mapped directly to `readyMerchantOrder(orderId)` so clicking the dispatch button triggers the courier dispatch sequence reliably.
 
+15. Resolution of Stuck Motorbike Animation & Autonomous Movement Across Merchant and Buyer Screens:
+   - Root Causes of Motorbike (Motto) Being Stuck:
+     * Discarded `legStartedAt` Initialization in Animation Timer: In the local animation interval timer (`mobile/App.js`), `hasChanges` only checked `updated.roadPointIndex !== ord.roadPointIndex`. When an order without a stored `legStartedAt` was initialized with `now`, `roadPointIndex` remained 0, so `hasChanges` returned `false`. As a result, React discarded the newly initialized `legStartedAt` and returned `prev`. On every subsequent timer tick, `now` was re-initialized to the current clock time, locking `elapsedMs = 0` in an infinite reset loop.
+     * Missing Internal Ticker in `MerchantStraightLineTracker`: The merchant zero-map vector tracker relied exclusively on external parent re-renders. If `orders` didn't change identity, the straight-line bubble never updated.
+     * Omission of `boltRider` in Broadcast Listener: In `mobile/App.js` (`subscribeToLiveBroadcast`), the `ORDER_UPDATE` branch unpacked `status`, `stops`, and `coords`, but omitted `boltRider` and `boltStatus`. Without `boltRider`, the animation timer and buyer map refused to move the rider.
+     * Rider Spawned at Destination Instead of Origin: In `readyMerchantOrder`, `riderCoords` was assigned directly to `firstStop` (the store), making the tracker calculate 0 remaining distance immediately.
+   - Comprehensive Permanent Fix:
+     * Unconditional `legStartedAt` & Coordinate Change Detection: In the animation interval timer (now firing every 1500ms for fluid updates), `hasChanges` now checks `updated.legStartedAt !== ord.legStartedAt || updated.boltCoords?.latitude !== ord.boltCoords?.latitude || updated.roadPointIndex !== ord.roadPointIndex`. Initial `legStartedAt` is preserved and elapsed time grows smoothly.
+     * Active 1-Second Pulse in `MerchantStraightLineTracker`: Added an internal 1000ms ticker (`setStraightLineTick`) inside `MerchantStraightLineTracker` so the motorbike bubble and remaining distance progress forward smoothly every second.
+     * Complete `ORDER_UPDATE` Propagation: Both `readyMerchantOrder` and `updateDatabaseOrderStatus` in `mobile/services/supabaseService.js` now broadcast `ORDER_UPDATE` with `boltRider`, `boltStatus`, `legStartedAt`, and `riderStartCoords`. The broadcast listener unpacks `boltRider` and `boltStatus` immediately.
+     * Origin Coordinate Correction: `readyMerchantOrder` sets `riderCoords` to `riderStartCoords` (`firstStop.latitude - 0.0090`), so the courier starts from their origin and travels towards the store.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
