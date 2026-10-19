@@ -590,6 +590,16 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Immediate Automatic Rating Modal Launch: An active lifecycle effect in `mobile/App.js` watches for delivered orders. As soon as an order reaches `'Delivered'`, `openReviewModalForOrder` automatically launches within 600ms, displaying the full rating and review scorecard (store stars, courier stars, tip, tags) without the buyer needing to click any buttons.
      * Seamless Real-Time Synchronization: All milestone transitions broadcast across `broadcastLiveEvent('ORDER_UPDATE')`, ensuring instant sub-50ms sync across merchant and buyer devices.
 
+17. Precision Alignment of Motorbike on Merchant Straight-Line Tracker (Exact 100% Shop Arrival):
+   - Root Cause of Motto Stopping Short of the Shop Icon:
+     * Disproportionate Clamping & Scaling: In `MerchantStraightLineTracker` (`mobile/App.js`), `bikePercent` on single and multi-stop journeys was multiplied by `88` (or `38`) and clamped to `Math.min(88, ...)` instead of `100%`.
+     * Premature Arrival State with Visual Gap: Even when `isAtShop` was triggered (`accurateRemainingKm < 0.06`), `bikePercent` was hardcoded to `90` (and then clamped to `88`), causing the status message to state *"Courier Musa has arrived outside!"* while the motorbike marker was visibly stuck 12% short of the shop icon (`🏪`).
+   - Comprehensive Permanent Fix:
+     * Full-Scale Transit Range: `bikePercent` now scales smoothly from `0%` to `100%` (`Math.round(activeRoadProgress * 100)` for single direct hops, and `50%` to `100%` for subsequent multi-stop hops).
+     * Exact 100% Arrival Coordinate: When `isAtShop` triggers, `bikePercent` and `clampedBikePercent` are set to `100%`, landing the motorbike marker directly centered over the destination store icon (`🏪`).
+     * Center-Point Symmetry: Fine-tuned `mStraightDestNodeWrapper`'s `translateX` to `11` (half of its 22px width) so its vertical center axis coincides 1:1 with `mStraightBikeMarker` at `left: 100%` (`translateX: -14`).
+     * Green Track Fill to 100%: The green progress line now extends completely from the origin node to the destination store node, visually matching the buyer map route arrival.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================

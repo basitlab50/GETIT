@@ -1190,8 +1190,8 @@ function MerchantStraightLineTracker({ order, currentStore }) {
     }
   }
 
-  // Threshold: under 60 meters means rider has arrived outside the store!
-  const isAtShop = accurateRemainingKm < 0.06 || isMyStopCompleted;
+  // Threshold: under 60 meters, active road progress completed, or marked completed
+  const isAtShop = accurateRemainingKm < 0.06 || isMyStopCompleted || activeRoadProgress >= 0.98;
   const distText = isAtShop
     ? 'Arrived at shop'
     : accurateRemainingKm < 1
@@ -1202,16 +1202,16 @@ function MerchantStraightLineTracker({ order, currentStore }) {
   const allocatedMins = Math.max(1, Math.round((accurateRemainingKm / 22) * 60));
   const etaText = isAtShop ? 'Arrived outside' : '~' + allocatedMins + ' min' + (allocatedMins === 1 ? '' : 's');
 
-  let bikePercent = 15;
+  let bikePercent = 0;
   let statusMessage = '';
 
   if (!hasPriorStops) {
     // Single Direct Leg: First shop sees a direct straight line from Rider to Shop
     if (isAtShop) {
-      bikePercent = 90;
+      bikePercent = 100; // Lands EXACTLY at the shop node!
       statusMessage = '🛵 Courier Musa has arrived outside! Handover PIN: ' + (order.pickupPin || '5821');
     } else {
-      bikePercent = Math.min(88, Math.max(8, Math.round(activeRoadProgress * 88)));
+      bikePercent = Math.min(100, Math.max(0, Math.round(activeRoadProgress * 100)));
       statusMessage = '🚴 Courier Musa is en route directly to your shop (' + distText + ')';
     }
   } else {
@@ -1220,23 +1220,23 @@ function MerchantStraightLineTracker({ order, currentStore }) {
     const isFirstStopDone = currentRiderStop > 0 || (priorStops[0]?.pickupStatus === 'picked_up');
 
     if (!isFirstStopDone) {
-      // Rider is still heading to or at the 1st stop
-      bikePercent = Math.min(44, Math.max(8, Math.round(activeRoadProgress * 44)));
+      // Rider is still heading to or at the 1st stop (0% to 50% milestone)
+      bikePercent = Math.min(50, Math.max(0, Math.round(activeRoadProgress * 50)));
       statusMessage = '⏳ Courier is picking up at 1st Stop (' + firstStopName + ') • ' + distText + '. Heading to you next!';
     } else {
-      // 1st stop is done! Rider is on the leg to this shop
+      // 1st stop is done! Rider is on the leg to this shop (50% to 100%)
       if (isAtShop) {
-        bikePercent = 90;
+        bikePercent = 100; // Lands EXACTLY at the shop node!
         statusMessage = '🛵 Courier Musa has arrived outside! Handover PIN: ' + (order.pickupPin || '5821');
       } else {
-        bikePercent = Math.min(88, Math.max(52, 50 + Math.round(activeRoadProgress * 38)));
+        bikePercent = Math.min(100, Math.max(50, 50 + Math.round(activeRoadProgress * 50)));
         statusMessage = '🚀 1st stop completed! Musa is riding directly to your shop (' + distText + ')';
       }
     }
   }
 
-  // Clamped bike percentage strictly between 6% and 88% so the bubble NEVER overflows the card on any screen size
-  const clampedBikePercent = Math.min(88, Math.max(6, bikePercent));
+  // Clamped bike percentage smoothly between 0% and 100% so the motto touches the shop node exactly
+  const clampedBikePercent = isAtShop ? 100 : Math.min(100, Math.max(0, bikePercent));
   const isFirstStopDone = currentRiderStop > 0 || (priorStops[0]?.pickupStatus === 'picked_up');
   const storeDisplay = currentStore?.name || myStop?.storeName || 'Your Shop';
 
@@ -23005,7 +23005,7 @@ const styles = StyleSheet.create({
     top: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    transform: [{ translateX: 10 }],
+    transform: [{ translateX: 11 }],
   },
   mStraightDestNode: {
     width: 22,
