@@ -2320,7 +2320,7 @@ export default function App() {
 
     const totalPoints = Math.max(2, activeLegPts.length);
     const MS_PER_POINT = 2000; // Smooth 2 seconds per point for visible, responsive progress
-    const legDurationMs = Math.max(15000, (totalPoints - 1) * MS_PER_POINT);
+    const legDurationMs = (totalPoints - 1) * MS_PER_POINT;
 
     const legStartedAt = Number(ord.legStartedAt) || now;
     const elapsedMs = Math.max(0, now - legStartedAt);
@@ -2330,15 +2330,21 @@ export default function App() {
       const calculatedPointIdx = Math.min(totalPoints - 1, Math.floor(elapsedMs / MS_PER_POINT));
       const nextCoord = activeLegPts[calculatedPointIdx] || activeLegPts[0];
 
-      return {
-        ...ord,
-        roadPointIndex: calculatedPointIdx,
-        boltCoords: nextCoord,
-        stops: verifiedStops,
-        currentStopIndex: currentStopIdx,
-        legStartedAt: legStartedAt,
-        status: 'On the Way',
-      };
+      // If courier reached the last point on the destination leg (buyer's side):
+      // Instantly end ride and trigger Delivered so ratings appear immediately without waiting!
+      if (currentStopIdx >= stops.length && calculatedPointIdx >= totalPoints - 1) {
+        // Fall through immediately to Case B (Delivered)
+      } else {
+        return {
+          ...ord,
+          roadPointIndex: calculatedPointIdx,
+          boltCoords: nextCoord,
+          stops: verifiedStops,
+          currentStopIndex: currentStopIdx,
+          legStartedAt: legStartedAt,
+          status: 'On the Way',
+        };
+      }
     }
 
     // Courier has reached the destination of this leg!
@@ -2426,29 +2432,8 @@ export default function App() {
       };
     }
 
-    // Case B: Courier reached the customer destination (Autonomous Trip End & Delivery)
-    const DROP_OFF_WINDOW_MS = 3500; // 3.5s doorstep handover simulation
-
-    if (elapsedMs < legDurationMs + DROP_OFF_WINDOW_MS) {
-      const arrivedAlert = `🛵 Courier Musa has arrived outside your address! Handing over packages...`;
-      if (!ord.hasNotifiedArrived && !ord.courierArrivedOutside) {
-        notifyCourierArrived(ord);
-      }
-      return {
-        ...ord,
-        stops: verifiedStops,
-        boltCoords: destCoord,
-        currentStopIndex: currentStopIdx,
-        roadPointIndex: totalPoints - 1,
-        hasNotifiedArrived: true,
-        courierArrivedOutside: true,
-        eta: 'Arrived outside gate',
-        journeyAlert: arrivedAlert,
-        status: 'On the Way',
-      };
-    }
-
-    // 🎉 Courier completed & ended the trip! Order is Delivered!
+    // Case B: Courier reached the customer destination (Instant Trip End & Instant Ratings for rapid testing)
+    // 🎉 Courier completed & ended the trip! Order is Delivered INSTANTLY upon motto reaching buyer!
     const deliveredAlert = '🎉 Order Delivered! Enjoy your fresh provisions.';
     if (!ord.hasNotifiedDelivered) {
       notifyOrderDelivered(ord);
@@ -2497,7 +2482,6 @@ export default function App() {
           if (
             ord.status === 'Cancelled' ||
             ord.status === 'Delivered' ||
-            ord.courierArrivedOutside ||
             !ord.boltRider ||
             !ord.boltRider.name
           ) {
@@ -2505,6 +2489,7 @@ export default function App() {
           }
           const updated = calculateOrderRiderProgress(ord, now);
           if (
+            updated.status !== ord.status ||
             updated.roadPointIndex !== ord.roadPointIndex ||
             updated.currentStopIndex !== ord.currentStopIndex ||
             updated.courierArrivedOutside !== ord.courierArrivedOutside ||
@@ -4579,12 +4564,10 @@ export default function App() {
           return;
         }
         promptedReviewsRef.current.add(deliveredOrder.id);
-        const timer = setTimeout(() => {
-          if (appModeRef.current === 'customer' && currentUserRef.current?.role !== 'seller') {
-            openReviewModalForOrder(deliveredOrder);
-          }
-        }, 600);
-        return () => clearTimeout(timer);
+        // Immediately pop up Rate Experience modal as soon as motto reaches buyer!
+        if (appModeRef.current === 'customer' && currentUserRef.current?.role !== 'seller') {
+          openReviewModalForOrder(deliveredOrder);
+        }
       }
     }
   }, [orders, reviewModalVisible, appMode, currentUser]);

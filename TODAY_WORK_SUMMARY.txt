@@ -615,7 +615,23 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        4) Modal Rendering Protection: Updated the JSX modal root condition to `visible={reviewModalVisible && appMode === 'customer' && currentUser?.role !== 'seller'}` so the rating sheet cannot physically mount or render on merchant screens.
        5) Guarded Manual Handover Triggers: Both `markOrderDeliveredManual` and `advanceMultiStopJourney` now verify `appModeRef.current === 'customer' && currentUserRef.current?.role !== 'seller'` before scheduling review dialogs.
 
+19. Immediate Trip Completion & Instant Rating Modal Launch Upon Buyer Arrival:
+   - Problem Identified:
+     * When the courier motorcycle arrived at the buyer's destination on the map, it lingered for a noticeable delay before the ride was ended and before the review modal appeared.
+     * The user requested zero waiting time for fast testing: the instant the motto reaches the buyer's house, the trip must end immediately and the rating scorecard must pop up right away.
+   - Root Causes of Arrival Lag:
+     * Minimum 15-Second Clamp: `legDurationMs` was clamped with `Math.max(15000, ...)` even if the leg had very few road points, forcing unnecessary waiting.
+     * Simulated Doorstep Handover Delay: `DROP_OFF_WINDOW_MS = 3500` held the order on `'On the Way'` with `'Arrived outside gate'` for 3.5 seconds before transitioning to `'Delivered'`.
+     * Premature Interval Timer Bailout: The animation interval timer included `ord.courierArrivedOutside` in its early return condition, freezing animation ticks as soon as arrival was noted.
+     * 600ms Timeout Delay: The auto-launch review hook in `mobile/App.js` used a `setTimeout(..., 600)` delay before opening `openReviewModalForOrder`.
+   - Comprehensive Permanent Fix:
+     * Direct Point-to-Delivery Fallthrough: In `calculateOrderRiderProgress`, when on the destination leg (`currentStopIdx >= stops.length`) and the motto reaches the final point (`calculatedPointIdx >= totalPoints - 1`), it immediately falls through to trip completion without waiting for arbitrary duration timers.
+     * Eliminated Handover Waiting Window: Removed `DROP_OFF_WINDOW_MS` entirely. The moment the courier arrives at the buyer's coordinate, `status: 'Delivered'`, `eta: 'Delivered'`, and delivery alert chimes fire instantaneously.
+     * Timer Continuity & Immediate Status Transition: Removed `ord.courierArrivedOutside` from the timer skip condition and added `updated.status !== ord.status` to `hasChanges` so the `'Delivered'` transition commits to React state instantly.
+     * Zero-Delay Review Modal Launch: Removed the 600ms `setTimeout` in the auto-launch review hook; `openReviewModalForOrder(deliveredOrder)` is invoked immediately on the very same tick that the order delivers.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
+
 
