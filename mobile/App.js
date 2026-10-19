@@ -1452,22 +1452,8 @@ export default function App() {
   const [reviewModalVisible, setReviewModalVisible] = useState(false);
   const [targetReviewOrder, setTargetReviewOrder] = useState(null);
 
-  // Auto-launch Rating & Reviews sheet as soon as the courier delivers the order (Bolt delivery style)
+  // Prompted reviews tracker (ensures each delivered order is only prompted once)
   const promptedReviewsRef = useRef(new Set());
-  useEffect(() => {
-    if (!reviewModalVisible) {
-      const deliveredOrder = orders.find(
-        (o) => (o.status === 'Delivered' || o.eta === 'Delivered') && !promptedReviewsRef.current.has(o.id)
-      );
-      if (deliveredOrder) {
-        promptedReviewsRef.current.add(deliveredOrder.id);
-        const timer = setTimeout(() => {
-          openReviewModalForOrder(deliveredOrder);
-        }, 600);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [orders, reviewModalVisible]);
   const [reviewStoreIndex, setReviewStoreIndex] = useState(0);
   const [storeRatingsMap, setStoreRatingsMap] = useState({});
   const [courierRatingScore, setCourierRatingScore] = useState(5);
@@ -4269,10 +4255,12 @@ export default function App() {
               journeyAlert: '✅ Order Delivered successfully! Thank you for choosing GETIT.',
             }).catch(() => {});
 
-            // Auto-launch customer review scorecard after handover
-            setTimeout(() => {
-              openReviewModalForOrder(targetOrder);
-            }, 600);
+            // Auto-launch customer review scorecard after handover (buyer only)
+            if (appModeRef.current === 'customer' && currentUserRef.current?.role !== 'seller') {
+              setTimeout(() => {
+                openReviewModalForOrder(targetOrder);
+              }, 600);
+            }
           },
         },
       ]
@@ -4356,9 +4344,11 @@ export default function App() {
           // 🔔 Trigger delivery notification & audio chime!
           notifyOrderDelivered(ord);
           Alert.alert('✅ Order Delivered', 'All provisions have been delivered to your destination!');
-          setTimeout(() => {
-            openReviewModalForOrder(ord);
-          }, 700);
+          if (appModeRef.current === 'customer' && currentUserRef.current?.role !== 'seller') {
+            setTimeout(() => {
+              openReviewModalForOrder(ord);
+            }, 700);
+          }
           return {
             ...ord,
             status: 'Delivered',
@@ -4568,8 +4558,47 @@ export default function App() {
     return () => clearInterval(reminderInterval);
   }, [merchantOrders, currentMerchantStore, currentUser]);
 
+  // Auto-launch Rating & Reviews sheet as soon as the courier delivers the order (Bolt delivery style)
+  // CRITICAL: The rating experience is exclusively for the buyer/customer, NEVER for the shops/merchants!
+  useEffect(() => {
+    // If in merchant mode or logged in as a seller/store, dismiss review modal if open and never prompt
+    if (appMode !== 'customer' || currentUser?.role === 'seller') {
+      if (reviewModalVisible) {
+        setReviewModalVisible(false);
+      }
+      return;
+    }
+
+    if (!reviewModalVisible) {
+      const deliveredOrder = orders.find(
+        (o) => (o.status === 'Delivered' || o.eta === 'Delivered') && !promptedReviewsRef.current.has(o.id)
+      );
+      if (deliveredOrder) {
+        // If customer is authenticated, only prompt if this order belongs to this customer
+        if (currentUser?.id && deliveredOrder.userId && deliveredOrder.userId !== currentUser.id) {
+          return;
+        }
+        promptedReviewsRef.current.add(deliveredOrder.id);
+        const timer = setTimeout(() => {
+          if (appModeRef.current === 'customer' && currentUserRef.current?.role !== 'seller') {
+            openReviewModalForOrder(deliveredOrder);
+          }
+        }, 600);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [orders, reviewModalVisible, appMode, currentUser]);
+
   const openReviewModalForOrder = (ord) => {
     if (!ord) return;
+    // CRITICAL: The rating experience is strictly for the buyer/customer, NEVER for the shops/merchants!
+    if (appModeRef.current !== 'customer' || currentUserRef.current?.role === 'seller') {
+      return;
+    }
+    // If customer is authenticated, ensure this order was placed by them
+    if (currentUserRef.current?.id && ord.userId && ord.userId !== currentUserRef.current.id) {
+      return;
+    }
     setTargetReviewOrder(ord);
     setReviewStoreIndex(0);
 
@@ -14200,7 +14229,7 @@ export default function App() {
       {/* --- POST-ORDER REVIEWS & FEEDBACK MODAL (NUMBER 7) --- */}
       {/* ========================================================================= */}
       <Modal
-        visible={reviewModalVisible}
+        visible={reviewModalVisible && appMode === 'customer' && currentUser?.role !== 'seller'}
         animationType="slide"
         transparent={false}
         onRequestClose={() => setReviewModalVisible(false)}

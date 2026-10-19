@@ -600,6 +600,22 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Center-Point Symmetry: Fine-tuned `mStraightDestNodeWrapper`'s `translateX` to `11` (half of its 22px width) so its vertical center axis coincides 1:1 with `mStraightBikeMarker` at `left: 100%` (`translateX: -14`).
      * Green Track Fill to 100%: The green progress line now extends completely from the origin node to the destination store node, visually matching the buyer map route arrival.
 
+18. Strict Isolation of "Rate Experience" Modal Exclusively to Customers/Buyers:
+   - Problem Identified:
+     * When an order completed and transitioned to `'Delivered'`, the Rating & Reviews scorecard appeared on both the customer app and the merchant screens of all participating stores.
+     * In a delivery platform, shops never review their own stores or the courier delivery; the post-delivery rating experience is exclusively for the customer/buyer who placed the order.
+   - Root Cause:
+     * The auto-launch `useEffect` watching for delivered orders was running globally across the entire app whenever `orders` state updated.
+     * When the courier delivered the package and broadcasted the `'Delivered'` status over Supabase, merchant devices also received the updated order and triggered `openReviewModalForOrder`, opening the modal on merchant phones/dashboards.
+   - Comprehensive Permanent Fix:
+     * Multi-Layered Role & Mode Gating:
+       1) Auto-Launch Hook Gating: The post-delivery review effect now checks `if (appMode !== 'customer' || currentUser?.role === 'seller')`. If the active screen is in Merchant Mode or logged in as a seller/store, it dismisses any open review modal immediately and refuses to launch review prompts.
+       2) Ownership Verification: When a customer is signed in, the effect verifies `deliveredOrder.userId === currentUser.id`, ensuring only the actual buyer who placed the order is prompted.
+       3) `openReviewModalForOrder` Defensive Guard: Added `if (appModeRef.current !== 'customer' || currentUserRef.current?.role === 'seller') return;` so programmatic calls cannot trigger the modal in merchant context.
+       4) Modal Rendering Protection: Updated the JSX modal root condition to `visible={reviewModalVisible && appMode === 'customer' && currentUser?.role !== 'seller'}` so the rating sheet cannot physically mount or render on merchant screens.
+       5) Guarded Manual Handover Triggers: Both `markOrderDeliveredManual` and `advanceMultiStopJourney` now verify `appModeRef.current === 'customer' && currentUserRef.current?.role !== 'seller'` before scheduling review dialogs.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
+
