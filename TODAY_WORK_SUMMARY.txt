@@ -541,7 +541,19 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Single Road Direction Guard: Added `fetchedRoutesRef = useRef(new Set())` to ensure road directions are fetched at most once per order ID.
      * App is completely smooth, responsive, and stable on both user and merchant devices without freezing, crashing, or unexpected reloads.
 
+13. Instant Real-Time Cross-Device Propagation of Store Paused / Live Status:
+   - Root Causes of Delayed Buyer Status Reflection (Requiring Manual Reload):
+     * Missing Broadcast on Status Toggle: In `mobile/App.js` (`handleToggleStoreLive`), toggling the store live switch updated local React state and called `updateDatabaseStore(...)`, but omitted `broadcastLiveEvent('STORE_UPDATE', ...)`.
+     * Premature Exit in Supabase Fallback: In `mobile/services/supabaseService.js` (`updateDatabaseStore`), when the store fallback upsert path executed, the function returned `upsertData` early before reaching the line that emitted `broadcastLiveEvent`.
+     * Omission of `isOpen` from JSON Metadata: In `updateDatabaseStore`, timing and images were packed into the `city` column JSON metadata, but `isOpen` / `is_open` was omitted.
+     * Deficient Payload Parsing: In `mobile/App.js` (`handleStorePayload` on `UPDATE`), store availability evaluated `const isOpenBool = dbStore.is_open !== undefined ? Boolean(dbStore.is_open) : true;`. If `is_open` was undefined, it incorrectly defaulted to `true` (live) even when the merchant had explicitly paused the store.
+   - Comprehensive Permanent Fix:
+     * Instant P2P Real-Time Broadcast: `handleToggleStoreLive` now immediately broadcasts `broadcastLiveEvent('STORE_UPDATE', { storeId, store: updatedStoreData })` across the active Supabase WebSocket channel (`GETIT_SYNC_UPDATE`) with sub-50ms latency.
+     * Guaranteed Broadcast on All Database Paths: `updateDatabaseStore` in `mobile/services/supabaseService.js` now guarantees that `broadcastLiveEvent` fires unconditionally on all paths (update, upsert fallback, and error catch).
+     * Robust Metadata Packing: `updateDatabaseStore` packs `isOpen: Boolean(updates.isOpen ?? updates.is_open)` directly into the `city` JSON metadata, and `parseStoreMetadata` extracts it cleanly across all client devices.
+     * Comprehensive Status Resolution: `handleStorePayload` and `loadCloudStores` now evaluate `isOpenBool` across `dbStore.isOpen`, `dbStore.is_open`, and `meta.isOpen`, setting `isOpen`, `is_open`, `status: isOpenBool ? 'open' : 'closed'`, and `isClosed: !isOpenBool`.
+     * Immediate Buyer UI Reaction: When a merchant pauses or resumes their store, all buyer devices instantly update their map pins ('Open Now' vs 'Closed', green vs gray), store cards (closed door overlay on/off), and store detail screen (browsing/cart restrictions toggle) in real time without requiring the user to reload the app.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
-

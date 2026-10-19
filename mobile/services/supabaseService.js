@@ -632,7 +632,16 @@ export function parseStoreMetadata(dbStore) {
       meta = JSON.parse(dbStore.city);
     } catch (e) {}
   }
+  const isOpenVal =
+    meta.isOpen !== undefined
+      ? Boolean(meta.isOpen)
+      : (dbStore.isOpen !== undefined
+          ? Boolean(dbStore.isOpen)
+          : (dbStore.is_open !== undefined
+              ? Boolean(dbStore.is_open)
+              : undefined));
   return {
+    isOpen: isOpenVal,
     openTime: meta.openTime || dbStore.open_time || '08:00 AM',
     closeTime: meta.closeTime || dbStore.close_time || '10:00 PM',
     operatingDays: meta.operatingDays || dbStore.operating_days || 'Mon - Sun (Daily)',
@@ -655,8 +664,10 @@ export async function updateDatabaseStore(storeId, updates) {
     if (updates.latitude !== undefined) dbUpdates.latitude = Number(updates.latitude);
     if (updates.longitude !== undefined) dbUpdates.longitude = Number(updates.longitude);
 
-    // Pack timing, 24h flag, and custom image into city column so all devices sync instantly
+    // Pack timing, 24h flag, custom image, and live isOpen flag into city column so all devices sync instantly
     if (
+      updates.isOpen !== undefined ||
+      updates.is_open !== undefined ||
       updates.openTime !== undefined ||
       updates.closeTime !== undefined ||
       updates.operatingDays !== undefined ||
@@ -671,6 +682,8 @@ export async function updateDatabaseStore(storeId, updates) {
         }
       } catch (e) {}
 
+      if (updates.isOpen !== undefined) meta.isOpen = Boolean(updates.isOpen);
+      if (updates.is_open !== undefined) meta.isOpen = Boolean(updates.is_open);
       if (updates.openTime !== undefined) meta.openTime = updates.openTime;
       if (updates.closeTime !== undefined) meta.closeTime = updates.closeTime;
       if (updates.operatingDays !== undefined) meta.operatingDays = updates.operatingDays;
@@ -690,8 +703,10 @@ export async function updateDatabaseStore(storeId, updates) {
 
     if (error) throw error;
 
+    let finalStore = data;
+
     // If store row didn't exist in Supabase yet, upsert it gracefully so it exists
-    if (!data && Object.keys(dbUpdates).length > 0) {
+    if (!finalStore && Object.keys(dbUpdates).length > 0) {
       const fallbackStore = {
         id: storeId,
         name: updates.name || 'GETIT Partner Store',
@@ -710,15 +725,19 @@ export async function updateDatabaseStore(storeId, updates) {
 
       if (upsertErr) {
         console.warn('Store not in Supabase yet; local state preserved:', upsertErr.message);
-        return null;
+      } else {
+        finalStore = upsertData;
       }
-      return upsertData;
     }
 
-    broadcastLiveEvent('STORE_UPDATE', { storeId, store: data || { id: storeId, ...dbUpdates } });
-    return data;
+    const broadcastPayload = finalStore || { id: storeId, ...dbUpdates, isOpen: updates.isOpen ?? updates.is_open };
+    broadcastLiveEvent('STORE_UPDATE', { storeId, store: broadcastPayload });
+    return finalStore;
   } catch (err) {
     console.error('Failed to update store in Supabase:', err);
+    try {
+      broadcastLiveEvent('STORE_UPDATE', { storeId, store: { id: storeId, ...updates } });
+    } catch (e) {}
     return null;
   }
 }

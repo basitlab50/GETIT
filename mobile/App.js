@@ -2538,7 +2538,14 @@ export default function App() {
               : 'gourmet';
 
             const meta = parseStoreMetadata(dbStore);
-            const isOpenBool = dbStore.is_open !== undefined ? Boolean(dbStore.is_open) : true;
+            const isOpenBool =
+              dbStore.isOpen !== undefined
+                ? Boolean(dbStore.isOpen)
+                : (dbStore.is_open !== undefined
+                    ? Boolean(dbStore.is_open)
+                    : (meta.isOpen !== undefined
+                        ? Boolean(meta.isOpen)
+                        : true));
 
             return {
               id: dbStore.id,
@@ -2563,6 +2570,8 @@ export default function App() {
               products: prods,
               isOpen: isOpenBool,
               is_open: isOpenBool,
+              status: isOpenBool ? 'open' : 'closed',
+              isClosed: !isOpenBool,
               openTime: meta.openTime,
               closeTime: meta.closeTime,
               operatingDays: meta.operatingDays,
@@ -2671,7 +2680,14 @@ export default function App() {
       } else if (payload.eventType === 'UPDATE' && payload.new) {
         const dbStore = payload.new;
         const meta = parseStoreMetadata(dbStore);
-        const isOpenBool = dbStore.is_open !== undefined ? Boolean(dbStore.is_open) : true;
+        const isOpenBool =
+          dbStore.isOpen !== undefined
+            ? Boolean(dbStore.isOpen)
+            : (dbStore.is_open !== undefined
+                ? Boolean(dbStore.is_open)
+                : (meta.isOpen !== undefined
+                    ? Boolean(meta.isOpen)
+                    : true));
         const is24H = meta.is24Hours !== undefined ? Boolean(meta.is24Hours) : Boolean(dbStore.is_24_hours);
         const categoryKey = (dbStore.category || 'gourmet').toLowerCase().includes('organ')
           ? 'organic'
@@ -2699,6 +2715,8 @@ export default function App() {
               deliveryFee: dbStore.delivery_fee ? `₦${Number(dbStore.delivery_fee).toLocaleString()}` : s.deliveryFee,
               isOpen: isOpenBool,
               is_open: isOpenBool,
+              status: isOpenBool ? 'open' : 'closed',
+              isClosed: !isOpenBool,
               openTime: meta.openTime || s.openTime,
               closeTime: meta.closeTime || s.closeTime,
               operatingDays: meta.operatingDays || s.operatingDays,
@@ -2723,6 +2741,8 @@ export default function App() {
             deliveryFee: dbStore.delivery_fee ? `₦${Number(dbStore.delivery_fee).toLocaleString()}` : prev.deliveryFee,
             isOpen: isOpenBool,
             is_open: isOpenBool,
+            status: isOpenBool ? 'open' : 'closed',
+            isClosed: !isOpenBool,
             openTime: meta.openTime || prev.openTime,
             closeTime: meta.closeTime || prev.closeTime,
             operatingDays: meta.operatingDays || prev.operatingDays,
@@ -5982,11 +6002,11 @@ export default function App() {
     const targetStoreId = currentMerchantStore?.id || merchantStoreId;
 
     updateAndPersistStores((prev) =>
-      prev.map((s) => (s.id === targetStoreId ? { ...s, isOpen: nextStatus, is_open: nextStatus } : s))
+      prev.map((s) => (s.id === targetStoreId ? { ...s, isOpen: nextStatus, is_open: nextStatus, status: nextStatus ? 'open' : 'closed', isClosed: !nextStatus } : s))
     );
 
     if (selectedStore?.id === targetStoreId) {
-      setSelectedStore((prev) => (prev ? { ...prev, isOpen: nextStatus, is_open: nextStatus } : prev));
+      setSelectedStore((prev) => (prev ? { ...prev, isOpen: nextStatus, is_open: nextStatus, status: nextStatus ? 'open' : 'closed', isClosed: !nextStatus } : prev));
     }
 
     try {
@@ -5997,7 +6017,23 @@ export default function App() {
     } catch (e) {}
 
     if (targetStoreId) {
-      updateDatabaseStore(targetStoreId, { isOpen: nextStatus, is_open: nextStatus }).catch(console.warn);
+      const updatedStoreData = {
+        ...(currentMerchantStore || {}),
+        id: targetStoreId,
+        isOpen: nextStatus,
+        is_open: nextStatus,
+        status: nextStatus ? 'open' : 'closed',
+        isClosed: !nextStatus,
+      };
+      // 1. Instant peer-to-peer broadcast so buyer app reflects change immediately without reload
+      broadcastLiveEvent('STORE_UPDATE', { storeId: targetStoreId, store: updatedStoreData });
+
+      // 2. Persist to Supabase database so future reloads / new buyers see updated status
+      updateDatabaseStore(targetStoreId, {
+        isOpen: nextStatus,
+        is_open: nextStatus,
+        status: nextStatus ? 'open' : 'closed',
+      }).catch(console.warn);
     }
 
     Alert.alert(
@@ -6032,11 +6068,22 @@ export default function App() {
       await AsyncStorage.setItem('getit_store_timing', JSON.stringify(timingToSave));
       if (targetStoreId) {
         await AsyncStorage.setItem(`getit_store_timing_${targetStoreId}`, JSON.stringify(timingToSave));
-        const updatedStore = { ...(currentMerchantStore || {}), ...timingToSave };
+        const updatedStore = { ...(currentMerchantStore || {}), ...timingToSave, id: targetStoreId };
         const isNowOpen = isStoreCurrentlyOpen(updatedStore);
+        broadcastLiveEvent('STORE_UPDATE', {
+          storeId: targetStoreId,
+          store: {
+            ...updatedStore,
+            isOpen: isNowOpen,
+            is_open: isNowOpen,
+            status: isNowOpen ? 'open' : 'closed',
+            isClosed: !isNowOpen,
+          },
+        });
         updateDatabaseStore(targetStoreId, {
           isOpen: isNowOpen,
           is_open: isNowOpen,
+          status: isNowOpen ? 'open' : 'closed',
           openTime: timingToSave.openTime,
           closeTime: timingToSave.closeTime,
           operatingDays: timingToSave.operatingDays,
