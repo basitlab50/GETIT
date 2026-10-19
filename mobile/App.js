@@ -1451,6 +1451,23 @@ export default function App() {
   const [reviewsList, setReviewsList] = useState([]);
   const [reviewModalVisible, setReviewModalVisible] = useState(false);
   const [targetReviewOrder, setTargetReviewOrder] = useState(null);
+
+  // Auto-launch Rating & Reviews sheet as soon as the courier delivers the order (Bolt delivery style)
+  const promptedReviewsRef = useRef(new Set());
+  useEffect(() => {
+    if (!reviewModalVisible) {
+      const deliveredOrder = orders.find(
+        (o) => (o.status === 'Delivered' || o.eta === 'Delivered') && !promptedReviewsRef.current.has(o.id)
+      );
+      if (deliveredOrder) {
+        promptedReviewsRef.current.add(deliveredOrder.id);
+        const timer = setTimeout(() => {
+          openReviewModalForOrder(deliveredOrder);
+        }, 600);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [orders, reviewModalVisible]);
   const [reviewStoreIndex, setReviewStoreIndex] = useState(0);
   const [storeRatingsMap, setStoreRatingsMap] = useState({});
   const [courierRatingScore, setCourierRatingScore] = useState(5);
@@ -2341,50 +2358,146 @@ export default function App() {
     // Courier has reached the destination of this leg!
     const endOfLegCoord = activeLegPts[totalPoints - 1] || activeLegPts[0];
 
-    // Case A: Courier reached a shop (Leg 0 -> Shop 1, Leg 1 -> Shop 2, etc.)
+    // Case A: Courier reached a shop (Autonomous Collection Handover & Swipe to Next Stop)
     if (currentStopIdx < stops.length) {
       const arrivedShop = stops[currentStopIdx];
       const shopName = arrivedShop?.storeName || 'the shop';
-      const arrivedAlert = `🛵 Courier Musa Ibrahim has arrived outside ${shopName}! Waiting for package handover.`;
+      const HANDOVER_WINDOW_MS = 4000; // 4s realistic package handover simulation
 
-      // Courier sits outside the shop waiting for merchant handover!
-      // NEVER auto-marks picked_up — only completeMerchantOrder triggers departure!
+      if (elapsedMs < legDurationMs + HANDOVER_WINDOW_MS) {
+        // Courier is outside the shop collecting packages
+        const collectingAlert = `🛵 Courier Musa has arrived outside ${shopName}! Collecting packages...`;
+        return {
+          ...ord,
+          roadPointIndex: totalPoints - 1,
+          boltCoords: endOfLegCoord,
+          stops: verifiedStops,
+          currentStopIndex: currentStopIdx,
+          legStartedAt: legStartedAt,
+          journeyAlert: collectingAlert,
+          status: 'On the Way',
+        };
+      }
+
+      // 🚀 Courier swiped to confirm collection! Move shop to Done and proceed to next stop
+      const nextStopIdx = currentStopIdx + 1;
+      const updatedStops = stops.map((st, idx) => {
+        if (idx === currentStopIdx) {
+          return {
+            ...st,
+            pickupStatus: 'picked_up',
+            status: 'Completed',
+            pickedUpAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          };
+        }
+        if (idx < currentStopIdx) {
+          return {
+            ...st,
+            pickupStatus: 'picked_up',
+            status: 'Completed',
+          };
+        }
+        return st;
+      });
+
+      const nextStoreName = stops[nextStopIdx]?.storeName || 'the next shop';
+      const progressAlert = nextStopIdx < stops.length
+        ? `🚀 Package collected from ${shopName}! Musa is riding to ${nextStoreName} for pickup.`
+        : `🚀 All store packages collected! Musa Ibrahim is en route directly to your delivery destination!`;
+
+      updateDatabaseOrderStatus(ord.id, {
+        stops: updatedStops,
+        currentStopIndex: nextStopIdx,
+        legStartedAt: now,
+        roadPointIndex: 0,
+        boltCoords: endOfLegCoord,
+        journeyAlert: progressAlert,
+        status: 'On the Way',
+      }).catch(() => {});
+
+      broadcastLiveEvent('ORDER_UPDATE', {
+        orderId: ord.id,
+        stops: updatedStops,
+        currentStopIndex: nextStopIdx,
+        legStartedAt: now,
+        roadPointIndex: 0,
+        boltCoords: endOfLegCoord,
+        journeyAlert: progressAlert,
+        status: 'On the Way',
+        boltRider: ord.boltRider,
+        boltStatus: 'IN_TRANSIT',
+      });
+
       return {
         ...ord,
-        roadPointIndex: totalPoints - 1,
+        stops: updatedStops,
+        currentStopIndex: nextStopIdx,
+        legStartedAt: now,
+        roadPointIndex: 0,
         boltCoords: endOfLegCoord,
+        journeyAlert: progressAlert,
+        status: 'On the Way',
+      };
+    }
+
+    // Case B: Courier reached the customer destination (Autonomous Trip End & Delivery)
+    const DROP_OFF_WINDOW_MS = 3500; // 3.5s doorstep handover simulation
+
+    if (elapsedMs < legDurationMs + DROP_OFF_WINDOW_MS) {
+      const arrivedAlert = `🛵 Courier Musa has arrived outside your address! Handing over packages...`;
+      if (!ord.hasNotifiedArrived && !ord.courierArrivedOutside) {
+        notifyCourierArrived(ord);
+      }
+      return {
+        ...ord,
         stops: verifiedStops,
+        boltCoords: destCoord,
         currentStopIndex: currentStopIdx,
-        legStartedAt: legStartedAt,
+        roadPointIndex: totalPoints - 1,
+        hasNotifiedArrived: true,
+        courierArrivedOutside: true,
+        eta: 'Arrived outside gate',
         journeyAlert: arrivedAlert,
         status: 'On the Way',
       };
     }
 
-    // Case B: Courier reached the customer destination!
-    const arrivedAlert = `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin || '2489'}) to collect packages.`;
-
-    if (!ord.hasNotifiedArrived && !ord.courierArrivedOutside) {
-      notifyCourierArrived(ord);
-      updateDatabaseOrderStatus(ord.id, {
-        stops: verifiedStops,
-        boltCoords: destCoord,
-        eta: 'Arrived outside gate',
-        journeyAlert: arrivedAlert,
-      }).catch(() => {});
+    // 🎉 Courier completed & ended the trip! Order is Delivered!
+    const deliveredAlert = '🎉 Order Delivered! Enjoy your fresh provisions.';
+    if (!ord.hasNotifiedDelivered) {
+      notifyOrderDelivered(ord);
     }
+
+    updateDatabaseOrderStatus(ord.id, {
+      status: 'Delivered',
+      eta: 'Delivered',
+      journeyAlert: deliveredAlert,
+      boltCoords: destCoord,
+      courierArrivedOutside: true,
+      hasNotifiedArrived: true,
+    }).catch(() => {});
+
+    broadcastLiveEvent('ORDER_UPDATE', {
+      orderId: ord.id,
+      status: 'Delivered',
+      eta: 'Delivered',
+      journeyAlert: deliveredAlert,
+      boltCoords: destCoord,
+      boltRider: ord.boltRider,
+      boltStatus: 'DELIVERED',
+      courierArrivedOutside: true,
+      hasNotifiedArrived: true,
+    });
 
     return {
       ...ord,
-      stops: verifiedStops,
+      status: 'Delivered',
+      eta: 'Delivered',
+      journeyAlert: deliveredAlert,
       boltCoords: destCoord,
-      currentStopIndex: currentStopIdx,
-      roadPointIndex: totalPoints - 1,
-      hasNotifiedArrived: true,
       courierArrivedOutside: true,
-      eta: 'Arrived outside gate',
-      journeyAlert: arrivedAlert,
-      status: 'On the Way',
+      hasNotifiedArrived: true,
+      hasNotifiedDelivered: true,
     };
   }
 
@@ -11212,12 +11325,17 @@ export default function App() {
                                 currentStore={currentMerchantStore}
                               />
 
+                              <View style={styles.mAutonomousRiderStatusBox}>
+                                <Text style={styles.mAutonomousRiderStatusText}>
+                                  🛵 Courier Musa collects and confirms pickup automatically (like Bolt Delivery).
+                                </Text>
+                              </View>
                               <TouchableOpacity
-                                style={styles.mCompleteBtn}
+                                style={[styles.mCompleteBtn, { backgroundColor: '#059669', marginTop: 6 }]}
                                 onPress={() => completeMerchantOrder(ord.id)}
                               >
                                 <Text style={styles.mCompleteBtnText}>
-                                  {ord.boltRider ? '🚴 Hand Over to Bolt Courier (Complete)' : '🚴 Hand Over to Courier (Verified)'}
+                                  ⚡ Confirm Handover Now (Instant)
                                 </Text>
                               </TouchableOpacity>
                             </View>
@@ -18501,6 +18619,21 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 10,
     alignItems: 'center',
+  },
+  mAutonomousRiderStatusBox: {
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.2)',
+  },
+  mAutonomousRiderStatusText: {
+    fontSize: 12,
+    color: '#10B981',
+    fontWeight: '600',
+    textAlign: 'center',
   },
   mCompleteBtnText: {
     fontSize: 11.5,
