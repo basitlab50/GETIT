@@ -679,6 +679,22 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        - Gracefully falls back to Web Audio API synthesis in browser/hybrid environments, ensuring zero crashes across any platform.
      * Scheduled OS notifications (`Notifications.scheduleNotificationAsync` with `sound: 'default'`) continue to ensure lock-screen and background alerts ring.
 
+23. Active Order Card Simplification & Orders Tab Re-ordering:
+   - Enhancements Implemented:
+     * Re-ordered Filter Tabs in My Orders:
+       - Configured tabs in the exact user-requested sequence: 🟢 Active -> ✅ Delivered -> ❌ Cancelled -> 📦 All.
+     * Pruned Visual Clutter & Overly Technical Telemetry:
+       - Removed `SATELLITE GPS LIVE ROUTE • REAL-TIME DISPATCH ACTIVE` military-style banner.
+       - Removed `INBOUND FUNNEL DISPATCH` and algorithm optimization banners.
+       - Removed the nested multi-stop sequence timeline and internal merchant shop PIN badges.
+       - Replaced with a clean, single-line courier progress update (`🛵 ord.journeyAlert`).
+     * Pruned Obsolete Manual Actions:
+       - Removed the redundant green `Confirm Package Handover` button now that autonomous Bolt-style doorstep completion and rating modal auto-launch are active.
+       - Removed the duplicate bottom `📍 DELIVERY DESTINATION: [ Maps ➔ ]` card.
+       - Moved optional delivery gate notes directly into the Delivery Security PIN box.
+     * Map Cleanup:
+       - Removed `• 42 km/h` speedometer text floating over the motorcycle marker, creating a sleek, distraction-free live map tracking experience.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================

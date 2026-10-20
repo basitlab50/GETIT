@@ -8216,18 +8216,6 @@ export default function App() {
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.ordersFilterTabBtn, ordersFilterTab === 'all' && styles.ordersFilterTabBtnActive]}
-              onPress={() => {
-                setOrdersFilterTab('all');
-                setExpandedOrderId('AUTO_TOP');
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'all' && styles.ordersFilterTabTextActive]}>
-                📦 All ({orders.length})
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
               style={[styles.ordersFilterTabBtn, ordersFilterTab === 'completed' && styles.ordersFilterTabBtnActive]}
               onPress={() => {
                 setOrdersFilterTab('completed');
@@ -8249,6 +8237,18 @@ export default function App() {
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'cancelled' && styles.ordersFilterTabTextActive]}>
                 ❌ Cancelled ({orders.filter((o) => o.status === 'Cancelled').length})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.ordersFilterTabBtn, ordersFilterTab === 'all' && styles.ordersFilterTabBtnActive]}
+              onPress={() => {
+                setOrdersFilterTab('all');
+                setExpandedOrderId('AUTO_TOP');
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'all' && styles.ordersFilterTabTextActive]}>
+                📦 All ({orders.length})
               </Text>
             </TouchableOpacity>
           </ScrollView>
@@ -8360,220 +8360,14 @@ export default function App() {
                   {/* --- EXPANDABLE FULL ORDER DETAILS DROPDOWN --- */}
                   {isExpanded && (
                     <View style={styles.orderExpandedBodyWrap}>
-                      {/* Multi-Store Package Tag */}
-                      {ord.isMultiStore && (
-                        <View style={styles.orderBatchBadge}>
-                          <Text style={styles.orderBatchBadgeText}>
-                            🔗 MULTI-STORE CONCIERGE PACKAGE • {ord.stops?.length || 2} SHOPS
+                      {/* Clean 1-Line Live Courier Progress (for multi-stop journeys) */}
+                      {ord.journeyAlert && ord.status !== 'Cancelled' && ord.status !== 'Delivered' && (
+                        <View style={styles.multiStopJourneyAlertCard}>
+                          <Text style={styles.multiStopJourneyAlertMsg} numberOfLines={2}>
+                            🛵 {ord.journeyAlert}
                           </Text>
                         </View>
                       )}
-
-                      {/* Inbound Funnel Route Optimizer Badge */}
-                      {ord.isInboundFunnel && ord.stops && ord.stops.length > 1 ? (
-                        <View style={styles.funnelRouteBadge}>
-                          <Text style={styles.funnelRouteBadgeText}>
-                            ⚡ INBOUND FUNNEL DISPATCH • Outermost shop first ({ord.stops[0]?.storeName}) ➔ Progressing to home
-                          </Text>
-                        </View>
-                      ) : ord.isRouteOptimized && ord.stops && ord.stops.length > 1 ? (
-                        <View style={styles.smartRouteBadge}>
-                          <Text style={styles.smartRouteBadgeText}>
-                            ⚡ NEAREST-SHOP FIRST • Sequence optimized to minimize courier travel
-                          </Text>
-                        </View>
-                      ) : null}
-
-                  {/* Multi-Store Journey Alert Banner */}
-                  {ord.journeyAlert && ord.status !== 'Cancelled' && (
-                    <View style={styles.multiStopJourneyAlertCard}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <Text style={{ fontSize: 13 }}>🛵</Text>
-                        <Text style={styles.multiStopJourneyAlertTitle}>LIVE COURIER PROGRESS</Text>
-                      </View>
-                      <Text style={styles.multiStopJourneyAlertMsg}>
-                        {ord.journeyAlert}
-                      </Text>
-                    </View>
-                  )}
-
-                  {/* Multi-Store Pickup Sequence Milestones Timeline */}
-                  {ord.stops && ord.stops.length > 0 && ord.status !== 'Cancelled' && (
-                    <View style={styles.stopsTimelineContainer}>
-                      <Text style={styles.stopsTimelineTitle}>
-                        PICKUP & DELIVERY SEQUENCE ({ord.stops.length} HUBS)
-                      </Text>
-
-                      {ord.stops.map((stop, sIdx) => {
-                        const isCurrentStop = ord.currentStopIndex === sIdx;
-                        const isCompleted = stop.pickupStatus === 'picked_up' || (ord.currentStopIndex || 0) > sIdx;
-
-                        return (
-                          <View
-                            key={sIdx}
-                            style={[
-                              styles.stopTimelineCard,
-                              isCurrentStop && styles.stopTimelineCardActive,
-                            ]}
-                          >
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
-                                <View
-                                  style={[
-                                    styles.stopTimelineIcon,
-                                    isCompleted
-                                      ? styles.stopTimelineIconDone
-                                      : isCurrentStop
-                                      ? styles.stopTimelineIconCurrent
-                                      : styles.stopTimelineIconQueued,
-                                  ]}
-                                >
-                                  <Text style={{ fontSize: 10, fontWeight: '900', color: '#FFFFFF' }}>
-                                    {isCompleted ? '✓' : stop.stopNumber}
-                                  </Text>
-                                </View>
-                                <Text style={styles.stopTimelineStoreName} numberOfLines={1}>{stop.storeName}</Text>
-                              </View>
-                              <View
-                                style={[
-                                  styles.stopStatusBadge,
-                                  isCompleted
-                                    ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
-                                    : stop.status === 'Ready for Pickup'
-                                    ? { backgroundColor: '#DCFCE7' }
-                                    : stop.status === 'Preparing'
-                                    ? { backgroundColor: '#DBEAFE' }
-                                    : isCurrentStop
-                                    ? { backgroundColor: '#FEF3C7' }
-                                    : { backgroundColor: '#F3F4F6' },
-                                  { flexShrink: 0 },
-                                ]}
-                              >
-                                <Text
-                                  style={[
-                                    styles.stopStatusBadgeText,
-                                    isCompleted
-                                      ? { color: '#056B4B' }
-                                      : stop.status === 'Ready for Pickup'
-                                      ? { color: '#047857' }
-                                      : stop.status === 'Preparing'
-                                      ? { color: '#1D4ED8' }
-                                      : isCurrentStop
-                                      ? { color: '#B45309' }
-                                      : { color: '#6B7280' },
-                                  ]}
-                                  numberOfLines={1}
-                                >
-                                  {isCompleted
-                                    ? '✅ Picked Up'
-                                    : stop.status === 'Ready for Pickup'
-                                    ? '📦 Ready for Courier'
-                                    : stop.status === 'Preparing'
-                                    ? '🍳 Preparing Provisions'
-                                    : stop.status === 'Rejected'
-                                    ? '❌ Store Unavailable'
-                                    : isCurrentStop
-                                    ? '🛵 Collecting Now'
-                                    : '⏳ Awaiting Store'}
-                                </Text>
-                              </View>
-                            </View>
-
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
-                              <View style={{ flex: 1, marginRight: 8 }}>
-                                <Text style={styles.stopItemsSummaryText} numberOfLines={1}>
-                                  {stop.itemsCount} items • {formatNaira(stop.subtotal)}
-                                </Text>
-                                {stop.distanceFromPrevKm && (
-                                  <Text style={styles.stopProximityDistanceText} numberOfLines={1}>
-                                    📍 {sIdx === 0 && stop.isAnchorStore
-                                      ? `Outermost Shop (${stop.distanceFromPrevKm} km)`
-                                      : sIdx === 0
-                                      ? `Closest Hub (${stop.distanceFromPrevKm} km)`
-                                      : `Next hop (${stop.distanceFromPrevKm} km)`}
-                                  </Text>
-                                )}
-                              </View>
-                              <View style={[styles.stopPickupPinBadge, { flexShrink: 0 }]}>
-                                <Text style={styles.stopPickupPinBadgeText}>
-                                  Shop PIN: {stop.pickupPin}
-                                </Text>
-                              </View>
-                            </View>
-                          </View>
-                        );
-                      })}
-
-                      {/* Final Delivery Destination Milestone */}
-                      <View
-                        style={[
-                          styles.stopTimelineCard,
-                          ord.currentStopIndex >= ord.stops.length && styles.stopTimelineCardActive,
-                          { borderLeftColor: '#056B4B' },
-                        ]}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
-                            <View
-                              style={[
-                                styles.stopTimelineIcon,
-                                ord.status === 'Delivered'
-                                  ? styles.stopTimelineIconDone
-                                  : ord.currentStopIndex >= ord.stops.length
-                                  ? styles.stopTimelineIconCurrent
-                                  : styles.stopTimelineIconQueued,
-                              ]}
-                            >
-                              <Text style={{ fontSize: 10 }}>🏠</Text>
-                            </View>
-                            <Text style={styles.stopTimelineStoreName} numberOfLines={1}>Your Delivery Destination</Text>
-                          </View>
-                          <View
-                            style={[
-                              styles.stopStatusBadge,
-                              ord.status === 'Delivered'
-                                ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
-                                : ord.currentStopIndex >= ord.stops.length
-                                ? { backgroundColor: '#DCFCE7' }
-                                : { backgroundColor: '#F3F4F6' },
-                              { flexShrink: 0 },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.stopStatusBadgeText,
-                                ord.status === 'Delivered'
-                                  ? { color: '#056B4B' }
-                                  : ord.currentStopIndex >= ord.stops.length
-                                  ? { color: '#166534' }
-                                  : { color: '#6B7280' },
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {ord.status === 'Delivered'
-                                ? '✅ Delivered'
-                                : ord.currentStopIndex >= ord.stops.length
-                                ? '🛵 Heading to You'
-                                : '⏳ Waiting for Shops'}
-                            </Text>
-                          </View>
-                        </View>
-                        <Text style={[styles.stopItemsSummaryText, { marginTop: 4 }]} numberOfLines={1}>
-                          📍 {ord.customerAddress || 'Your Delivery Address'}
-                        </Text>
-                      </View>
-
-                      {/* Live Autonomous Route Navigation Indicator */}
-                      {ord.status !== 'Delivered' && ord.status !== 'Cancelled' && (
-                        <View style={styles.liveNavigatingStatusPill}>
-                          <View style={styles.liveGreenPulsingDot} />
-                          <Text style={styles.liveNavigatingStatusText} numberOfLines={1}>
-                            SATELLITE GPS LIVE ROUTE • REAL-TIME DISPATCH ACTIVE
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  )}
 
                   {/* Order Cancelled Notification Banner */}
                   {ord.status === 'Cancelled' && (
@@ -8624,29 +8418,16 @@ export default function App() {
                             ? 'Delivery verified and packages handed over.'
                             : 'Give this 4-digit code to your rider at your door to confirm delivery.'}
                         </Text>
+                        {ord.deliveryLocation?.notes && (
+                          <Text style={[styles.orderGpsNotes, { marginTop: 4 }]} numberOfLines={1}>
+                            📝 Gate note: "{ord.deliveryLocation.notes}"
+                          </Text>
+                        )}
                       </View>
                       <View style={[styles.pinNumberWrap, { flexShrink: 0 }]}>
                         <Text style={styles.pinNumberText}>{ord.deliveryPin}</Text>
                       </View>
                     </View>
-                  )}
-
-                  {/* 1-Tap Delivery Handover Confirmation Button for Active Orders */}
-                  {ord.status !== 'Cancelled' && ord.status !== 'Delivered' && (
-                    <TouchableOpacity
-                      style={styles.confirmHandoverBtn}
-                      onPress={() => completeDeliveryHandover(ord.id)}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.confirmHandoverBtnIcon}>📦</Text>
-                      <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text style={styles.confirmHandoverBtnTitle}>Confirm Package Handover</Text>
-                        <Text style={styles.confirmHandoverBtnSub} numberOfLines={1}>
-                          Tap to verify PIN ({ord.deliveryPin}) & complete delivery
-                        </Text>
-                      </View>
-                      <Text style={styles.confirmHandoverBtnChevron}>➔</Text>
-                    </TouchableOpacity>
                   )}
 
                   {/* --- LIVE COURIER ROUTE NAVIGATION MAP (ALWAYS SHOWN FOR ACTIVE ORDERS) --- */}
@@ -9006,13 +8787,12 @@ export default function App() {
                                   anchor={{ x: 0.5, y: 0.72 }}
                                 >
                                   <View style={styles.googleMapsRiderMarkerContainer}>
-                                    {/* Floating ETA / Rider Tag above motorbike */}
+                                    {/* Floating Rider Tag above motorbike */}
                                     <View style={styles.googleMapsRiderBadge}>
                                       <View style={styles.googleMapsLiveBeaconDot} />
                                       <Text style={styles.googleMapsRiderBadgeName}>
                                         {ord.boltRider?.name?.split(' ')[0] || 'Musa'}
                                       </Text>
-                                      <Text style={styles.googleMapsRiderBadgeSpeed}>• 42 km/h</Text>
                                     </View>
 
                                     {/* Symmetrical Motorbike Puck centered exactly on the Blue Line */}
@@ -9031,33 +8811,6 @@ export default function App() {
                       )}
                     </View>
                   )}
-
-                  {/* Destination Location Info */}
-                  <View style={styles.orderGpsCard}>
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <Text style={styles.orderGpsTitle}>📍 DELIVERY DESTINATION</Text>
-                      <Text style={styles.orderGpsLandmark} numberOfLines={2}>
-                        {ord.customerAddress || ord.deliveryLocation?.landmark || 'Your Delivery Address'}
-                      </Text>
-                      {ord.deliveryLocation?.notes && (
-                        <Text style={styles.orderGpsNotes} numberOfLines={2}>
-                          🛵 Note: "{ord.deliveryLocation.notes}"
-                        </Text>
-                      )}
-                    </View>
-                    <TouchableOpacity
-                      style={[styles.openMapsBtn, { flexShrink: 0 }]}
-                      onPress={() =>
-                        openExternalGoogleMaps(
-                          ord.deliveryLocation?.latitude || 9.0882,
-                          ord.deliveryLocation?.longitude || 7.4933
-                        )
-                      }
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.openMapsBtnText}>Maps ➔</Text>
-                    </TouchableOpacity>
-                  </View>
 
                   {/* Order Footer Row */}
                   <View style={styles.orderFooterRow}>
