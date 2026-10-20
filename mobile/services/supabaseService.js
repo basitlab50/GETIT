@@ -281,6 +281,7 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
     const mergedRider = {
       ...existingRider,
       ...(updates.boltRider || {}),
+      replacementProposal: updates.replacementProposal !== undefined ? updates.replacementProposal : (existingRider.replacementProposal || null),
       stops: updates.stops !== undefined ? updates.stops : (existingRider.stops || []),
       journeyAlert: updates.journeyAlert !== undefined ? updates.journeyAlert : existingRider.journeyAlert,
       currentStopIndex: updates.currentStopIndex !== undefined ? updates.currentStopIndex : (existingRider.currentStopIndex || 0),
@@ -296,6 +297,9 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
     }
 
     dbUpdates.bolt_rider = mergedRider;
+    if (updates.items !== undefined) dbUpdates.items = updates.items;
+    if (updates.subtotal !== undefined) dbUpdates.subtotal = updates.subtotal;
+    if (updates.total !== undefined) dbUpdates.total = updates.total;
 
     const { data, error } = await supabase
       .from('orders')
@@ -306,7 +310,12 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
 
     if (error) throw error;
     try {
-      broadcastLiveEvent('ORDER_UPDATE', { orderId, ...updates, ...mergedRider });
+      broadcastLiveEvent('ORDER_UPDATE', {
+        orderId,
+        ...updates,
+        replacementProposal: mergedRider.replacementProposal,
+        ...mergedRider,
+      });
     } catch (bErr) {}
     return data;
   } catch (err) {
@@ -439,6 +448,7 @@ export async function getDatabaseOrders() {
         storeName: item.store_name,
         customerId: riderMeta.customerId || null,
         customerEmail: riderMeta.customerEmail || null,
+        replacementProposal: riderMeta.replacementProposal || null,
         customerName: item.customer_name || 'Customer',
         customerPhone: item.customer_phone || '',
         customerAddress: item.customer_address || 'Abuja, Nigeria',

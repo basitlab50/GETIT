@@ -1567,6 +1567,20 @@ export default function App() {
   // --- CUSTOMER WALLET BALANCE (FOR INSTANT REFUNDS & CHARGES) ---
   const [customerWalletBalance, setCustomerWalletBalance] = useState(25000); // Live testing wallet credit (₦25,000)
 
+  useEffect(() => {
+    AsyncStorage.getItem('getit_customer_wallet')
+      .then((val) => {
+        if (val !== null && !isNaN(Number(val))) {
+          setCustomerWalletBalance(Number(val));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.setItem('getit_customer_wallet', String(customerWalletBalance)).catch(() => {});
+  }, [customerWalletBalance]);
+
   // --- OUT OF STOCK & SMART PRODUCT SUBSTITUTION STATE ---
   const [replaceModalVisible, setReplaceModalVisible] = useState(false);
   const [itemToReplaceContext, setItemToReplaceContext] = useState(null); // { order, item, stop }
@@ -1783,6 +1797,10 @@ export default function App() {
               ? {
                   ...existing,
                   ...co,
+                  replacementProposal: (co.replacementProposal !== undefined) ? co.replacementProposal : existing.replacementProposal,
+                  items: (co.items && co.items.length > 0) ? co.items : existing.items,
+                  subtotal: (co.subtotal !== undefined && co.subtotal > 0) ? co.subtotal : existing.subtotal,
+                  total: (co.total !== undefined && co.total > 0) ? co.total : existing.total,
                   status: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.status || existing.status),
                   eta: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.eta || existing.eta),
                   stops: (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []),
@@ -3034,12 +3052,19 @@ export default function App() {
         handleInventoryPayload({ eventType: 'DELETE', old: { id: event.itemId, store_id: event.storeId } });
       } else if (event.eventType === 'ORDER_UPDATE') {
         const payload = event.payload || event;
+        if (payload.replacementProposal && payload.replacementProposal.status === 'pending') {
+          setCustomerDismissedReplacementId(null);
+        }
         updateAndPersistOrders((prev) =>
           prev.map((o) => {
             if (o.id === payload.orderId) {
               return {
                 ...o,
                 status: payload.status || o.status,
+                replacementProposal: payload.replacementProposal !== undefined ? payload.replacementProposal : o.replacementProposal,
+                items: payload.items || o.items,
+                subtotal: payload.subtotal !== undefined ? payload.subtotal : o.subtotal,
+                total: payload.total !== undefined ? payload.total : o.total,
                 boltStatus: payload.boltStatus || o.boltStatus,
                 boltRider: payload.boltRider || o.boltRider,
                 stops: payload.stops || o.stops,
@@ -5085,10 +5110,11 @@ export default function App() {
   // --- BUYER SOUND CHIME ON PENDING REPLACEMENT PROPOSAL ---
   const lastChimedReplacementProposalRef = useRef(null);
   useEffect(() => {
-    if (appMode === 'customer' && pendingReplacementOrder?.replacementProposal) {
+    if (appMode === 'customer' && pendingReplacementOrder?.replacementProposal && pendingReplacementOrder.replacementProposal.status === 'pending') {
       const propId = pendingReplacementOrder.replacementProposal.id || pendingReplacementOrder.id;
       if (lastChimedReplacementProposalRef.current !== propId) {
         lastChimedReplacementProposalRef.current = propId;
+        setCustomerDismissedReplacementId(null);
         playAudioBeep('default');
       }
     }
@@ -8190,21 +8216,49 @@ export default function App() {
             </View>
           </View>
 
-          {/* Cart Icon Button */}
-          <TouchableOpacity
-            style={styles.cartHeaderButton}
-            onPress={() => setCartModalVisible(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={{ fontSize: 18 }}>🛍️</Text>
-            {cart.length > 0 && (
-              <View style={styles.cartBadge}>
-                <Text style={styles.cartBadgeText}>
-                  {cart.reduce((s, i) => s + i.qty, 0)}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {/* GETIT Wallet Balance Pill */}
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                borderWidth: 1,
+                borderColor: 'rgba(255, 255, 255, 0.28)',
+                paddingHorizontal: 10,
+                paddingVertical: 5,
+                borderRadius: 20,
+              }}
+              onPress={() => {
+                Alert.alert(
+                  '💳 GETIT Wallet Balance',
+                  `Your active balance is ${formatNaira(customerWalletBalance)}.\n\nAll instant item refunds, price difference credits, and replacement reconciliations are instantly credited to this wallet balance.`
+                );
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontSize: 12, marginRight: 4 }}>💳</Text>
+              <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
+                {formatNaira(customerWalletBalance)}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Cart Icon Button */}
+            <TouchableOpacity
+              style={styles.cartHeaderButton}
+              onPress={() => setCartModalVisible(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontSize: 18 }}>🛍️</Text>
+              {cart.length > 0 && (
+                <View style={styles.cartBadge}>
+                  <Text style={styles.cartBadgeText}>
+                    {cart.reduce((s, i) => s + i.qty, 0)}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Location Dropdown Trigger */}
@@ -15588,6 +15642,38 @@ export default function App() {
                     <Text style={{ fontSize: 13, color: '#475569', lineHeight: 18 }}>
                       One of your ordered items is currently out of stock on their shelves. They have proposed an in-stock replacement for your approval.
                     </Text>
+                  </View>
+
+                  {/* GETIT Wallet Balance Card */}
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      backgroundColor: '#F0FDF4',
+                      borderWidth: 1.5,
+                      borderColor: '#BBF7D0',
+                      borderRadius: 14,
+                      padding: 14,
+                      marginBottom: 16,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 22, marginRight: 10 }}>💳</Text>
+                      <View>
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: COLORS.emeraldDeep, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          GETIT Wallet Balance
+                        </Text>
+                        <Text style={{ fontSize: 16, fontWeight: '800', color: '#064E3B' }}>
+                          {formatNaira(customerWalletBalance)}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: COLORS.emeraldDeep }}>
+                        Instant Credit
+                      </Text>
+                    </View>
                   </View>
 
                   {/* 1. Out of Stock Item Box */}

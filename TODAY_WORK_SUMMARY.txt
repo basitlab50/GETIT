@@ -744,6 +744,21 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - Catalog Auto-Protection:
      * In both direct refund and replacement proposal, `setProductOutOfStock(productId)` automatically flags the finished product as `outOfStock: true` in the store catalog and Supabase, preventing future customers from ordering the missing product today.
 
+27. Real-Time Cross-Device Replacement Proposal Sync & GETIT Customer Wallet Balance:
+   - Supabase & WebSocket Cloud Sync for Item Substitutions:
+     * Added `replacementProposal` persistence into the `bolt_rider` JSONB column in Supabase within `updateDatabaseOrderStatus()`.
+     * Added `replacementProposal` into the sub-50ms peer-to-peer WebSocket broadcast payload (`ORDER_UPDATE`).
+     * Hydrated `replacementProposal` from Supabase into `getDatabaseOrders()` and integrated into `syncOrdersFromCloud()` and `subscribeToLiveBroadcast()`.
+     * Now, when a merchant proposes a substitute on their device, the buyer's device receives the update over WebSockets in real time and also persists it across app relaunches.
+   - Immediate Modal Auto-Popup & Audible Chime on Buyer Device:
+     * When a replacement proposal is received, `setCustomerDismissedReplacementId(null)` is triggered automatically so the proposal modal immediately pops up on the buyer's screen without waiting for manual taps.
+     * Triggers the luxury 2-tone audio chime (`playAudioBeep('default')`) to immediately alert the buyer.
+     * Pinned persistent review banner on the order card in the Orders tab with `[ Review ➔ ]` button so buyers can always reopen the modal if dismissed.
+   - GETIT Customer Wallet Balance Interface & Persistence:
+     * Top Header Wallet Pill: Added an interactive `[ 💳 ₦25,000 ]` wallet pill directly in the buyer header beside the shopping cart icon. Tapping displays full wallet details explaining that all instant item refunds, price difference credits, and replacement reconciliations are credited there.
+     * In-Modal Wallet Card: Added an emerald GETIT Wallet Balance card inside the replacement approval modal displaying active balance and the `Instant Credit` badge.
+     * AsyncStorage Local Persistence: Persists `customerWalletBalance` under `getit_customer_wallet` with automatic loading on app launch and saving on balance changes.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
