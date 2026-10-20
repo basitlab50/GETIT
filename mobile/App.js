@@ -1796,9 +1796,14 @@ export default function App() {
             existing
               ? {
                   ...existing,
-                  ...co,
-                  replacementProposal: (co.replacementProposal !== undefined) ? co.replacementProposal : existing.replacementProposal,
-                  items: (co.items && co.items.length > 0) ? co.items : existing.items,
+                  replacementProposal:
+                    (existing.replacementProposal && existing.replacementProposal.status !== 'pending' && co.replacementProposal?.status === 'pending')
+                      ? existing.replacementProposal
+                      : ((co.replacementProposal !== undefined) ? co.replacementProposal : existing.replacementProposal),
+                  items:
+                    (existing.replacementProposal && existing.replacementProposal.status !== 'pending' && co.replacementProposal?.status === 'pending')
+                      ? existing.items
+                      : ((co.items && co.items.length > 0) ? co.items : existing.items),
                   subtotal: (co.subtotal !== undefined && co.subtotal > 0) ? co.subtotal : existing.subtotal,
                   total: (co.total !== undefined && co.total > 0) ? co.total : existing.total,
                   status: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.status || existing.status),
@@ -3053,8 +3058,38 @@ export default function App() {
       } else if (event.eventType === 'ORDER_UPDATE') {
         const payload = event.payload || event;
         if (payload.replacementProposal && payload.replacementProposal.status === 'pending') {
-          setCustomerDismissedReplacementId(null);
+          if (appModeRef.current === 'customer') {
+            setCustomerDismissedReplacementId(null);
+          }
         }
+
+        // Live alert for merchant when customer reviews substitute proposal
+        if (
+          payload.replacementProposal &&
+          (payload.replacementProposal.status === 'accepted' || payload.replacementProposal.status === 'declined')
+        ) {
+          const prop = payload.replacementProposal;
+          const isAccepted = prop.status === 'accepted';
+          if (appModeRef.current === 'merchant') {
+            try {
+              playAudioBeep('merchant_new_order');
+            } catch (aErr) {}
+            try {
+              notifyReplacementDecision(
+                { id: payload.orderId, storeId: prop.storeId, storeName: prop.storeName },
+                prop.substituteProduct,
+                isAccepted
+              );
+            } catch (nErr) {}
+            Alert.alert(
+              isAccepted ? '✅ Customer Approved Substitute!' : '❌ Substitute Declined',
+              isAccepted
+                ? `Customer approved "${prop.substituteProduct?.name || 'replacement item'}" for Order #${payload.orderId}. Please package the order now!`
+                : `Customer declined "${prop.originalItemName}" replacement for Order #${payload.orderId}. Full refund was credited to their wallet. Please package remaining items.`
+            );
+          }
+        }
+
         updateAndPersistOrders((prev) =>
           prev.map((o) => {
             if (o.id === payload.orderId) {
@@ -5644,70 +5679,64 @@ export default function App() {
     // 2. Refund amount to customer wallet balance
     setCustomerWalletBalance((prev) => prev + refundAmount);
 
-    // 3. Update order in state & recalculate totals
-    let updatedOrderObj = null;
-    updateAndPersistOrders((prev) =>
-      prev.map((o) => {
-        if (o.id === order.id) {
-          const updatedItems = (o.items || []).map((it) => {
+    // 3. Synchronously compute updated order object
+    const updatedItems = (order.items || []).map((it) => {
+      if ((it.id && it.id === item.id) || it.name === item.name) {
+        return { ...it, status: 'refunded', refunded: true, refundAmount };
+      }
+      return it;
+    });
+
+    const activeSubtotal = updatedItems.reduce(
+      (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+      0
+    );
+    const activeTotal = activeSubtotal + (Number(order.deliveryFee) || 0);
+
+    let updatedStops = order.stops;
+    if (Array.isArray(order.stops) && order.stops.length > 0) {
+      updatedStops = order.stops.map((st) => {
+        if (stop && (st.storeId === stop.storeId || st.storeName === stop.storeName)) {
+          const stopItems = (st.items || []).map((it) => {
             if ((it.id && it.id === item.id) || it.name === item.name) {
               return { ...it, status: 'refunded', refunded: true, refundAmount };
             }
             return it;
           });
-
-          const activeSubtotal = updatedItems.reduce(
+          const stopSub = stopItems.reduce(
             (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
             0
           );
-          const activeTotal = activeSubtotal + (Number(o.deliveryFee) || 0);
-
-          let updatedStops = o.stops;
-          if (Array.isArray(o.stops) && o.stops.length > 0) {
-            updatedStops = o.stops.map((st) => {
-              if (stop && (st.storeId === stop.storeId || st.storeName === stop.storeName)) {
-                const stopItems = (st.items || []).map((it) => {
-                  if ((it.id && it.id === item.id) || it.name === item.name) {
-                    return { ...it, status: 'refunded', refunded: true, refundAmount };
-                  }
-                  return it;
-                });
-                const stopSub = stopItems.reduce(
-                  (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
-                  0
-                );
-                return { ...st, items: stopItems, subtotal: stopSub };
-              }
-              return st;
-            });
-          }
-
-          updatedOrderObj = {
-            ...o,
-            items: updatedItems,
-            subtotal: activeSubtotal,
-            total: activeTotal,
-            stops: updatedStops,
-            replacementProposal: null,
-          };
-          return updatedOrderObj;
+          return { ...st, items: stopItems, subtotal: stopSub };
         }
-        return o;
-      })
+        return st;
+      });
+    }
+
+    const updatedOrderObj = {
+      ...order,
+      items: updatedItems,
+      subtotal: activeSubtotal,
+      total: activeTotal,
+      stops: updatedStops,
+      replacementProposal: null,
+    };
+
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => (o.id === order.id ? updatedOrderObj : o))
     );
 
     // 4. Send customer in-app notification & push
     notifyItemRefunded(order, item, refundAmount);
 
     // 5. Update database & WebSocket
-    if (updatedOrderObj) {
-      updateDatabaseOrderStatus(order.id, {
-        items: updatedOrderObj.items,
-        subtotal: updatedOrderObj.subtotal,
-        total: updatedOrderObj.total,
-        stops: updatedOrderObj.stops,
-      }).catch(() => {});
-    }
+    updateDatabaseOrderStatus(order.id, {
+      items: updatedOrderObj.items,
+      subtotal: updatedOrderObj.subtotal,
+      total: updatedOrderObj.total,
+      stops: updatedOrderObj.stops,
+      replacementProposal: null,
+    }).catch((err) => console.log('Supabase direct refund error:', err?.message));
 
     setReplaceModalVisible(false);
     setItemToReplaceContext(null);
@@ -5779,8 +5808,12 @@ export default function App() {
   const handleCustomerAcceptReplacement = (order) => {
     if (!order?.replacementProposal) return;
     const proposal = order.replacementProposal;
+    const proposalId = proposal.id || order.id;
     const qty = proposal.quantity || 1;
     const priceDiff = Number(proposal.priceDiff) || 0;
+
+    // Immediately dismiss modal on customer's device
+    setCustomerDismissedReplacementId(proposalId);
 
     // Financial reconciliation
     if (priceDiff < 0) {
@@ -5792,83 +5825,79 @@ export default function App() {
       setCustomerWalletBalance((prev) => Math.max(0, prev - priceDiff));
     }
 
-    let updatedOrderObj = null;
-    updateAndPersistOrders((prev) =>
-      prev.map((o) => {
-        if (o.id === order.id) {
-          const updatedItems = (o.items || []).map((it) => {
-            if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
-              return {
-                ...it,
-                id: proposal.substituteProduct.id,
-                name: proposal.substituteProduct.name,
-                price: proposal.substituteProduct.price,
-                qty,
-                replaced: true,
-                originalName: proposal.originalItemName,
-                status: 'replaced',
-              };
-            }
-            return it;
-          });
+    // Synchronously compute updated items, subtotal, and stops
+    const updatedItems = (order.items || []).map((it) => {
+      if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
+        return {
+          ...it,
+          id: proposal.substituteProduct.id,
+          name: proposal.substituteProduct.name,
+          price: proposal.substituteProduct.price,
+          qty,
+          replaced: true,
+          originalName: proposal.originalItemName,
+          status: 'replaced',
+        };
+      }
+      return it;
+    });
 
-          const activeSubtotal = updatedItems.reduce(
-            (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
-            0
-          );
-          const activeTotal = activeSubtotal + (Number(o.deliveryFee) || 0);
+    const activeSubtotal = updatedItems.reduce(
+      (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+      0
+    );
+    const activeTotal = activeSubtotal + (Number(order.deliveryFee) || 0);
 
-          let updatedStops = o.stops;
-          if (Array.isArray(o.stops) && o.stops.length > 0) {
-            updatedStops = o.stops.map((st) => {
-              const stopItems = (st.items || []).map((it) => {
-                if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
-                  return {
-                    ...it,
-                    id: proposal.substituteProduct.id,
-                    name: proposal.substituteProduct.name,
-                    price: proposal.substituteProduct.price,
-                    qty,
-                    replaced: true,
-                    originalName: proposal.originalItemName,
-                    status: 'replaced',
-                  };
-                }
-                return it;
-              });
-              const stopSub = stopItems.reduce(
-                (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
-                0
-              );
-              return { ...st, items: stopItems, subtotal: stopSub };
-            });
+    let updatedStops = order.stops;
+    if (Array.isArray(order.stops) && order.stops.length > 0) {
+      updatedStops = order.stops.map((st) => {
+        const stopItems = (st.items || []).map((it) => {
+          if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
+            return {
+              ...it,
+              id: proposal.substituteProduct.id,
+              name: proposal.substituteProduct.name,
+              price: proposal.substituteProduct.price,
+              qty,
+              replaced: true,
+              originalName: proposal.originalItemName,
+              status: 'replaced',
+            };
           }
+          return it;
+        });
+        const stopSub = stopItems.reduce(
+          (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+          0
+        );
+        return { ...st, items: stopItems, subtotal: stopSub };
+      });
+    }
 
-          updatedOrderObj = {
-            ...o,
-            items: updatedItems,
-            subtotal: activeSubtotal,
-            total: activeTotal,
-            stops: updatedStops,
-            replacementProposal: { ...proposal, status: 'accepted' },
-          };
-          return updatedOrderObj;
-        }
-        return o;
-      })
+    const acceptedProposal = { ...proposal, status: 'accepted', decidedAt: Date.now() };
+
+    const updatedOrderObj = {
+      ...order,
+      items: updatedItems,
+      subtotal: activeSubtotal,
+      total: activeTotal,
+      stops: updatedStops,
+      replacementProposal: acceptedProposal,
+    };
+
+    // 1. Update React state & AsyncStorage
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => (o.id === order.id ? updatedOrderObj : o))
     );
 
-    notifyReplacementDecision(order, proposal.substituteProduct, true);
-
-    if (updatedOrderObj) {
-      updateDatabaseOrderStatus(order.id, {
-        items: updatedOrderObj.items,
-        subtotal: updatedOrderObj.subtotal,
-        total: updatedOrderObj.total,
-        stops: updatedOrderObj.stops,
-        replacementProposal: { ...proposal, status: 'accepted' },
-      }).catch(() => {});
-    }
+    // 2. Persist to Supabase & broadcast live over WebSocket
+    updateDatabaseOrderStatus(order.id, {
+      items: updatedOrderObj.items,
+      subtotal: updatedOrderObj.subtotal,
+      total: updatedOrderObj.total,
+      stops: updatedOrderObj.stops,
+      replacementProposal: acceptedProposal,
+    }).catch((err) => console.log('Supabase accept error:', err?.message));
 
     const feedbackMsg = priceDiff < 0
       ? `Replacement approved! ${formatNaira(Math.abs(priceDiff))} price difference was refunded to your wallet.`
@@ -5882,81 +5911,80 @@ export default function App() {
   const handleCustomerDeclineReplacement = (order) => {
     if (!order?.replacementProposal) return;
     const proposal = order.replacementProposal;
+    const proposalId = proposal.id || order.id;
     const qty = proposal.quantity || 1;
     const refundAmount = Number(proposal.originalPrice) * qty;
+
+    // Immediately dismiss modal on customer's device
+    setCustomerDismissedReplacementId(proposalId);
 
     // Refund full original item amount to customer wallet
     setCustomerWalletBalance((prev) => prev + refundAmount);
 
-    let updatedOrderObj = null;
-    updateAndPersistOrders((prev) =>
-      prev.map((o) => {
-        if (o.id === order.id) {
-          const updatedItems = (o.items || []).map((it) => {
-            if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
-              return {
-                ...it,
-                status: 'refunded',
-                refunded: true,
-                refundAmount,
-              };
-            }
-            return it;
-          });
+    const updatedItems = (order.items || []).map((it) => {
+      if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
+        return {
+          ...it,
+          status: 'refunded',
+          refunded: true,
+          refundAmount,
+        };
+      }
+      return it;
+    });
 
-          const activeSubtotal = updatedItems.reduce(
-            (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
-            0
-          );
-          const activeTotal = activeSubtotal + (Number(o.deliveryFee) || 0);
+    const activeSubtotal = updatedItems.reduce(
+      (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+      0
+    );
+    const activeTotal = activeSubtotal + (Number(order.deliveryFee) || 0);
 
-          let updatedStops = o.stops;
-          if (Array.isArray(o.stops) && o.stops.length > 0) {
-            updatedStops = o.stops.map((st) => {
-              const stopItems = (st.items || []).map((it) => {
-                if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
-                  return {
-                    ...it,
-                    status: 'refunded',
-                    refunded: true,
-                    refundAmount,
-                  };
-                }
-                return it;
-              });
-              const stopSub = stopItems.reduce(
-                (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
-                0
-              );
-              return { ...st, items: stopItems, subtotal: stopSub };
-            });
+    let updatedStops = order.stops;
+    if (Array.isArray(order.stops) && order.stops.length > 0) {
+      updatedStops = order.stops.map((st) => {
+        const stopItems = (st.items || []).map((it) => {
+          if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
+            return {
+              ...it,
+              status: 'refunded',
+              refunded: true,
+              refundAmount,
+            };
           }
+          return it;
+        });
+        const stopSub = stopItems.reduce(
+          (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+          0
+        );
+        return { ...st, items: stopItems, subtotal: stopSub };
+      });
+    }
 
-          updatedOrderObj = {
-            ...o,
-            items: updatedItems,
-            subtotal: activeSubtotal,
-            total: activeTotal,
-            stops: updatedStops,
-            replacementProposal: { ...proposal, status: 'declined' },
-          };
-          return updatedOrderObj;
-        }
-        return o;
-      })
+    const declinedProposal = { ...proposal, status: 'declined', decidedAt: Date.now() };
+
+    const updatedOrderObj = {
+      ...order,
+      items: updatedItems,
+      subtotal: activeSubtotal,
+      total: activeTotal,
+      stops: updatedStops,
+      replacementProposal: declinedProposal,
+    };
+
+    // 1. Update React state & AsyncStorage
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => (o.id === order.id ? updatedOrderObj : o))
     );
 
-    notifyReplacementDecision(order, proposal.substituteProduct, false);
-
-    if (updatedOrderObj) {
-      updateDatabaseOrderStatus(order.id, {
-        items: updatedOrderObj.items,
-        subtotal: updatedOrderObj.subtotal,
-        total: updatedOrderObj.total,
-        stops: updatedOrderObj.stops,
-        replacementProposal: { ...proposal, status: 'declined' },
-      }).catch(() => {});
-    }
+    // 2. Persist to Supabase & broadcast live over WebSocket
+    updateDatabaseOrderStatus(order.id, {
+      items: updatedOrderObj.items,
+      subtotal: updatedOrderObj.subtotal,
+      total: updatedOrderObj.total,
+      stops: updatedOrderObj.stops,
+      replacementProposal: declinedProposal,
+    }).catch((err) => console.log('Supabase decline error:', err?.message));
 
     Alert.alert(
       'Replacement Declined ❌',

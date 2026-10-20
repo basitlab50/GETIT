@@ -759,9 +759,24 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * In-Modal Wallet Card: Added an emerald GETIT Wallet Balance card inside the replacement approval modal displaying active balance and the `Instant Credit` badge.
      * AsyncStorage Local Persistence: Persists `customerWalletBalance` under `getit_customer_wallet` with automatic loading on app launch and saving on balance changes.
 
-================================================================================
+28. Fix Customer Replacement Accept Loop & Real-Time Merchant Decision Notification:
+   - Root Cause of Accept Loop:
+     * In `handleCustomerAcceptReplacement`, `handleCustomerDeclineReplacement`, and `handleDirectRefundItem`, `updatedOrderObj` was being assigned inside the asynchronous React `setOrders` callback.
+     * As a result, `if (updatedOrderObj)` immediately below evaluated to `false` (null), so `updateDatabaseOrderStatus()` never ran to commit the `accepted` status to Supabase.
+     * Within 3 seconds, the background cloud poller re-fetched the order from Supabase where it was still `pending`, causing the buyer app to loop and continuously display the accept prompt.
+   - Synchronous Computation & Immediate Modal Dismissal:
+     * Computed `updatedItems`, `activeSubtotal`, `activeTotal`, `stops`, and `replacementProposal: { ...proposal, status: 'accepted' }` synchronously before calling `updateAndPersistOrders()`.
+     * Explicitly invoked `setCustomerDismissedReplacementId(proposalId)` to close the approval modal immediately upon tapping Accept or Decline.
+     * Directly committed the accepted/declined proposal to Supabase via `updateDatabaseOrderStatus()` and broadcasted over WebSocket (`ORDER_UPDATE`).
+     * Protected `syncOrdersFromCloud()` so local accepted or declined statuses are preserved and never reverted by stale cloud polling.
+   - Real-Time Merchant Alerts on Customer Decision:
+     * Added real-time listener in `subscribeToLiveBroadcast` on the merchant's device when `payload.replacementProposal.status === 'accepted' | 'declined'`.
+     * Plays the loud merchant audio chime (`playAudioBeep('merchant_new_order')`), triggers an in-app slide-down banner via `notifyReplacementDecision()`, and displays an immediate popup alert notifying the store owner that the customer approved the substitute item and they can package the order now.
+     * Live merchant item row updates immediately to `✅ Swapped with: ... (Approved by Customer)`.
+
+===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
-================================================================================
+===============================================================================
 
 
 
