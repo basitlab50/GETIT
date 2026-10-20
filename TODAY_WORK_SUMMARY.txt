@@ -788,6 +788,17 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * In `handleProposeSubstitute()`, immediately resets `setCustomerDismissedReplacementId(null)` and `lastChimedReplacementProposalRef.current = null` so proposing a substitute is guaranteed to pop up on the buyer side without getting blocked by stale dismissal IDs.
      * In `subscribeToLiveBroadcast()`, resets `setCustomerDismissedReplacementId(null)` and chime tracking whenever any pending proposal is received over WebSockets.
 
+30. Dual-Item Display for Swapped / Replaced Provisions (Buyer & Shop Owner Views):
+   - Buyer-Side Order Breakdown (`orderItemsListExpanded`):
+     * Out-of-Stock Swapped Item: Displays both original and new item in an interconnected visual card:
+       - Original Item: Struck-through with a red line (`~~1x World Star Egg Noodles~~`) accompanied by a `[❌ Out of Stock]` red badge.
+       - Replacement Item: Directly underneath with `🔄 Swapped with: 1x Vermicelli Rice Stick 400 g`, highlighted in emerald green with `[✅ Approved Replacement]` badge and current item price.
+     * Direct Refund Items: Struck-through with red line (`~~1x Item~~`) with `[❌ Out of Stock • Refunded]` badge and `💳 ₦... refunded to GETIT Wallet`.
+   - Merchant-Side Live Orders Feed (`mItemsList`):
+     * Out-of-Stock Swapped Item: Replaced duplicate naming with a two-tier breakdown:
+       - Top Row: Crossed-out original product (`❌ Original: ~~1x Old Product~~`) with `[Out of Stock]` tag.
+       - Bottom Row: Highlighted emerald card showing `🔄 Swapped with: 1x New Product • ₦...` with `✅ Approved by Customer` sub-badge.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

@@ -9109,31 +9109,262 @@ export default function App() {
                   )}
 
                   {/* Expandable Items Preview Toggle */}
-                  <TouchableOpacity
-                    style={styles.orderItemsToggleRow}
-                    onPress={() => toggleItemsExpand(ord.id)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.orderItemsToggleText, { flex: 1, marginRight: 6 }]} numberOfLines={1}>
-                      🛒 {ord.itemsCount} Provisions Ordered ({formatNaira(ord.subtotal || ord.total)})
-                    </Text>
-                    <Text style={[styles.orderItemsToggleChevron, { flexShrink: 0 }]}>
-                      {isItemsOpen ? '▲ Hide Items' : '▼ View Items'}
-                    </Text>
-                  </TouchableOpacity>
+                  {(() => {
+                    const hasReplacedItems =
+                      (ord.items || []).some((i) => i.replaced || i.status === 'replaced') ||
+                      ord.replacementProposal?.status === 'accepted';
+                    const hasRefundedItems = (ord.items || []).some((i) => i.refunded || i.status === 'refunded');
+
+                    return (
+                      <>
+                        {/* Notice Banner if Item was Swapped & Approved */}
+                        {hasReplacedItems && (
+                          <View
+                            style={{
+                              backgroundColor: '#F0FDF4',
+                              borderWidth: 1.5,
+                              borderColor: '#86EFAC',
+                              borderRadius: 12,
+                              padding: 12,
+                              marginHorizontal: 12,
+                              marginTop: 8,
+                              marginBottom: 6,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                            }}
+                          >
+                            <View style={{ flex: 1, marginRight: 8 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <Text style={{ fontSize: 14, marginRight: 6 }}>🔄</Text>
+                                <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#166534' }}>
+                                  Item Swap Approved
+                                </Text>
+                              </View>
+                              <Text style={{ fontSize: 11.5, color: '#15803D', marginTop: 3 }}>
+                                <Text
+                                  style={{
+                                    textDecorationLine: 'line-through',
+                                    textDecorationColor: '#DC2626',
+                                    color: '#991B1B',
+                                    fontWeight: '700',
+                                  }}
+                                >
+                                  {ord.replacementProposal?.originalItemName ||
+                                    (ord.items || []).find((i) => i.replaced || i.status === 'replaced')?.originalName ||
+                                    'Original Product'}
+                                </Text>
+                                {' ➔ '}
+                                <Text style={{ fontWeight: '800', color: '#064E3B' }}>
+                                  {ord.replacementProposal?.substituteProduct?.name ||
+                                    (ord.items || []).find((i) => i.replaced || i.status === 'replaced')?.name ||
+                                    'Replacement'}
+                                </Text>
+                              </Text>
+                            </View>
+                            <View
+                              style={{
+                                backgroundColor: '#DCFCE7',
+                                paddingHorizontal: 8,
+                                paddingVertical: 4,
+                                borderRadius: 6,
+                              }}
+                            >
+                              <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#166534' }}>
+                                ✅ SWAPPED
+                              </Text>
+                            </View>
+                          </View>
+                        )}
+
+                        <TouchableOpacity
+                          style={styles.orderItemsToggleRow}
+                          onPress={() => toggleItemsExpand(ord.id)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.orderItemsToggleText, { flex: 1, marginRight: 6 }]} numberOfLines={1}>
+                            🛒 {ord.itemsCount} Provisions Ordered ({formatNaira(ord.subtotal || ord.total)})
+                            {hasReplacedItems ? ' • 🔄 1 Swapped' : ''}
+                            {hasRefundedItems ? ' • ❌ 1 Refunded' : ''}
+                          </Text>
+                          <Text style={[styles.orderItemsToggleChevron, { flexShrink: 0 }]}>
+                            {isItemsOpen ? '▲ Hide Items' : '▼ View Items'}
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    );
+                  })()}
 
                   {isItemsOpen && (
                     <View style={styles.orderItemsListExpanded}>
-                      {(ord.items || []).map((itm, idx) => (
-                        <View key={idx} style={styles.orderItemExpandedRow}>
-                          <Text style={styles.orderItemExpandedName} numberOfLines={1}>
-                            {itm.qty}x {itm.name}
-                          </Text>
-                          <Text style={[styles.orderItemExpandedPrice, { flexShrink: 0 }]}>
-                            {formatNaira((itm.price || 0) * itm.qty)}
-                          </Text>
-                        </View>
-                      ))}
+                      {(ord.items || []).map((itm, idx) => {
+                        const isReplaced = itm.replaced || itm.status === 'replaced';
+                        const isRefunded = itm.refunded || itm.status === 'refunded';
+
+                        if (isReplaced) {
+                          const origName =
+                            itm.originalName ||
+                            ord.replacementProposal?.originalItemName ||
+                            'Original Product';
+
+                          return (
+                            <View
+                              key={idx}
+                              style={{
+                                backgroundColor: '#F8FAFC',
+                                borderWidth: 1.5,
+                                borderColor: '#E2E8F0',
+                                borderRadius: 12,
+                                padding: 12,
+                                marginVertical: 6,
+                              }}
+                            >
+                              {/* 1. Original Item Canceled with Clear Red Line */}
+                              <View
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  paddingBottom: 8,
+                                  borderBottomWidth: 1,
+                                  borderBottomColor: '#FEE2E2',
+                                }}
+                              >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                  <View
+                                    style={{
+                                      width: 20,
+                                      height: 20,
+                                      borderRadius: 10,
+                                      backgroundColor: '#FEE2E2',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      marginRight: 8,
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 10, color: '#DC2626', fontWeight: '900' }}>✕</Text>
+                                  </View>
+                                  <View style={{ flex: 1 }}>
+                                    <Text
+                                      style={{
+                                        fontSize: 13,
+                                        fontWeight: '700',
+                                        color: '#991B1B',
+                                        textDecorationLine: 'line-through',
+                                        textDecorationColor: '#DC2626',
+                                        textDecorationStyle: 'solid',
+                                      }}
+                                      numberOfLines={1}
+                                    >
+                                      {itm.qty}x {origName}
+                                    </Text>
+                                    <Text style={{ fontSize: 10.5, color: '#DC2626', fontWeight: '600', marginTop: 1 }}>
+                                      Unavailable / Out of Stock
+                                    </Text>
+                                  </View>
+                                </View>
+                                <View
+                                  style={{
+                                    backgroundColor: '#FEE2E2',
+                                    paddingHorizontal: 7,
+                                    paddingVertical: 3,
+                                    borderRadius: 6,
+                                    borderWidth: 1,
+                                    borderColor: '#FECACA',
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 10, fontWeight: '800', color: '#DC2626' }}>
+                                    CANCELLED
+                                  </Text>
+                                </View>
+                              </View>
+
+                              {/* 2. Swapped Item with Emerald Badge & Price */}
+                              <View
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  backgroundColor: '#F0FDF4',
+                                  borderWidth: 1,
+                                  borderColor: '#BBF7D0',
+                                  borderRadius: 8,
+                                  padding: 10,
+                                  marginTop: 8,
+                                }}
+                              >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                  <Text style={{ fontSize: 15, marginRight: 8 }}>🔄</Text>
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B' }} numberOfLines={1}>
+                                      Swapped with: {itm.qty}x {itm.name}
+                                    </Text>
+                                    <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#059669', marginTop: 2 }}>
+                                      ✅ Approved Replacement
+                                    </Text>
+                                  </View>
+                                </View>
+                                <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B', flexShrink: 0 }}>
+                                  {formatNaira((itm.price || 0) * itm.qty)}
+                                </Text>
+                              </View>
+                            </View>
+                          );
+                        }
+
+                        if (isRefunded) {
+                          return (
+                            <View
+                              key={idx}
+                              style={{
+                                backgroundColor: '#FEF2F2',
+                                borderWidth: 1,
+                                borderColor: '#FECACA',
+                                borderRadius: 10,
+                                padding: 10,
+                                marginVertical: 4,
+                              }}
+                            >
+                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                  <Text style={{ fontSize: 12, marginRight: 6 }}>❌</Text>
+                                  <Text
+                                    style={{
+                                      fontSize: 13,
+                                      color: '#991B1B',
+                                      textDecorationLine: 'line-through',
+                                      textDecorationColor: '#EF4444',
+                                      fontWeight: '600',
+                                    }}
+                                    numberOfLines={1}
+                                  >
+                                    {itm.qty}x {itm.name}
+                                  </Text>
+                                </View>
+                                <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                  <Text style={{ fontSize: 10, fontWeight: '800', color: '#DC2626' }}>
+                                    Refunded
+                                  </Text>
+                                </View>
+                              </View>
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#B91C1C', marginTop: 4, marginLeft: 20 }}>
+                                💳 {formatNaira(itm.refundAmount || ((itm.price || 0) * itm.qty))} refunded to GETIT Wallet
+                              </Text>
+                            </View>
+                          );
+                        }
+
+                        return (
+                          <View key={idx} style={styles.orderItemExpandedRow}>
+                            <Text style={styles.orderItemExpandedName} numberOfLines={1}>
+                              {itm.qty}x {itm.name}
+                            </Text>
+                            <Text style={[styles.orderItemExpandedPrice, { flexShrink: 0 }]}>
+                              {formatNaira((itm.price || 0) * itm.qty)}
+                            </Text>
+                          </View>
+                        );
+                      })}
                     </View>
                   )}
 
@@ -12024,30 +12255,70 @@ export default function App() {
                                   },
                                 ]}
                               >
-                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-                                    <Text style={styles.mItemIcon}>{it.icon || '🛍️'}</Text>
+                                {isReplaced ? (
+                                  <View style={{ gap: 4 }}>
+                                    {/* 1. Struck-through Original Item */}
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', opacity: 0.75 }}>
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                        <Text style={{ fontSize: 12, marginRight: 6 }}>❌</Text>
+                                        <Text
+                                          style={[
+                                            styles.mItemName,
+                                            { textDecorationLine: 'line-through', textDecorationColor: '#EF4444', color: '#9CA3AF' },
+                                          ]}
+                                        >
+                                          {it.originalName || ord.replacementProposal?.originalItemName || 'Original Product'} x{it.qty}
+                                        </Text>
+                                      </View>
+                                      <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#DC2626' }}>Out of Stock</Text>
+                                      </View>
+                                    </View>
+
+                                    {/* 2. New Swapped Replacement Item */}
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#F0FDF4', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#BBF7D0', marginTop: 2 }}>
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                        <Text style={{ fontSize: 14, marginRight: 6 }}>🔄</Text>
+                                        <View>
+                                          <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B' }}>
+                                            Swapped with: {it.name} <Text style={{ color: COLORS.emeraldDeep }}>x{it.qty}</Text>
+                                          </Text>
+                                          <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#059669', marginTop: 1 }}>
+                                            ✅ Approved by Customer
+                                          </Text>
+                                        </View>
+                                      </View>
+                                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B' }}>
+                                        {formatNaira(it.price * it.qty)}
+                                      </Text>
+                                    </View>
+                                  </View>
+                                ) : (
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                      <Text style={styles.mItemIcon}>{it.icon || '🛍️'}</Text>
+                                      <Text
+                                        style={[
+                                          styles.mItemName,
+                                          isRefunded && { textDecorationLine: 'line-through', textDecorationColor: '#EF4444', color: '#9CA3AF' },
+                                        ]}
+                                      >
+                                        {it.name}{' '}
+                                        <Text style={{ fontWeight: '800', color: isRefunded ? '#9CA3AF' : COLORS.emeraldDeep }}>
+                                          x{it.qty}
+                                        </Text>
+                                      </Text>
+                                    </View>
                                     <Text
                                       style={[
-                                        styles.mItemName,
-                                        isRefunded && { textDecorationLine: 'line-through', color: '#9CA3AF' },
+                                        styles.mItemPrice,
+                                        isRefunded && { textDecorationLine: 'line-through', textDecorationColor: '#EF4444', color: '#9CA3AF' },
                                       ]}
                                     >
-                                      {it.name}{' '}
-                                      <Text style={{ fontWeight: '800', color: isRefunded ? '#9CA3AF' : COLORS.emeraldDeep }}>
-                                        x{it.qty}
-                                      </Text>
+                                      {formatNaira(it.price * it.qty)}
                                     </Text>
                                   </View>
-                                  <Text
-                                    style={[
-                                      styles.mItemPrice,
-                                      isRefunded && { textDecorationLine: 'line-through', color: '#9CA3AF' },
-                                    ]}
-                                  >
-                                    {formatNaira(it.price * it.qty)}
-                                  </Text>
-                                </View>
+                                )}
 
                                 {/* Badges */}
                                 {isRefunded && (
@@ -12062,14 +12333,6 @@ export default function App() {
                                   <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
                                     <Text style={{ fontSize: 11, fontWeight: '700', color: '#D97706', backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                                       ⏳ Substitute Offered: {ord.replacementProposal.substituteProduct?.name} (Awaiting Buyer Approval)
-                                    </Text>
-                                  </View>
-                                )}
-
-                                {isReplaced && (
-                                  <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
-                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#047857', backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                                      ✅ Swapped with: {it.name} (Approved by Customer)
                                     </Text>
                                   </View>
                                 )}
