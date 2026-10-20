@@ -382,8 +382,8 @@ export function notifyMerchantAcceptanceReminder(order, count = 1) {
   const storeName = order.storeName || order.store_name || 'Your store';
   const title = count > 1 ? `🔔 ${count} ORDERS AWAITING ACCEPTANCE!` : '🔔 ORDER ACCEPTANCE REMINDER!';
   const body = count > 1
-    ? `You have ${count} pending orders for ${storeName}. Please review and tap "Accept Order" to begin preparing.`
-    : `Order #${order.id} for ${storeName} is waiting for your acceptance. Tap to accept and start preparing.`;
+    ? `You have ${count} pending orders for ${storeName}. Tap "Accept Order" to start preparing.`
+    : `Order #${order.id} for ${storeName} is awaiting your acceptance. Tap "Accept Order" to start preparing!`;
 
   triggerNotification({
     title,
@@ -399,13 +399,13 @@ export function notifyMerchantAcceptanceReminder(order, count = 1) {
   });
 }
 
-// G. Recurring Preparation Reminder (Every 1 minute until marked ready - Strictly for store)
+// G. Recurring Preparation Reminder (Every 1 minute until dispatched - Strictly for store)
 export function notifyMerchantPrepReminder(order, count = 1) {
   const storeName = order.storeName || order.store_name || 'Your store';
-  const title = count > 1 ? `⏱️ ${count} ORDERS IN PREPARATION` : '⏱️ ORDER PREPARATION REMINDER';
+  const title = count > 1 ? `🍳 ${count} ORDERS BEING PREPARED!` : '🍳 PREPARING ORDER REMINDER!';
   const body = count > 1
-    ? `${count} orders for ${storeName} are currently being prepared. Don't forget to tap "Mark Ready for Courier" when packaged!`
-    : `Order #${order.id} is being prepared at ${storeName}. Don't forget to tap "Mark Ready for Courier" when packaged!`;
+    ? `${count} orders for ${storeName} are being prepared. Once packaged, tap "Mark Ready for Courier" to dispatch Musa!`
+    : `Order #${order.id} is currently being prepared. Once items are bagged, tap "Mark Ready for Courier" to dispatch Musa!`;
 
   triggerNotification({
     title,

@@ -703,6 +703,24 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        - Expands on demand when tapped to reveal the real-time milestone cards (`✅ Picked Up`, `📦 Ready for Courier`, `🍳 Preparing`, `🛵 Collecting Now`, and `🏠 Your Delivery Destination`).
        - Tapping again smoothly folds it back up (`▲ Hide Stops`), keeping the active order view compact and clutter-free while preserving detailed multi-store visibility.
 
+25. Merchant Acceptance & Preparation 1-Minute Recurring Chime Engine Lifecycle:
+   - Lifecycle Stages & Precision Transitions:
+     * Stage 1: Order Awaiting Acceptance (`New Order`):
+       - Chimes every 1 minute with a high-priority merchant alert: `🔔 ORDER ACCEPTANCE REMINDER! Order #... is awaiting your acceptance. Tap "Accept Order" to start preparing!`
+       - Plays native loud audio chime on iPad and sounds on all platforms.
+     * Stage 2: Instant Transition on Acceptance (`Accept Order`):
+       - The moment the merchant taps `Accept Order`, `delete lastMerchantReminderRef.current.newOrdersInit` and `delete lastMerchantReminderRef.current.lastNewReminder` fire synchronously.
+       - The acceptance reminder stops instantly and completely.
+       - The order transitions into `Preparing` mode and initializes the preparation reminder clock.
+     * Stage 3: Order In Preparation (`Preparing`):
+       - While in preparation, chimes every 1 minute with a cool preparation reminder: `🍳 PREPARING ORDER REMINDER! Order #... is currently being prepared. Once items are bagged, tap "Mark Ready for Courier" to dispatch Musa!`
+     * Stage 4: Permanent Stop on Courier Dispatch (`Mark Ready for Courier`):
+       - The moment the merchant taps `Mark Ready for Courier` (or dispatches courier), `delete lastMerchantReminderRef.current.prepOrdersInit` and `delete lastMerchantReminderRef.current.lastPrepReminder` fire synchronously.
+       - The order transitions to `Ready for Pickup` / `On the Way`.
+       - All preparation and acceptance reminders for that order are terminated permanently.
+   - Robust Store Resolution Fix:
+     * Fixed store stop matching in `getMerchantStopForOrder` to compare IDs and names with strict whitespace trimming and string coercion, preventing multi-store orders from accidentally defaulting to another shop's stop status.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================

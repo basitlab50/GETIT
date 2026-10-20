@@ -4460,7 +4460,7 @@ export default function App() {
       // Only alert if the user is in merchant mode and owns the store!
       if (targetAudience === 'merchant') {
         if (currentMode !== 'merchant') return;
-        if (targetStoreId && currentStore?.id && targetStoreId !== currentStore.id) {
+        if (targetStoreId && currentStore?.id && String(targetStoreId) !== String(currentStore.id)) {
           return;
         }
       }
@@ -5025,14 +5025,24 @@ export default function App() {
       if (store) {
         const match = ord.stops.find(
           (st) =>
-            (st.storeId && st.storeId === store.id) ||
-            (st.storeName && store.name && st.storeName.toLowerCase() === store.name.toLowerCase())
+            (st.storeId && String(st.storeId) === String(store.id)) ||
+            (st.storeName && store.name && st.storeName.trim().toLowerCase() === store.name.trim().toLowerCase())
         );
         if (match) return match;
+        return null;
       }
       return ord.stops[0];
     }
-    return null;
+    if (store) {
+      if (
+        (ord.storeId && String(ord.storeId) === String(store.id)) ||
+        (ord.storeName && store.name && ord.storeName.trim().toLowerCase() === store.name.trim().toLowerCase())
+      ) {
+        return ord;
+      }
+      return null;
+    }
+    return ord;
   };
 
   const getMerchantStopStatus = (ord, store = currentMerchantStore) => {
@@ -5127,6 +5137,8 @@ export default function App() {
 
   const acceptMerchantOrder = (orderId) => {
     if (lastMerchantReminderRef.current) {
+      delete lastMerchantReminderRef.current.newOrdersInit;
+      delete lastMerchantReminderRef.current.lastNewReminder;
       lastMerchantReminderRef.current.prepOrdersInit = Date.now();
       lastMerchantReminderRef.current.lastPrepReminder = Date.now();
     }
@@ -5199,6 +5211,8 @@ export default function App() {
     if (lastMerchantReminderRef.current) {
       delete lastMerchantReminderRef.current.prepOrdersInit;
       delete lastMerchantReminderRef.current.lastPrepReminder;
+      delete lastMerchantReminderRef.current.newOrdersInit;
+      delete lastMerchantReminderRef.current.lastNewReminder;
     }
     let storeReadyName = currentMerchantStore?.name || 'Store';
     let allStopsReady = true;
