@@ -1668,6 +1668,7 @@ export default function App() {
   const [expandedOrderId, setExpandedOrderId] = useState('AUTO_TOP'); // Accordion: top active order open by default, only 1 order open at a time
   const [collapsedBoltMapOrderIds, setCollapsedBoltMapOrderIds] = useState([]);
   const [expandedItemsOrderIds, setExpandedItemsOrderIds] = useState([]);
+  const [expandedStopsTimelineOrderIds, setExpandedStopsTimelineOrderIds] = useState([]);
 
   const toggleOrderAccordion = (orderId) => {
     setExpandedOrderId((prev) => {
@@ -1684,6 +1685,12 @@ export default function App() {
 
   const toggleItemsExpand = (orderId) => {
     setExpandedItemsOrderIds((prev) =>
+      prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
+    );
+  };
+
+  const toggleStopsTimelineExpand = (orderId) => {
+    setExpandedStopsTimelineOrderIds((prev) =>
       prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
     );
   };
@@ -8282,6 +8289,7 @@ export default function App() {
               const isExpanded = activeExpandedId === ord.id;
               const isBoltMapOpen = !collapsedBoltMapOrderIds.includes(ord.id);
               const isItemsOpen = expandedItemsOrderIds.includes(ord.id);
+              const isStopsTimelineOpen = expandedStopsTimelineOrderIds.includes(ord.id);
 
               return (
                 <View key={ord.id} style={styles.orderCard}>
@@ -8366,6 +8374,175 @@ export default function App() {
                           <Text style={styles.multiStopJourneyAlertMsg} numberOfLines={2}>
                             🛵 {ord.journeyAlert}
                           </Text>
+                        </View>
+                      )}
+
+                      {/* Multi-Store Pickup Sequence Accordion (Folded by Default) */}
+                      {ord.stops && ord.stops.length > 0 && ord.status !== 'Cancelled' && (
+                        <View style={{ marginBottom: 10 }}>
+                          <TouchableOpacity
+                            style={[styles.orderItemsToggleRow, { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}
+                            onPress={() => toggleStopsTimelineExpand(ord.id)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={[styles.orderItemsToggleText, { flex: 1, marginRight: 6 }]} numberOfLines={1}>
+                              🔗 Pickup Sequence ({ord.stops.length} Stores)
+                            </Text>
+                            <Text style={[styles.orderItemsToggleChevron, { flexShrink: 0 }]}>
+                              {isStopsTimelineOpen ? '▲ Hide Stops' : '▼ View Stops'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {isStopsTimelineOpen && (
+                            <View style={[styles.stopsTimelineContainer, { marginTop: 6 }]}>
+                              <Text style={styles.stopsTimelineTitle}>
+                                PICKUP & DELIVERY SEQUENCE ({ord.stops.length} HUBS)
+                              </Text>
+
+                              {ord.stops.map((stop, sIdx) => {
+                                const isCurrentStop = ord.currentStopIndex === sIdx;
+                                const isCompleted = stop.pickupStatus === 'picked_up' || (ord.currentStopIndex || 0) > sIdx;
+
+                                return (
+                                  <View
+                                    key={sIdx}
+                                    style={[
+                                      styles.stopTimelineCard,
+                                      isCurrentStop && styles.stopTimelineCardActive,
+                                    ]}
+                                  >
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
+                                        <View
+                                          style={[
+                                            styles.stopTimelineIcon,
+                                            isCompleted
+                                              ? styles.stopTimelineIconDone
+                                              : isCurrentStop
+                                              ? styles.stopTimelineIconCurrent
+                                              : styles.stopTimelineIconQueued,
+                                          ]}
+                                        >
+                                          <Text style={{ fontSize: 10, fontWeight: '900', color: '#FFFFFF' }}>
+                                            {isCompleted ? '✓' : stop.stopNumber}
+                                          </Text>
+                                        </View>
+                                        <Text style={styles.stopTimelineStoreName} numberOfLines={1}>{stop.storeName}</Text>
+                                      </View>
+                                      <View
+                                        style={[
+                                          styles.stopStatusBadge,
+                                          isCompleted
+                                            ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
+                                            : stop.status === 'Ready for Pickup'
+                                            ? { backgroundColor: '#DCFCE7' }
+                                            : stop.status === 'Preparing'
+                                            ? { backgroundColor: '#DBEAFE' }
+                                            : isCurrentStop
+                                            ? { backgroundColor: '#FEF3C7' }
+                                            : { backgroundColor: '#F3F4F6' },
+                                          { flexShrink: 0 },
+                                        ]}
+                                      >
+                                        <Text
+                                          style={[
+                                            styles.stopStatusBadgeText,
+                                            isCompleted
+                                              ? { color: '#056B4B' }
+                                              : stop.status === 'Ready for Pickup'
+                                              ? { color: '#047857' }
+                                              : stop.status === 'Preparing'
+                                              ? { color: '#1D4ED8' }
+                                              : isCurrentStop
+                                              ? { color: '#B45309' }
+                                              : { color: '#6B7280' },
+                                          ]}
+                                          numberOfLines={1}
+                                        >
+                                          {isCompleted
+                                            ? '✅ Picked Up'
+                                            : stop.status === 'Ready for Pickup'
+                                            ? '📦 Ready for Courier'
+                                            : stop.status === 'Preparing'
+                                            ? '🍳 Preparing'
+                                            : stop.status === 'Rejected'
+                                            ? '❌ Store Unavailable'
+                                            : isCurrentStop
+                                            ? '🛵 Collecting Now'
+                                            : '⏳ Awaiting Store'}
+                                        </Text>
+                                      </View>
+                                    </View>
+
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
+                                      <Text style={styles.stopItemsSummaryText} numberOfLines={1}>
+                                        {stop.itemsCount} items • {formatNaira(stop.subtotal)}
+                                      </Text>
+                                    </View>
+                                  </View>
+                                );
+                              })}
+
+                              {/* Final Delivery Destination Milestone */}
+                              <View
+                                style={[
+                                  styles.stopTimelineCard,
+                                  ord.currentStopIndex >= ord.stops.length && styles.stopTimelineCardActive,
+                                  { borderLeftColor: '#056B4B', marginBottom: 0 },
+                                ]}
+                              >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
+                                    <View
+                                      style={[
+                                        styles.stopTimelineIcon,
+                                        ord.status === 'Delivered'
+                                          ? styles.stopTimelineIconDone
+                                          : ord.currentStopIndex >= ord.stops.length
+                                          ? styles.stopTimelineIconCurrent
+                                          : styles.stopTimelineIconQueued,
+                                      ]}
+                                    >
+                                      <Text style={{ fontSize: 10 }}>🏠</Text>
+                                    </View>
+                                    <Text style={styles.stopTimelineStoreName} numberOfLines={1}>Your Delivery Destination</Text>
+                                  </View>
+                                  <View
+                                    style={[
+                                      styles.stopStatusBadge,
+                                      ord.status === 'Delivered'
+                                        ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
+                                        : ord.currentStopIndex >= ord.stops.length
+                                        ? { backgroundColor: '#DCFCE7' }
+                                        : { backgroundColor: '#F3F4F6' },
+                                      { flexShrink: 0 },
+                                    ]}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.stopStatusBadgeText,
+                                        ord.status === 'Delivered'
+                                          ? { color: '#056B4B' }
+                                          : ord.currentStopIndex >= ord.stops.length
+                                          ? { color: '#166534' }
+                                          : { color: '#6B7280' },
+                                      ]}
+                                      numberOfLines={1}
+                                    >
+                                      {ord.status === 'Delivered'
+                                        ? '✅ Delivered'
+                                        : ord.currentStopIndex >= ord.stops.length
+                                        ? '🛵 Heading to You'
+                                        : '⏳ Waiting for Shops'}
+                                    </Text>
+                                  </View>
+                                </View>
+                                <Text style={[styles.stopItemsSummaryText, { marginTop: 4 }]} numberOfLines={1}>
+                                  📍 {ord.customerAddress || 'Your Delivery Address'}
+                                </Text>
+                              </View>
+                            </View>
+                          )}
                         </View>
                       )}
 

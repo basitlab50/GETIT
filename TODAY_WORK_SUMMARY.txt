@@ -695,6 +695,14 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Map Cleanup:
        - Removed `• 42 km/h` speedometer text floating over the motorcycle marker, creating a sleek, distraction-free live map tracking experience.
 
+24. Foldable Multi-Store Pickup Sequence Accordion:
+   - User Feedback & Enhancement:
+     * While the technical satellite and radar banners were unnecessary, the breakdown of store pickup milestones on multi-store orders is genuinely helpful for shoppers to see which store is ready and where the courier is collecting.
+     * Restored the Multi-Store Pickup Sequence milestones timeline as a collapsible, foldable accordion:
+       - Folded / collapsed normally by default (`isStopsTimelineOpen = false`) with a compact header: `🔗 Pickup Sequence (2 Stores)  ▼ View Stops`.
+       - Expands on demand when tapped to reveal the real-time milestone cards (`✅ Picked Up`, `📦 Ready for Courier`, `🍳 Preparing`, `🛵 Collecting Now`, and `🏠 Your Delivery Destination`).
+       - Tapping again smoothly folds it back up (`▲ Hide Stops`), keeping the active order view compact and clutter-free while preserving detailed multi-store visibility.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================
