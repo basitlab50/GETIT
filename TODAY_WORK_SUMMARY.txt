@@ -774,6 +774,20 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Plays the loud merchant audio chime (`playAudioBeep('merchant_new_order')`), triggers an in-app slide-down banner via `notifyReplacementDecision()`, and displays an immediate popup alert notifying the store owner that the customer approved the substitute item and they can package the order now.
      * Live merchant item row updates immediately to `✅ Swapped with: ... (Approved by Customer)`.
 
+29. iOS Network Connection Resilience (ExpoModulesCore/Promise.swift:56) & Buyer Popup Guarantee:
+   - Root Cause of Failed Network Update & Missing Buyer Popup:
+     * In `updateDatabaseOrderStatus()`, the Supabase update used `.select().maybeSingle()`, which returned the full row including massive `bolt_rider` coordinates (thousands of points).
+     * On iOS/Expo URLSession, this triggered socket connection resets: `UnexpectedException: The network connection was lost. (at ExpoModulesCore/Promise.swift:56)`.
+     * Because `updateDatabaseOrderStatus()` lacked retry logic, the update failed completely and the substitute proposal never made it to Supabase.
+     * When the buyer's device fetched from Supabase, `replacementProposal` was missing, causing the buyer popup to fail to trigger.
+   - Resilient Exponential Backoff Retries:
+     * Added up to 3 automatic retries with exponential backoff (`600ms * attempt`) inside `updateDatabaseOrderStatus()`.
+     * Switched from heavy `.select()` to lightweight `.select('id')`, slashing payload size from Megabytes to Bytes and eliminating socket aborts.
+     * Added offline fallback queue (`getit_pending_order_updates`) in `AsyncStorage` and integrated automatic flushing into `flushPendingOfflineOrders()`.
+   - Buyer Modal Auto-Popup Guarantee:
+     * In `handleProposeSubstitute()`, immediately resets `setCustomerDismissedReplacementId(null)` and `lastChimedReplacementProposalRef.current = null` so proposing a substitute is guaranteed to pop up on the buyer side without getting blocked by stale dismissal IDs.
+     * In `subscribeToLiveBroadcast()`, resets `setCustomerDismissedReplacementId(null)` and chime tracking whenever any pending proposal is received over WebSockets.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

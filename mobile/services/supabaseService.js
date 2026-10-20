@@ -301,14 +301,41 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
     if (updates.subtotal !== undefined) dbUpdates.subtotal = updates.subtotal;
     if (updates.total !== undefined) dbUpdates.total = updates.total;
 
-    const { data, error } = await supabase
-      .from('orders')
-      .update(dbUpdates)
-      .eq('id', orderId)
-      .select()
-      .maybeSingle();
+    // Resilient update with exponential backoff (handles Expo/iOS "network connection was lost")
+    let updateResult = null;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .update(dbUpdates)
+          .eq('id', orderId)
+          .select('id')
+          .maybeSingle();
 
-    if (error) throw error;
+        if (error) throw error;
+        updateResult = data || { id: orderId };
+        break;
+      } catch (err) {
+        lastErr = err;
+        const isNetworkErr =
+          err?.message?.includes('network connection was lost') ||
+          err?.message?.includes('fetch failed') ||
+          err?.message?.includes('Network request failed') ||
+          err?.details?.includes('network connection was lost');
+
+        if (attempt < 3 && isNetworkErr) {
+          await new Promise((r) => setTimeout(r, attempt * 600));
+          continue;
+        }
+        break;
+      }
+    }
+
+    if (!updateResult && lastErr) {
+      throw lastErr;
+    }
+
     try {
       broadcastLiveEvent('ORDER_UPDATE', {
         orderId,
@@ -317,11 +344,24 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
         ...mergedRider,
       });
     } catch (bErr) {}
-    return data;
+    return updateResult;
   } catch (err) {
     console.error('Failed to update order status in Supabase:', err);
+
+    // Queue update locally in AsyncStorage so it automatically syncs when connection returns
     try {
-      broadcastLiveEvent('ORDER_UPDATE', { orderId, ...updates });
+      const rawQueue = await AsyncStorage.getItem('getit_pending_order_updates');
+      const queue = rawQueue ? JSON.parse(rawQueue) : [];
+      queue.push({ orderId, updates, queuedAt: Date.now() });
+      await AsyncStorage.setItem('getit_pending_order_updates', JSON.stringify(queue.slice(-20)));
+    } catch (qErr) {}
+
+    try {
+      broadcastLiveEvent('ORDER_UPDATE', {
+        orderId,
+        ...updates,
+        replacementProposal: updates.replacementProposal,
+      });
     } catch (bErr) {}
     return null;
   }
@@ -330,26 +370,48 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
 export async function flushPendingOfflineOrders() {
   try {
     const rawQueue = await AsyncStorage.getItem('getit_pending_order_syncs');
-    if (!rawQueue) return;
-    const queue = JSON.parse(rawQueue);
-    if (!Array.isArray(queue) || queue.length === 0) return;
-
-    const remaining = [];
-    for (const rec of queue) {
-      try {
-        const cleanRec = { ...rec };
-        delete cleanRec.customer_id;
-        delete cleanRec.concierge_fee;
-        const { error } = await supabase.from('orders').upsert(cleanRec);
-        if (error) throw error;
-      } catch (e) {
-        remaining.push(rec);
+    if (rawQueue) {
+      const queue = JSON.parse(rawQueue);
+      if (Array.isArray(queue) && queue.length > 0) {
+        const remaining = [];
+        for (const rec of queue) {
+          try {
+            const cleanRec = { ...rec };
+            delete cleanRec.customer_id;
+            delete cleanRec.concierge_fee;
+            const { error } = await supabase.from('orders').upsert(cleanRec);
+            if (error) throw error;
+          } catch (e) {
+            remaining.push(rec);
+          }
+        }
+        if (remaining.length === 0) {
+          await AsyncStorage.removeItem('getit_pending_order_syncs');
+        } else {
+          await AsyncStorage.setItem('getit_pending_order_syncs', JSON.stringify(remaining));
+        }
       }
     }
-    if (remaining.length === 0) {
-      await AsyncStorage.removeItem('getit_pending_order_syncs');
-    } else {
-      await AsyncStorage.setItem('getit_pending_order_syncs', JSON.stringify(remaining));
+
+    // Flush pending order updates (e.g., replacement approvals, out-of-stock items)
+    const rawUpdateQueue = await AsyncStorage.getItem('getit_pending_order_updates');
+    if (rawUpdateQueue) {
+      const updateQueue = JSON.parse(rawUpdateQueue);
+      if (Array.isArray(updateQueue) && updateQueue.length > 0) {
+        const remainingUpdates = [];
+        for (const item of updateQueue) {
+          try {
+            await updateDatabaseOrderStatus(item.orderId, item.updates);
+          } catch (uErr) {
+            remainingUpdates.push(item);
+          }
+        }
+        if (remainingUpdates.length === 0) {
+          await AsyncStorage.removeItem('getit_pending_order_updates');
+        } else {
+          await AsyncStorage.setItem('getit_pending_order_updates', JSON.stringify(remainingUpdates));
+        }
+      }
     }
   } catch (e) {}
 }

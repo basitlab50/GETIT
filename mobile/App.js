@@ -3058,8 +3058,9 @@ export default function App() {
       } else if (event.eventType === 'ORDER_UPDATE') {
         const payload = event.payload || event;
         if (payload.replacementProposal && payload.replacementProposal.status === 'pending') {
-          if (appModeRef.current === 'customer') {
-            setCustomerDismissedReplacementId(null);
+          setCustomerDismissedReplacementId(null);
+          if (lastChimedReplacementProposalRef) {
+            lastChimedReplacementProposalRef.current = null;
           }
         }
 
@@ -5777,6 +5778,12 @@ export default function App() {
       storeName: currentMerchantStore?.name || order.storeName,
     };
 
+    // Reset dismissal and chime tracking so the proposal modal immediately pops up on buyer side
+    setCustomerDismissedReplacementId(null);
+    if (lastChimedReplacementProposalRef) {
+      lastChimedReplacementProposalRef.current = null;
+    }
+
     updateAndPersistOrders((prev) =>
       prev.map((o) => {
         if (o.id === order.id) {
@@ -5794,7 +5801,7 @@ export default function App() {
 
     updateDatabaseOrderStatus(order.id, {
       replacementProposal: proposal,
-    }).catch(() => {});
+    }).catch((err) => console.log('Proposal sync notice:', err?.message));
 
     setReplaceModalVisible(false);
     setItemToReplaceContext(null);
