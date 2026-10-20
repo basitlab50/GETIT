@@ -1572,6 +1572,7 @@ export default function App() {
   const [itemToReplaceContext, setItemToReplaceContext] = useState(null); // { order, item, stop }
   const [replaceSearchQuery, setReplaceSearchQuery] = useState('');
   const [replaceCategoryFilter, setReplaceCategoryFilter] = useState('ALL');
+  const [customerDismissedReplacementId, setCustomerDismissedReplacementId] = useState(null);
 
   // --- STORE OPERATING SCHEDULE & TIMING STATE ---
   const [timingModalVisible, setTimingModalVisible] = useState(false);
@@ -4463,8 +4464,8 @@ export default function App() {
       if (targetAudience === 'buyer' && currentMode === 'merchant') {
         return;
       }
-      // If customerId is provided, only alert if matches current logged-in buyer
-      if (targetAudience === 'buyer' && targetCustomerId && user?.id && user.id !== targetCustomerId) {
+      // If customerId is provided and a distinct buyer is logged in, ensure matching
+      if (targetAudience === 'buyer' && targetCustomerId && user?.id && user?.role === 'buyer' && String(user.id) !== String(targetCustomerId)) {
         return;
       }
 
@@ -5080,6 +5081,18 @@ export default function App() {
       o.status !== 'Delivered' &&
       o.status !== 'Completed'
   );
+
+  // --- BUYER SOUND CHIME ON PENDING REPLACEMENT PROPOSAL ---
+  const lastChimedReplacementProposalRef = useRef(null);
+  useEffect(() => {
+    if (appMode === 'customer' && pendingReplacementOrder?.replacementProposal) {
+      const propId = pendingReplacementOrder.replacementProposal.id || pendingReplacementOrder.id;
+      if (lastChimedReplacementProposalRef.current !== propId) {
+        lastChimedReplacementProposalRef.current = propId;
+        playAudioBeep('default');
+      }
+    }
+  }, [appMode, pendingReplacementOrder]);
 
   const merchantOrders = orders.filter((o) => {
     if (!currentUser) return false;
@@ -8776,6 +8789,44 @@ export default function App() {
                       </View>
                     </View>
                   </TouchableOpacity>
+
+                  {/* Vibrant Item Replacement Request Card (Always visible on card when pending) */}
+                  {ord.replacementProposal && ord.replacementProposal.status === 'pending' && (
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#FFFBEB',
+                        borderWidth: 1.5,
+                        borderColor: '#F59E0B',
+                        borderRadius: 12,
+                        padding: 12,
+                        marginHorizontal: 12,
+                        marginTop: 10,
+                        marginBottom: 4,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        shadowColor: '#F59E0B',
+                        shadowOffset: { width: 0, height: 2 },
+                        shadowOpacity: 0.15,
+                        shadowRadius: 4,
+                        elevation: 2,
+                      }}
+                      onPress={() => setCustomerDismissedReplacementId(null)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={{ flex: 1, marginRight: 8 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#92400E' }}>
+                          ⚠️ Item Replacement Waiting for You!
+                        </Text>
+                        <Text style={{ fontSize: 11.5, color: '#B45309', marginTop: 2 }}>
+                          {ord.replacementProposal.originalItemName} is out of stock. Proposed: {ord.replacementProposal.substituteProduct?.name}.
+                        </Text>
+                      </View>
+                      <View style={{ backgroundColor: '#F59E0B', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>Review ➔</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
 
                   {/* --- EXPANDABLE FULL ORDER DETAILS DROPDOWN --- */}
                   {isExpanded && (
@@ -15465,16 +15516,25 @@ export default function App() {
       {/* --- CUSTOMER ITEM REPLACEMENT APPROVAL MODAL --- */}
       {/* ========================================================================= */}
       <Modal
-        visible={Boolean(pendingReplacementOrder) && appMode === 'customer' && currentUser?.role !== 'seller'}
+        visible={
+          Boolean(pendingReplacementOrder) &&
+          appMode === 'customer' &&
+          customerDismissedReplacementId !== (pendingReplacementOrder?.replacementProposal?.id || pendingReplacementOrder?.id)
+        }
         animationType="slide"
         transparent={false}
-        onRequestClose={() => {}}
+        onRequestClose={() => {
+          if (pendingReplacementOrder) {
+            setCustomerDismissedReplacementId(pendingReplacementOrder?.replacementProposal?.id || pendingReplacementOrder?.id);
+          }
+        }}
       >
         <SafeAreaView style={styles.modalSafeArea}>
           <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
           {(() => {
             if (!pendingReplacementOrder || !pendingReplacementOrder.replacementProposal) return null;
             const proposal = pendingReplacementOrder.replacementProposal;
+            const proposalUniqueId = proposal.id || pendingReplacementOrder.id;
             const qty = proposal.quantity || 1;
             const origTotal = Number(proposal.originalPrice || 0) * qty;
             const subTotal = Number(proposal.substituteProduct?.price || 0) * qty;
@@ -15487,14 +15547,19 @@ export default function App() {
               <View style={{ flex: 1, backgroundColor: COLORS.beigeBg }}>
                 {/* Header */}
                 <View style={styles.modalHeader}>
-                  <View style={{ width: 40 }} />
+                  <TouchableOpacity
+                    style={styles.modalBackBtn}
+                    onPress={() => setCustomerDismissedReplacementId(proposalUniqueId)}
+                  >
+                    <Text style={styles.modalBackBtnText}>✕ Close</Text>
+                  </TouchableOpacity>
                   <View style={{ alignItems: 'center' }}>
                     <Text style={styles.modalHeaderTitle}>⚠️ Item Update Request</Text>
                     <Text style={styles.modalHeaderSubtitle}>
                       Order #{pendingReplacementOrder.id} • {proposal.storeName || 'Store'}
                     </Text>
                   </View>
-                  <View style={{ width: 40 }} />
+                  <View style={{ width: 60 }} />
                 </View>
 
                 <ScrollView
