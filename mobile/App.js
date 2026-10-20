@@ -12164,6 +12164,7 @@ export default function App() {
                     const stopStatus = getMerchantStopStatus(ord, currentMerchantStore);
                     const isNew = stopStatus === 'New Order';
                     const isPrep = stopStatus === 'Preparing';
+                    const isPreparing = isPrep;
                     const isReady = stopStatus === 'Ready for Pickup';
                     const isDone = stopStatus === 'Completed';
 
