@@ -67,6 +67,9 @@ import {
   notifyOrderDelivered,
   notifyMerchantAcceptanceReminder,
   notifyMerchantPrepReminder,
+  notifyReplacementProposed,
+  notifyReplacementDecision,
+  notifyItemRefunded,
 } from './services/notificationService';
 import { getProductImageSource, matchCatalogImageByName } from './assets/productImages';
 
@@ -1560,6 +1563,15 @@ export default function App() {
   const [authPhone, setAuthPhone] = useState('');
   const [authAddress, setAuthAddress] = useState('Plot 14 Gana Street, Maitama');
   const [authBusinessName, setAuthBusinessName] = useState('');
+
+  // --- CUSTOMER WALLET BALANCE (FOR INSTANT REFUNDS & CHARGES) ---
+  const [customerWalletBalance, setCustomerWalletBalance] = useState(25000); // Live testing wallet credit (₦25,000)
+
+  // --- OUT OF STOCK & SMART PRODUCT SUBSTITUTION STATE ---
+  const [replaceModalVisible, setReplaceModalVisible] = useState(false);
+  const [itemToReplaceContext, setItemToReplaceContext] = useState(null); // { order, item, stop }
+  const [replaceSearchQuery, setReplaceSearchQuery] = useState('');
+  const [replaceCategoryFilter, setReplaceCategoryFilter] = useState('ALL');
 
   // --- STORE OPERATING SCHEDULE & TIMING STATE ---
   const [timingModalVisible, setTimingModalVisible] = useState(false);
@@ -5060,6 +5072,15 @@ export default function App() {
     return ord.status || 'New Order';
   };
 
+  const pendingReplacementOrder = orders.find(
+    (o) =>
+      o.replacementProposal &&
+      o.replacementProposal.status === 'pending' &&
+      o.status !== 'Cancelled' &&
+      o.status !== 'Delivered' &&
+      o.status !== 'Completed'
+  );
+
   const merchantOrders = orders.filter((o) => {
     if (!currentUser) return false;
 
@@ -5525,6 +5546,383 @@ export default function App() {
       storeId: targetStoreId,
       productObj: targetProduct,
     }).catch((e) => console.log('Supabase inventory stock update error:', e?.message));
+  };
+
+  const setProductOutOfStock = (productId) => {
+    if (!productId) return;
+    const targetStoreId = currentMerchantStore?.id || merchantStoreId;
+    let targetProduct = null;
+
+    updateAndPersistStores((prev) =>
+      prev.map((store) => {
+        if (store.id === targetStoreId) {
+          const currentProd = (store.products || []).find((p) => p.id === productId);
+          targetProduct = currentProd;
+          return {
+            ...store,
+            products: (store.products || []).map((p) =>
+              p.id === productId ? { ...p, outOfStock: true } : p
+            ),
+          };
+        }
+        return store;
+      })
+    );
+
+    setSelectedStore((prev) => {
+      if (!prev || prev.id !== targetStoreId) return prev;
+      return {
+        ...prev,
+        products: (prev.products || []).map((p) =>
+          p.id === productId ? { ...p, outOfStock: true } : p
+        ),
+      };
+    });
+
+    updateStoreInventoryItem(productId, {
+      outOfStock: true,
+      storeId: targetStoreId,
+      productObj: targetProduct,
+    }).catch((e) => console.log('Supabase inventory stock update error:', e?.message));
+  };
+
+  const handleOpenReplaceModal = (order, item, stop) => {
+    setItemToReplaceContext({ order, item, stop });
+    setReplaceSearchQuery('');
+    setReplaceCategoryFilter(item.category || 'ALL');
+    setReplaceModalVisible(true);
+  };
+
+  const handleDirectRefundItem = () => {
+    if (!itemToReplaceContext) return;
+    const { order, item, stop } = itemToReplaceContext;
+    const qty = Number(item.qty) || 1;
+    const refundAmount = Number(item.price) * qty;
+
+    // 1. Mark product as out-of-stock in merchant catalog
+    setProductOutOfStock(item.id || item.productId);
+
+    // 2. Refund amount to customer wallet balance
+    setCustomerWalletBalance((prev) => prev + refundAmount);
+
+    // 3. Update order in state & recalculate totals
+    let updatedOrderObj = null;
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === order.id) {
+          const updatedItems = (o.items || []).map((it) => {
+            if ((it.id && it.id === item.id) || it.name === item.name) {
+              return { ...it, status: 'refunded', refunded: true, refundAmount };
+            }
+            return it;
+          });
+
+          const activeSubtotal = updatedItems.reduce(
+            (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+            0
+          );
+          const activeTotal = activeSubtotal + (Number(o.deliveryFee) || 0);
+
+          let updatedStops = o.stops;
+          if (Array.isArray(o.stops) && o.stops.length > 0) {
+            updatedStops = o.stops.map((st) => {
+              if (stop && (st.storeId === stop.storeId || st.storeName === stop.storeName)) {
+                const stopItems = (st.items || []).map((it) => {
+                  if ((it.id && it.id === item.id) || it.name === item.name) {
+                    return { ...it, status: 'refunded', refunded: true, refundAmount };
+                  }
+                  return it;
+                });
+                const stopSub = stopItems.reduce(
+                  (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+                  0
+                );
+                return { ...st, items: stopItems, subtotal: stopSub };
+              }
+              return st;
+            });
+          }
+
+          updatedOrderObj = {
+            ...o,
+            items: updatedItems,
+            subtotal: activeSubtotal,
+            total: activeTotal,
+            stops: updatedStops,
+            replacementProposal: null,
+          };
+          return updatedOrderObj;
+        }
+        return o;
+      })
+    );
+
+    // 4. Send customer in-app notification & push
+    notifyItemRefunded(order, item, refundAmount);
+
+    // 5. Update database & WebSocket
+    if (updatedOrderObj) {
+      updateDatabaseOrderStatus(order.id, {
+        items: updatedOrderObj.items,
+        subtotal: updatedOrderObj.subtotal,
+        total: updatedOrderObj.total,
+        stops: updatedOrderObj.stops,
+      }).catch(() => {});
+    }
+
+    setReplaceModalVisible(false);
+    setItemToReplaceContext(null);
+    Alert.alert(
+      'Item Refunded ✅',
+      `${item.name} has been marked Out of Stock and ${formatNaira(refundAmount)} was credited to the customer's wallet. Please proceed with preparing remaining items.`
+    );
+  };
+
+  const handleProposeSubstitute = (substituteProduct) => {
+    if (!itemToReplaceContext || !substituteProduct) return;
+    const { order, item } = itemToReplaceContext;
+    const qty = Number(item.qty) || 1;
+    const priceDiff = (Number(substituteProduct.price) - Number(item.price)) * qty;
+
+    // 1. Mark original product as out-of-stock in merchant catalog
+    setProductOutOfStock(item.id || item.productId);
+
+    const proposal = {
+      id: 'rep_' + Date.now(),
+      originalItemId: item.id || item.productId,
+      originalItemName: item.name,
+      originalPrice: Number(item.price),
+      quantity: qty,
+      substituteProduct: {
+        id: substituteProduct.id,
+        name: substituteProduct.name,
+        price: Number(substituteProduct.price),
+        image: substituteProduct.image,
+        imageUrl: substituteProduct.imageUrl,
+        category: substituteProduct.category,
+      },
+      priceDiff,
+      unitDiff: Number(substituteProduct.price) - Number(item.price),
+      status: 'pending',
+      proposedAt: Date.now(),
+      storeId: currentMerchantStore?.id || order.storeId,
+      storeName: currentMerchantStore?.name || order.storeName,
+    };
+
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === order.id) {
+          return {
+            ...o,
+            replacementProposal: proposal,
+          };
+        }
+        return o;
+      })
+    );
+
+    // Alert buyer with push and real-time modal trigger
+    notifyReplacementProposed(order, item, substituteProduct, priceDiff);
+
+    updateDatabaseOrderStatus(order.id, {
+      replacementProposal: proposal,
+    }).catch(() => {});
+
+    setReplaceModalVisible(false);
+    setItemToReplaceContext(null);
+
+    Alert.alert(
+      'Replacement Sent 🚀',
+      `Proposal to replace "${item.name}" with "${substituteProduct.name}" has been sent to the customer. You will be notified once they review it!`
+    );
+  };
+
+  const handleCustomerAcceptReplacement = (order) => {
+    if (!order?.replacementProposal) return;
+    const proposal = order.replacementProposal;
+    const qty = proposal.quantity || 1;
+    const priceDiff = Number(proposal.priceDiff) || 0;
+
+    // Financial reconciliation
+    if (priceDiff < 0) {
+      // Substitute is cheaper -> refund difference to wallet
+      const refundDiff = Math.abs(priceDiff);
+      setCustomerWalletBalance((prev) => prev + refundDiff);
+    } else if (priceDiff > 0) {
+      // Substitute is more expensive -> charge difference from wallet
+      setCustomerWalletBalance((prev) => Math.max(0, prev - priceDiff));
+    }
+
+    let updatedOrderObj = null;
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === order.id) {
+          const updatedItems = (o.items || []).map((it) => {
+            if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
+              return {
+                ...it,
+                id: proposal.substituteProduct.id,
+                name: proposal.substituteProduct.name,
+                price: proposal.substituteProduct.price,
+                qty,
+                replaced: true,
+                originalName: proposal.originalItemName,
+                status: 'replaced',
+              };
+            }
+            return it;
+          });
+
+          const activeSubtotal = updatedItems.reduce(
+            (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+            0
+          );
+          const activeTotal = activeSubtotal + (Number(o.deliveryFee) || 0);
+
+          let updatedStops = o.stops;
+          if (Array.isArray(o.stops) && o.stops.length > 0) {
+            updatedStops = o.stops.map((st) => {
+              const stopItems = (st.items || []).map((it) => {
+                if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
+                  return {
+                    ...it,
+                    id: proposal.substituteProduct.id,
+                    name: proposal.substituteProduct.name,
+                    price: proposal.substituteProduct.price,
+                    qty,
+                    replaced: true,
+                    originalName: proposal.originalItemName,
+                    status: 'replaced',
+                  };
+                }
+                return it;
+              });
+              const stopSub = stopItems.reduce(
+                (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+                0
+              );
+              return { ...st, items: stopItems, subtotal: stopSub };
+            });
+          }
+
+          updatedOrderObj = {
+            ...o,
+            items: updatedItems,
+            subtotal: activeSubtotal,
+            total: activeTotal,
+            stops: updatedStops,
+            replacementProposal: { ...proposal, status: 'accepted' },
+          };
+          return updatedOrderObj;
+        }
+        return o;
+      })
+    );
+
+    notifyReplacementDecision(order, proposal.substituteProduct, true);
+
+    if (updatedOrderObj) {
+      updateDatabaseOrderStatus(order.id, {
+        items: updatedOrderObj.items,
+        subtotal: updatedOrderObj.subtotal,
+        total: updatedOrderObj.total,
+        stops: updatedOrderObj.stops,
+        replacementProposal: { ...proposal, status: 'accepted' },
+      }).catch(() => {});
+    }
+
+    const feedbackMsg = priceDiff < 0
+      ? `Replacement approved! ${formatNaira(Math.abs(priceDiff))} price difference was refunded to your wallet.`
+      : priceDiff > 0
+      ? `Replacement approved! Paid ${formatNaira(priceDiff)} from wallet.`
+      : `Replacement approved! Store will package ${proposal.substituteProduct.name}.`;
+
+    Alert.alert('Replacement Accepted ✅', feedbackMsg);
+  };
+
+  const handleCustomerDeclineReplacement = (order) => {
+    if (!order?.replacementProposal) return;
+    const proposal = order.replacementProposal;
+    const qty = proposal.quantity || 1;
+    const refundAmount = Number(proposal.originalPrice) * qty;
+
+    // Refund full original item amount to customer wallet
+    setCustomerWalletBalance((prev) => prev + refundAmount);
+
+    let updatedOrderObj = null;
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === order.id) {
+          const updatedItems = (o.items || []).map((it) => {
+            if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
+              return {
+                ...it,
+                status: 'refunded',
+                refunded: true,
+                refundAmount,
+              };
+            }
+            return it;
+          });
+
+          const activeSubtotal = updatedItems.reduce(
+            (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+            0
+          );
+          const activeTotal = activeSubtotal + (Number(o.deliveryFee) || 0);
+
+          let updatedStops = o.stops;
+          if (Array.isArray(o.stops) && o.stops.length > 0) {
+            updatedStops = o.stops.map((st) => {
+              const stopItems = (st.items || []).map((it) => {
+                if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
+                  return {
+                    ...it,
+                    status: 'refunded',
+                    refunded: true,
+                    refundAmount,
+                  };
+                }
+                return it;
+              });
+              const stopSub = stopItems.reduce(
+                (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+                0
+              );
+              return { ...st, items: stopItems, subtotal: stopSub };
+            });
+          }
+
+          updatedOrderObj = {
+            ...o,
+            items: updatedItems,
+            subtotal: activeSubtotal,
+            total: activeTotal,
+            stops: updatedStops,
+            replacementProposal: { ...proposal, status: 'declined' },
+          };
+          return updatedOrderObj;
+        }
+        return o;
+      })
+    );
+
+    notifyReplacementDecision(order, proposal.substituteProduct, false);
+
+    if (updatedOrderObj) {
+      updateDatabaseOrderStatus(order.id, {
+        items: updatedOrderObj.items,
+        subtotal: updatedOrderObj.subtotal,
+        total: updatedOrderObj.total,
+        stops: updatedOrderObj.stops,
+        replacementProposal: { ...proposal, status: 'declined' },
+      }).catch(() => {});
+    }
+
+    Alert.alert(
+      'Replacement Declined ❌',
+      `Full refund of ${formatNaira(refundAmount)} has been credited to your wallet balance. Remaining order items will be prepared and delivered.`
+    );
   };
 
   const handleOpenEditProduct = (prod) => {
@@ -11464,15 +11862,105 @@ export default function App() {
 
                         {/* Items ordered */}
                         <View style={styles.mItemsList}>
-                          {((matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items)?.map((it, idx) => (
-                            <View key={idx} style={styles.mItemRow}>
-                              <Text style={styles.mItemIcon}>{it.icon || '🛍️'}</Text>
-                              <Text style={styles.mItemName}>
-                                {it.name} <Text style={{ fontWeight: '800', color: COLORS.emeraldDeep }}>x{it.qty}</Text>
-                              </Text>
-                              <Text style={styles.mItemPrice}>{formatNaira(it.price * it.qty)}</Text>
-                            </View>
-                          )) || (
+                          {((matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items)?.map((it, idx) => {
+                            const isRefunded = it.refunded || it.status === 'refunded';
+                            const isReplaced = it.replaced || it.status === 'replaced';
+                            const isPending =
+                              ord.replacementProposal &&
+                              ord.replacementProposal.status === 'pending' &&
+                              ((it.id && it.id === ord.replacementProposal.originalItemId) || it.name === ord.replacementProposal.originalItemName);
+
+                            return (
+                              <View
+                                key={idx}
+                                style={[
+                                  styles.mItemRow,
+                                  {
+                                    flexDirection: 'column',
+                                    alignItems: 'stretch',
+                                    paddingVertical: 8,
+                                    borderBottomWidth: idx < (((matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items).length - 1) ? 1 : 0,
+                                    borderBottomColor: '#F1F5F9',
+                                  },
+                                ]}
+                              >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                    <Text style={styles.mItemIcon}>{it.icon || '🛍️'}</Text>
+                                    <Text
+                                      style={[
+                                        styles.mItemName,
+                                        isRefunded && { textDecorationLine: 'line-through', color: '#9CA3AF' },
+                                      ]}
+                                    >
+                                      {it.name}{' '}
+                                      <Text style={{ fontWeight: '800', color: isRefunded ? '#9CA3AF' : COLORS.emeraldDeep }}>
+                                        x{it.qty}
+                                      </Text>
+                                    </Text>
+                                  </View>
+                                  <Text
+                                    style={[
+                                      styles.mItemPrice,
+                                      isRefunded && { textDecorationLine: 'line-through', color: '#9CA3AF' },
+                                    ]}
+                                  >
+                                    {formatNaira(it.price * it.qty)}
+                                  </Text>
+                                </View>
+
+                                {/* Badges */}
+                                {isRefunded && (
+                                  <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#DC2626', backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                      ❌ Out of Stock • Refunded to Buyer Wallet
+                                    </Text>
+                                  </View>
+                                )}
+
+                                {isPending && (
+                                  <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#D97706', backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                      ⏳ Substitute Offered: {ord.replacementProposal.substituteProduct?.name} (Awaiting Buyer Approval)
+                                    </Text>
+                                  </View>
+                                )}
+
+                                {isReplaced && (
+                                  <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#047857', backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                      ✅ Swapped with: {it.name} (Approved by Customer)
+                                    </Text>
+                                  </View>
+                                )}
+
+                                {/* Out of Stock / Replace Trigger Button for Store Owner */}
+                                {(isNew || isPreparing) && !isRefunded && !isPending && (
+                                  <TouchableOpacity
+                                    style={{
+                                      marginTop: 6,
+                                      alignSelf: 'flex-start',
+                                      flexDirection: 'row',
+                                      alignItems: 'center',
+                                      gap: 4,
+                                      backgroundColor: '#FEF2F2',
+                                      borderWidth: 1,
+                                      borderColor: '#FECACA',
+                                      paddingHorizontal: 10,
+                                      paddingVertical: 5,
+                                      borderRadius: 6,
+                                    }}
+                                    onPress={() => handleOpenReplaceModal(ord, it, matchingStop)}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#B91C1C' }}>
+                                      🔄 Out of Stock / Replace
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            );
+                          }) || (
                             <Text style={styles.mItemRow}>Packaged provisions ({ord.itemsCount} items)</Text>
                           )}
                         </View>
@@ -12425,6 +12913,313 @@ export default function App() {
               </TouchableOpacity>
             </View>
           </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* --- MERCHANT OUT OF STOCK & SMART PRODUCT SUBSTITUTION MODAL --- */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={replaceModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => {
+          setReplaceModalVisible(false);
+          setItemToReplaceContext(null);
+        }}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+          {(() => {
+            const ctx = itemToReplaceContext;
+            const targetItem = ctx?.item;
+            const targetOrder = ctx?.order;
+            const targetQty = Number(targetItem?.qty) || 1;
+            const activeStore = currentMerchantStore || storesList.find((s) => s.id === merchantStoreId);
+            const allStoreProds = (activeStore?.products || []).filter(
+              (p) => !p.outOfStock && p.id !== (targetItem?.id || targetItem?.productId) && p.name !== targetItem?.name
+            );
+
+            const filteredProds = allStoreProds.filter((p) => {
+              const matchesSearch =
+                !replaceSearchQuery.trim() ||
+                p.name.toLowerCase().includes(replaceSearchQuery.toLowerCase()) ||
+                (p.category && p.category.toLowerCase().includes(replaceSearchQuery.toLowerCase()));
+              const matchesCategory =
+                replaceCategoryFilter === 'ALL' ||
+                (p.category && targetItem?.category && p.category.toLowerCase() === targetItem.category.toLowerCase());
+              return matchesSearch && matchesCategory;
+            });
+
+            return (
+              <View style={{ flex: 1, backgroundColor: COLORS.beigeBg }}>
+                {/* Header */}
+                <View style={styles.modalHeader}>
+                  <TouchableOpacity
+                    style={styles.modalBackBtn}
+                    onPress={() => {
+                      setReplaceModalVisible(false);
+                      setItemToReplaceContext(null);
+                    }}
+                  >
+                    <Text style={styles.modalBackBtnText}>✕ Close</Text>
+                  </TouchableOpacity>
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={styles.modalHeaderTitle}>🔄 Out of Stock & Replace</Text>
+                    <Text style={styles.modalHeaderSubtitle}>
+                      Order #{targetOrder?.id || ''}
+                    </Text>
+                  </View>
+                  <View style={{ width: 60 }} />
+                </View>
+
+                <ScrollView
+                  style={{ flex: 1 }}
+                  contentContainerStyle={{ padding: 16, paddingBottom: 60 }}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {/* Missing Product Banner */}
+                  <View
+                    style={{
+                      backgroundColor: '#FEF2F2',
+                      borderWidth: 1.5,
+                      borderColor: '#FECACA',
+                      borderRadius: 12,
+                      padding: 14,
+                      marginBottom: 16,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#B91C1C', textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                        Item Finished On Shelf
+                      </Text>
+                      <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#DC2626' }}>❌ Out of Stock</Text>
+                      </View>
+                    </View>
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#1F2937' }}>
+                      {targetItem?.name}{' '}
+                      <Text style={{ color: COLORS.emeraldDeep }}>x{targetQty}</Text>
+                    </Text>
+                    <Text style={{ fontSize: 13, color: '#4B5563', marginTop: 2 }}>
+                      Value: <Text style={{ fontWeight: '700', color: '#111827' }}>{formatNaira(Number(targetItem?.price || 0) * targetQty)}</Text>
+                      {targetItem?.category ? ` • Category: ${targetItem.category}` : ''}
+                    </Text>
+                  </View>
+
+                  {/* Option 1: Direct Refund (No Substitute) */}
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      borderWidth: 1.5,
+                      borderColor: '#E2E8F0',
+                      borderRadius: 12,
+                      padding: 14,
+                      marginBottom: 20,
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 1 },
+                      shadowOpacity: 0.05,
+                      shadowRadius: 2,
+                      elevation: 1,
+                    }}
+                    onPress={handleDirectRefundItem}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flex: 1, marginRight: 10 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: '#DC2626' }}>
+                          ❌ Direct Refund — No Substitute Available
+                        </Text>
+                        <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 3, lineHeight: 16 }}>
+                          Immediately refunds {formatNaira(Number(targetItem?.price || 0) * targetQty)} to customer wallet and pack remaining items.
+                        </Text>
+                      </View>
+                      <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#B91C1C' }}>Refund ➔</Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Section Divider: Propose Substitute */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 12 }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: '#CBD5E1' }} />
+                    <Text style={{ paddingHorizontal: 12, fontSize: 11, fontWeight: '800', color: '#64748B', letterSpacing: 0.8 }}>
+                      OR PROPOSE AN IN-STOCK SUBSTITUTE
+                    </Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: '#CBD5E1' }} />
+                  </View>
+
+                  {/* Live Search Bar */}
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#FFFFFF',
+                      borderWidth: 1,
+                      borderColor: '#CBD5E1',
+                      borderRadius: 10,
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      marginBottom: 10,
+                    }}
+                  >
+                    <Text style={{ fontSize: 14, marginRight: 8 }}>🔍</Text>
+                    <TextInput
+                      style={{ flex: 1, fontSize: 13, color: '#0F172A', paddingVertical: 2 }}
+                      placeholder="Search store inventory for replacement..."
+                      placeholderTextColor="#94A3B8"
+                      value={replaceSearchQuery}
+                      onChangeText={setReplaceSearchQuery}
+                      autoCorrect={false}
+                    />
+                    {replaceSearchQuery.length > 0 && (
+                      <TouchableOpacity onPress={() => setReplaceSearchQuery('')}>
+                        <Text style={{ fontSize: 14, color: '#94A3B8', paddingHorizontal: 4 }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Category Filter Chips */}
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+                    <TouchableOpacity
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        borderRadius: 20,
+                        backgroundColor: replaceCategoryFilter === 'ALL' ? COLORS.emeraldDeep : '#E2E8F0',
+                      }}
+                      onPress={() => setReplaceCategoryFilter('ALL')}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontWeight: '700',
+                          color: replaceCategoryFilter === 'ALL' ? '#FFFFFF' : '#475569',
+                        }}
+                      >
+                        All In-Stock ({allStoreProds.length})
+                      </Text>
+                    </TouchableOpacity>
+
+                    {targetItem?.category && (
+                      <TouchableOpacity
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: 20,
+                          backgroundColor: replaceCategoryFilter !== 'ALL' ? COLORS.emeraldDeep : '#E2E8F0',
+                        }}
+                        onPress={() => setReplaceCategoryFilter(targetItem.category)}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 11,
+                            fontWeight: '700',
+                            color: replaceCategoryFilter !== 'ALL' ? '#FFFFFF' : '#475569',
+                          }}
+                        >
+                          ⭐ Same Category: {targetItem.category}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* List of Substitutes */}
+                  {filteredProds.length === 0 ? (
+                    <View style={{ alignItems: 'center', paddingVertical: 30, backgroundColor: '#FFFFFF', borderRadius: 12 }}>
+                      <Text style={{ fontSize: 24, marginBottom: 6 }}>📦</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748B' }}>
+                        No in-stock items found matching "{replaceSearchQuery}"
+                      </Text>
+                      <TouchableOpacity
+                        style={{ marginTop: 10, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#F1F5F9', borderRadius: 6 }}
+                        onPress={() => {
+                          setReplaceSearchQuery('');
+                          setReplaceCategoryFilter('ALL');
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: COLORS.emeraldDeep }}>Show All Store Items</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    filteredProds.map((p) => {
+                      const origUnitPrice = Number(targetItem?.price) || 0;
+                      const subUnitPrice = Number(p.price) || 0;
+                      const unitDiff = subUnitPrice - origUnitPrice;
+                      const totalDiff = unitDiff * targetQty;
+                      const isExactPrice = unitDiff === 0;
+                      const isCheaper = unitDiff < 0;
+                      const isMoreExp = unitDiff > 0;
+
+                      return (
+                        <View
+                          key={p.id}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: '#FFFFFF',
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                            borderRadius: 12,
+                            padding: 12,
+                            marginBottom: 8,
+                            shadowColor: '#000',
+                            shadowOffset: { width: 0, height: 1 },
+                            shadowOpacity: 0.03,
+                            shadowRadius: 2,
+                            elevation: 1,
+                          }}
+                        >
+                          <View style={{ flex: 1, marginRight: 10 }}>
+                            <Text style={{ fontSize: 14, fontWeight: '800', color: '#1E293B' }}>{p.name}</Text>
+                            <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                              {formatNaira(subUnitPrice * targetQty)} {targetQty > 1 ? `(${formatNaira(subUnitPrice)} ea)` : ''}
+                              {p.category ? ` • ${p.category}` : ''}
+                            </Text>
+
+                            {/* Price Difference Indicator Chip */}
+                            <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
+                              {isExactPrice && (
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#475569', backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                  ⚖️ Exact Same Price
+                                </Text>
+                              )}
+                              {isCheaper && (
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#047857', backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                  🎉 -{formatNaira(Math.abs(totalDiff))} Refund to Buyer
+                                </Text>
+                              )}
+                              {isMoreExp && (
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#B45309', backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                  ⚠️ +{formatNaira(totalDiff)} Extra (Buyer Approves)
+                                </Text>
+                              )}
+                            </View>
+                          </View>
+
+                          <TouchableOpacity
+                            style={{
+                              backgroundColor: COLORS.emeraldDeep,
+                              paddingHorizontal: 14,
+                              paddingVertical: 8,
+                              borderRadius: 8,
+                            }}
+                            onPress={() => handleProposeSubstitute(p)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
+                              Propose ➔
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })
+                  )}
+                </ScrollView>
+              </View>
+            );
+          })()}
         </SafeAreaView>
       </Modal>
 
@@ -14663,6 +15458,240 @@ export default function App() {
               </TouchableOpacity>
             </View>
           </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* --- CUSTOMER ITEM REPLACEMENT APPROVAL MODAL --- */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={Boolean(pendingReplacementOrder) && appMode === 'customer' && currentUser?.role !== 'seller'}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => {}}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+          {(() => {
+            if (!pendingReplacementOrder || !pendingReplacementOrder.replacementProposal) return null;
+            const proposal = pendingReplacementOrder.replacementProposal;
+            const qty = proposal.quantity || 1;
+            const origTotal = Number(proposal.originalPrice || 0) * qty;
+            const subTotal = Number(proposal.substituteProduct?.price || 0) * qty;
+            const priceDiff = Number(proposal.priceDiff) || 0;
+            const isMoreExpensive = priceDiff > 0;
+            const isLessExpensive = priceDiff < 0;
+            const isSamePrice = priceDiff === 0;
+
+            return (
+              <View style={{ flex: 1, backgroundColor: COLORS.beigeBg }}>
+                {/* Header */}
+                <View style={styles.modalHeader}>
+                  <View style={{ width: 40 }} />
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={styles.modalHeaderTitle}>⚠️ Item Update Request</Text>
+                    <Text style={styles.modalHeaderSubtitle}>
+                      Order #{pendingReplacementOrder.id} • {proposal.storeName || 'Store'}
+                    </Text>
+                  </View>
+                  <View style={{ width: 40 }} />
+                </View>
+
+                <ScrollView
+                  style={{ flex: 1 }}
+                  contentContainerStyle={{ padding: 18, paddingBottom: 40 }}
+                >
+                  {/* Store Notice Card */}
+                  <View
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 14,
+                      padding: 16,
+                      marginBottom: 16,
+                      borderLeftWidth: 5,
+                      borderLeftColor: isMoreExpensive ? '#F59E0B' : COLORS.emeraldDeep,
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: 0.05,
+                      shadowRadius: 3,
+                      elevation: 2,
+                    }}
+                  >
+                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A', marginBottom: 4 }}>
+                      {proposal.storeName || 'The store'} is packing your order
+                    </Text>
+                    <Text style={{ fontSize: 13, color: '#475569', lineHeight: 18 }}>
+                      One of your ordered items is currently out of stock on their shelves. They have proposed an in-stock replacement for your approval.
+                    </Text>
+                  </View>
+
+                  {/* 1. Out of Stock Item Box */}
+                  <View
+                    style={{
+                      backgroundColor: '#FEF2F2',
+                      borderWidth: 1.5,
+                      borderColor: '#FECACA',
+                      borderRadius: 14,
+                      padding: 14,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#DC2626', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        ❌ Out of Stock
+                      </Text>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#991B1B' }}>
+                        {formatNaira(origTotal)}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#1F2937' }}>
+                      {proposal.originalItemName} <Text style={{ color: '#DC2626', fontWeight: '800' }}>x{qty}</Text>
+                    </Text>
+                    {qty > 1 && (
+                      <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>
+                        {formatNaira(proposal.originalPrice)} each
+                      </Text>
+                    )}
+                  </View>
+
+                  {/* Downward indicator */}
+                  <View style={{ alignItems: 'center', marginVertical: 6 }}>
+                    <Text style={{ fontSize: 18, color: '#64748B' }}>⬇️</Text>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', letterSpacing: 0.5, marginTop: 2 }}>
+                      PROPOSED SUBSTITUTE
+                    </Text>
+                  </View>
+
+                  {/* 2. Proposed Replacement Box */}
+                  <View
+                    style={{
+                      backgroundColor: '#F0FDF4',
+                      borderWidth: 1.5,
+                      borderColor: '#BBF7D0',
+                      borderRadius: 14,
+                      padding: 14,
+                      marginBottom: 16,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: COLORS.emeraldDeep, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        🔄 Proposed Replacement
+                      </Text>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: COLORS.emeraldDeep }}>
+                        {formatNaira(subTotal)}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#064E3B' }}>
+                      {proposal.substituteProduct?.name} <Text style={{ color: COLORS.emeraldDeep, fontWeight: '800' }}>x{qty}</Text>
+                    </Text>
+                    {qty > 1 && (
+                      <Text style={{ fontSize: 11, color: '#4B5563', marginTop: 2 }}>
+                        {formatNaira(proposal.substituteProduct?.price)} each
+                      </Text>
+                    )}
+
+                    {/* Occasion Banners */}
+                    {isMoreExpensive && (
+                      <View
+                        style={{
+                          marginTop: 10,
+                          backgroundColor: '#FFFBEB',
+                          borderWidth: 1,
+                          borderColor: '#FDE68A',
+                          borderRadius: 8,
+                          padding: 10,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#92400E', lineHeight: 16 }}>
+                          ℹ️ This replacement is {formatNaira(priceDiff)} more than your original item.
+                        </Text>
+                      </View>
+                    )}
+
+                    {isLessExpensive && (
+                      <View
+                        style={{
+                          marginTop: 10,
+                          backgroundColor: '#ECFDF5',
+                          borderWidth: 1,
+                          borderColor: '#A7F3D0',
+                          borderRadius: 8,
+                          padding: 10,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#065F46', lineHeight: 16 }}>
+                          🎉 Accepting will immediately refund {formatNaira(Math.abs(priceDiff))} to your GETIT wallet!
+                        </Text>
+                      </View>
+                    )}
+
+                    {isSamePrice && (
+                      <View
+                        style={{
+                          marginTop: 10,
+                          backgroundColor: '#F8FAFC',
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          borderRadius: 8,
+                          padding: 10,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', lineHeight: 16 }}>
+                          ⚖️ Same exact price. No extra charge.
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Action 1: Accept Replacement Button */}
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: COLORS.emeraldDeep,
+                      borderRadius: 14,
+                      paddingVertical: 16,
+                      paddingHorizontal: 16,
+                      alignItems: 'center',
+                      marginBottom: 10,
+                      shadowColor: COLORS.emeraldDeep,
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.3,
+                      shadowRadius: 6,
+                      elevation: 4,
+                    }}
+                    onPress={() => handleCustomerAcceptReplacement(pendingReplacementOrder)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#FFFFFF', textAlign: 'center' }}>
+                      {isMoreExpensive
+                        ? `✅ Accept Replacement (Pay +${formatNaira(priceDiff)})`
+                        : isLessExpensive
+                        ? `✅ Accept (Refund ${formatNaira(Math.abs(priceDiff))} to Wallet)`
+                        : '✅ Accept Replacement'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Action 2: Decline & Refund Button */}
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      borderWidth: 1.5,
+                      borderColor: '#FECACA',
+                      borderRadius: 14,
+                      paddingVertical: 14,
+                      paddingHorizontal: 16,
+                      alignItems: 'center',
+                    }}
+                    onPress={() => handleCustomerDeclineReplacement(pendingReplacementOrder)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#DC2626', textAlign: 'center' }}>
+                      ❌ Decline & Refund {formatNaira(origTotal)} to Wallet
+                    </Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </View>
+            );
+          })()}
         </SafeAreaView>
       </Modal>
 

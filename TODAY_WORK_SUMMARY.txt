@@ -721,6 +721,29 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - Robust Store Resolution Fix:
      * Fixed store stop matching in `getMerchantStopForOrder` to compare IDs and names with strict whitespace trimming and string coercion, preventing multi-store orders from accidentally defaulting to another shop's stop status.
 
+26. Out-of-Stock Item Management, Smart Substitution Engine, & 1-Tap Customer Approval / Wallet Refund Suite:
+   - Problem Solved:
+     * When a store owner receives an incoming order and discovers an ordered item is physically finished on their shelf (e.g., they forgot to mark it as out-of-stock earlier), canceling the entire order hurts customer trust and loses merchant revenue.
+   - Merchant-Side Solution:
+     * Interactive `[ 🔄 Out of Stock / Replace ]` button added directly to each item row on active orders in `New Order` or `Preparing` mode.
+     * Tapping opens the luxury `Merchant Out of Stock & Smart Product Substitution Modal`:
+       - Option 1 (Direct Refund): Tap `[ ❌ Direct Refund — No Substitute Available ]` to immediately refund the item amount to the customer's wallet balance, mark the product Out of Stock in the merchant catalog, recalculate order totals, notify the customer, and proceed with preparing remaining items.
+       - Option 2 (Smart Substitution):
+         * Automatically displays same-category in-stock items with filter chips (`All In-Stock` vs `⭐ Same Category: ...`).
+         * Instant live search bar (`🔍 Search store inventory for replacement...`).
+         * Dynamically displays price difference indicators: `⚖️ Exact Same Price`, `🎉 -₦... Refund to Buyer`, or `⚠️ +₦... Extra (Buyer Approves)`.
+         * Tapping `[ Propose ➔ ]` marks the original product Out of Stock in the catalog, creates a `replacementProposal` record on the order, sends an in-app and push notification to the customer, and syncs to Supabase.
+   - Customer-Side Solution:
+     * Real-time `Customer Item Replacement Approval Modal` automatically pops up when an active order has a pending replacement proposal.
+     * Handles all 3 pricing occasions in a single screen with 1-tap resolution:
+       - Occasion 1 (More Expensive): Explains price difference (`ℹ️ This replacement is ₦... more than your original item`), and provides 1-tap `[ ✅ Accept Replacement (Pay +₦... from Wallet) ]` and `[ ❌ Decline & Refund Full Amount to Wallet ]`.
+       - Occasion 2 (Less Expensive): Highlights instant refund (`🎉 Accepting will immediately refund ₦... to your GETIT wallet!`), and provides 1-tap `[ ✅ Accept (Refund ₦... to Wallet) ]` and `[ ❌ Decline & Refund Full Amount to Wallet ]`.
+       - Occasion 3 (Same Price): Shows `⚖️ Same exact price. No extra charge`, with 1-tap `[ ✅ Accept Replacement ]` and `[ ❌ Decline & Refund Full Amount to Wallet ]`.
+     * If accepted: Swaps product in order items, reconciles customer wallet balance, recalculates totals, notifies merchant, and syncs to database.
+     * If declined: Refunds full item amount to customer wallet balance, marks item as refunded, recalculates totals, notifies merchant to pack remaining items, and syncs to database.
+   - Catalog Auto-Protection:
+     * In both direct refund and replacement proposal, `setProductOutOfStock(productId)` automatically flags the finished product as `outOfStock: true` in the store catalog and Supabase, preventing future customers from ordering the missing product today.
+
 ================================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ================================================================================

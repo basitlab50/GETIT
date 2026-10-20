@@ -420,3 +420,62 @@ export function notifyMerchantPrepReminder(order, count = 1) {
     },
   });
 }
+
+// H. Item Replacement Proposed (Strictly for buyer)
+export function notifyReplacementProposed(order, originalItem, substituteProduct, priceDiff = 0) {
+  const storeName = order.storeName || order.store_name || 'Store';
+  const diffNote = priceDiff > 0
+    ? `(+₦${Math.abs(priceDiff).toLocaleString()})`
+    : priceDiff < 0
+    ? `(₦${Math.abs(priceDiff).toLocaleString()} refund!)`
+    : '(same price)';
+
+  triggerNotification({
+    title: `⚠️ ${storeName}: Item Replacement Request`,
+    body: `${originalItem.name} is out of stock. They proposed ${substituteProduct.name} ${diffNote}. Tap to review!`,
+    type: 'default',
+    data: {
+      orderId: order.id,
+      audience: 'buyer',
+      role: 'customer',
+      customerId: order.customerId || order.customer_id,
+    },
+  });
+}
+
+// I. Customer Replacement Decision (Strictly for merchant)
+export function notifyReplacementDecision(order, substituteProduct, accepted = true) {
+  const title = accepted ? '✅ Replacement Approved!' : '❌ Replacement Declined';
+  const body = accepted
+    ? `Customer approved ${substituteProduct?.name || 'replacement item'}. Please package order!`
+    : `Customer declined replacement. Item refunded to wallet. Please pack remaining items.`;
+
+  triggerNotification({
+    title,
+    body,
+    type: 'merchant_new_order',
+    data: {
+      orderId: order.id,
+      status: 'Preparing',
+      audience: 'merchant',
+      role: 'merchant',
+      storeId: order.storeId || order.store_id,
+    },
+  });
+}
+
+// J. Item Out of Stock & Direct Refund (Strictly for buyer)
+export function notifyItemRefunded(order, item, refundAmount) {
+  const storeName = order.storeName || order.store_name || 'Store';
+  triggerNotification({
+    title: `⚠️ ${storeName}: Item Refunded`,
+    body: `${item.name} was out of stock. Full refund of ₦${Number(refundAmount).toLocaleString()} credited to your wallet!`,
+    type: 'default',
+    data: {
+      orderId: order.id,
+      audience: 'buyer',
+      role: 'customer',
+      customerId: order.customerId || order.customer_id,
+    },
+  });
+}
