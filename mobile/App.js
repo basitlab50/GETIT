@@ -1692,16 +1692,23 @@ export default function App() {
 
   const [ordersFilterTab, setOrdersFilterTab] = useState('active'); // 'active' | 'all' | 'completed' | 'cancelled'
   const [lastPlacedOrderId, setLastPlacedOrderId] = useState(null);
-  const [expandedOrderId, setExpandedOrderId] = useState('AUTO_TOP'); // Accordion: top active order open by default, only 1 order open at a time
+  const [expandedOrderId, setExpandedOrderId] = useState(null); // Accordion: details hidden by default until user taps "View Details"
+  const [expandedMerchantOrderId, setExpandedMerchantOrderId] = useState(null); // Shop side: details hidden by default until tapped
   const [collapsedBoltMapOrderIds, setCollapsedBoltMapOrderIds] = useState([]);
-  const [expandedItemsOrderIds, setExpandedItemsOrderIds] = useState([]);
+  const [collapsedItemsOrderIds, setCollapsedItemsOrderIds] = useState([]);
   const [expandedStopsTimelineOrderIds, setExpandedStopsTimelineOrderIds] = useState([]);
+  const ordersRef = useRef(orders);
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
+  const alertedReplacementDecisionsRef = useRef(new Set()); // Prevents recurring duplicate merchant decision alerts
 
   const toggleOrderAccordion = (orderId) => {
-    setExpandedOrderId((prev) => {
-      const currentActiveId = prev === 'AUTO_TOP' ? (sortedAndFilteredOrders[0]?.id || null) : prev;
-      return currentActiveId === orderId ? null : orderId;
-    });
+    setExpandedOrderId((prev) => (prev === orderId ? null : orderId));
+  };
+
+  const toggleMerchantOrderAccordion = (orderId) => {
+    setExpandedMerchantOrderId((prev) => (prev === orderId ? null : orderId));
   };
 
   const toggleBoltMapCollapse = (orderId) => {
@@ -1711,7 +1718,7 @@ export default function App() {
   };
 
   const toggleItemsExpand = (orderId) => {
-    setExpandedItemsOrderIds((prev) =>
+    setCollapsedItemsOrderIds((prev) =>
       prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
     );
   };
@@ -3064,20 +3071,37 @@ export default function App() {
           }
         }
 
-        // Live alert for merchant when customer reviews substitute proposal
+        // Live alert for merchant when customer reviews substitute proposal (Only once, and only before Ready stage)
         if (
           payload.replacementProposal &&
           (payload.replacementProposal.status === 'accepted' || payload.replacementProposal.status === 'declined')
         ) {
           const prop = payload.replacementProposal;
           const isAccepted = prop.status === 'accepted';
-          if (appModeRef.current === 'merchant') {
+          const ordId = payload.orderId || payload.id;
+          const decisionKey = `${ordId}_${prop.id || 'prop'}_${prop.status}`;
+
+          // Check if order is already at or past Ready stage
+          const targetOrd = ordersRef.current?.find?.((o) => o.id === ordId);
+          const currentStatus = payload.status || targetOrd?.status;
+          const isPastReady =
+            currentStatus === 'Ready for Pickup' ||
+            currentStatus === 'On the Way' ||
+            currentStatus === 'Delivered' ||
+            currentStatus === 'Completed';
+
+          if (
+            appModeRef.current === 'merchant' &&
+            !isPastReady &&
+            !alertedReplacementDecisionsRef.current.has(decisionKey)
+          ) {
+            alertedReplacementDecisionsRef.current.add(decisionKey);
             try {
               playAudioBeep('merchant_new_order');
             } catch (aErr) {}
             try {
               notifyReplacementDecision(
-                { id: payload.orderId, storeId: prop.storeId, storeName: prop.storeName },
+                { id: ordId, storeId: prop.storeId, storeName: prop.storeName },
                 prop.substituteProduct,
                 isAccepted
               );
@@ -3085,8 +3109,8 @@ export default function App() {
             Alert.alert(
               isAccepted ? '✅ Customer Approved Substitute!' : '❌ Substitute Declined',
               isAccepted
-                ? `Customer approved "${prop.substituteProduct?.name || 'replacement item'}" for Order #${payload.orderId}. Please package the order now!`
-                : `Customer declined "${prop.originalItemName}" replacement for Order #${payload.orderId}. Full refund was credited to their wallet. Please package remaining items.`
+                ? `Customer approved "${prop.substituteProduct?.name || 'replacement item'}" for Order #${ordId}. Please package the order now!`
+                : `Customer declined "${prop.originalItemName}" replacement for Order #${ordId}. Full refund was credited to their wallet. Please package remaining items.`
             );
           }
         }
@@ -5309,6 +5333,13 @@ export default function App() {
       delete lastMerchantReminderRef.current.lastPrepReminder;
       delete lastMerchantReminderRef.current.newOrdersInit;
       delete lastMerchantReminderRef.current.lastNewReminder;
+    }
+    // Silence any future replacement proposal popups for this order since it has reached ready stage
+    if (alertedReplacementDecisionsRef.current) {
+      alertedReplacementDecisionsRef.current.add(`${orderId}_prop_accepted`);
+      alertedReplacementDecisionsRef.current.add(`${orderId}_prop_declined`);
+      alertedReplacementDecisionsRef.current.add(`${orderId}_proposal_accepted`);
+      alertedReplacementDecisionsRef.current.add(`${orderId}_proposal_declined`);
     }
     let storeReadyName = currentMerchantStore?.name || 'Store';
     let allStopsReady = true;
@@ -8728,7 +8759,7 @@ export default function App() {
               style={[styles.ordersFilterTabBtn, ordersFilterTab === 'active' && styles.ordersFilterTabBtnActive]}
               onPress={() => {
                 setOrdersFilterTab('active');
-                setExpandedOrderId('AUTO_TOP');
+                setExpandedOrderId(null);
               }}
               activeOpacity={0.7}
             >
@@ -8740,7 +8771,7 @@ export default function App() {
               style={[styles.ordersFilterTabBtn, ordersFilterTab === 'completed' && styles.ordersFilterTabBtnActive]}
               onPress={() => {
                 setOrdersFilterTab('completed');
-                setExpandedOrderId('AUTO_TOP');
+                setExpandedOrderId(null);
               }}
               activeOpacity={0.7}
             >
@@ -8752,7 +8783,7 @@ export default function App() {
               style={[styles.ordersFilterTabBtn, ordersFilterTab === 'cancelled' && styles.ordersFilterTabBtnActive]}
               onPress={() => {
                 setOrdersFilterTab('cancelled');
-                setExpandedOrderId('AUTO_TOP');
+                setExpandedOrderId(null);
               }}
               activeOpacity={0.7}
             >
@@ -8764,7 +8795,7 @@ export default function App() {
               style={[styles.ordersFilterTabBtn, ordersFilterTab === 'all' && styles.ordersFilterTabBtnActive]}
               onPress={() => {
                 setOrdersFilterTab('all');
-                setExpandedOrderId('AUTO_TOP');
+                setExpandedOrderId(null);
               }}
               activeOpacity={0.7}
             >
@@ -8797,12 +8828,9 @@ export default function App() {
           ) : (
             sortedAndFilteredOrders.map((ord, oIndex) => {
               const isJustPlaced = ord.id === lastPlacedOrderId || (ord.timestamp && Date.now() - ord.timestamp < 1800000);
-              const activeExpandedId = expandedOrderId === 'AUTO_TOP'
-                ? (sortedAndFilteredOrders[0]?.id || null)
-                : expandedOrderId;
-              const isExpanded = activeExpandedId === ord.id;
+              const isExpanded = expandedOrderId === ord.id;
               const isBoltMapOpen = !collapsedBoltMapOrderIds.includes(ord.id);
-              const isItemsOpen = expandedItemsOrderIds.includes(ord.id);
+              const isItemsOpen = !collapsedItemsOrderIds.includes(ord.id);
               const isStopsTimelineOpen = expandedStopsTimelineOrderIds.includes(ord.id);
 
               return (
@@ -11985,7 +12013,7 @@ export default function App() {
           style={styles.navItem}
           onPress={() => {
             setActiveTab('orders');
-            setExpandedOrderId('AUTO_TOP');
+            setExpandedOrderId(null);
           }}
           activeOpacity={0.8}
         >
@@ -12139,7 +12167,10 @@ export default function App() {
                       <TouchableOpacity
                         key={f.id}
                         style={[styles.merchantFilterChip, active && styles.merchantFilterChipActive]}
-                        onPress={() => setMerchantOrderFilter(f.id)}
+                        onPress={() => {
+                          setMerchantOrderFilter(f.id);
+                          setExpandedMerchantOrderId(null);
+                        }}
                       >
                         <Text style={[styles.merchantFilterText, active && styles.merchantFilterTextActive]}>
                           {f.label}
@@ -12167,38 +12198,70 @@ export default function App() {
                     const isPreparing = isPrep;
                     const isReady = stopStatus === 'Ready for Pickup';
                     const isDone = stopStatus === 'Completed';
+                    const isExpanded = expandedMerchantOrderId === ord.id;
+                    const itemsList = (matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items;
+                    const itemsCount = ord.itemsCount || itemsList?.length || 0;
+                    const earningsAmount = getMerchantOrderProductAmount(ord);
 
                     return (
                       <View key={ord.id} style={styles.mOrderCard}>
-                        <View style={styles.mOrderHeader}>
-                          <View>
-                            <Text style={styles.mOrderId}>{ord.id}</Text>
-                            <Text style={styles.mOrderTime}>
+                        {/* Compact Tappable Summary Header (Dropdown Accordion Toggle) */}
+                        <TouchableOpacity
+                          style={[
+                            styles.mOrderHeader,
+                            !isExpanded && { borderBottomWidth: 0, paddingBottom: 0 },
+                          ]}
+                          onPress={() => toggleMerchantOrderAccordion(ord.id)}
+                          activeOpacity={0.8}
+                        >
+                          <View style={{ flex: 1, marginRight: 8 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={styles.mOrderId}>{ord.id}</Text>
+                              <Text style={{ fontSize: 11, color: COLORS.emeraldDeep, fontWeight: '700' }}>
+                                • {itemsCount} {itemsCount === 1 ? 'item' : 'items'}
+                              </Text>
+                            </View>
+                            <Text style={styles.mOrderTime} numberOfLines={1}>
                               {ord.createdAt || 'Just now'} • {ord.customerName || 'Customer'}
                             </Text>
-                          </View>
-                          <View
-                            style={[
-                              styles.mStatusBadge,
-                              isNew && { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' },
-                              isPrep && { backgroundColor: '#DBEAFE', borderColor: '#3B82F6' },
-                              isReady && { backgroundColor: '#DCFCE7', borderColor: '#10B981' },
-                              isDone && { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.mStatusBadgeText,
-                                isNew && { color: '#B45309' },
-                                isPrep && { color: '#1D4ED8' },
-                                isReady && { color: '#047857' },
-                                isDone && { color: '#475569' },
-                              ]}
-                            >
-                              {stopStatus}
+                            <Text style={{ fontSize: 11.5, fontWeight: '800', color: COLORS.emeraldDeep, marginTop: 2 }}>
+                              Value: {formatNaira(earningsAmount)}
                             </Text>
                           </View>
-                        </View>
+
+                          <View style={{ alignItems: 'flex-end', justifyContent: 'center', flexShrink: 0 }}>
+                            <View
+                              style={[
+                                styles.mStatusBadge,
+                                isNew && { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' },
+                                isPrep && { backgroundColor: '#DBEAFE', borderColor: '#3B82F6' },
+                                isReady && { backgroundColor: '#DCFCE7', borderColor: '#10B981' },
+                                isDone && { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.mStatusBadgeText,
+                                  isNew && { color: '#B45309' },
+                                  isPrep && { color: '#1D4ED8' },
+                                  isReady && { color: '#047857' },
+                                  isDone && { color: '#475569' },
+                                ]}
+                              >
+                                {stopStatus}
+                              </Text>
+                            </View>
+                            <View style={styles.orderAccordionToggleBadge}>
+                              <Text style={styles.orderAccordionToggleText}>
+                                {isExpanded ? '▲ Hide Details' : '▼ View Details'}
+                              </Text>
+                            </View>
+                          </View>
+                        </TouchableOpacity>
+
+                        {/* All Order Details Hidden Until Tapped */}
+                        {isExpanded && (
+                          <View style={{ marginTop: 8 }}>
 
                         {/* Customer Delivery info */}
                         <View style={styles.mCustomerInfoBox}>
@@ -12285,7 +12348,7 @@ export default function App() {
                                             Swapped with: {it.name} <Text style={{ color: COLORS.emeraldDeep }}>x{it.qty}</Text>
                                           </Text>
                                           <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#059669', marginTop: 1 }}>
-                                            ✅ Approved by Customer
+                                            {isPrep ? '✅ Approved by Customer • Package Now' : '✅ Replaced & Confirmed'}
                                           </Text>
                                         </View>
                                       </View>
@@ -12451,7 +12514,9 @@ export default function App() {
                           )}
                         </View>
                       </View>
-                    );
+                    )}
+                  </View>
+                );
                   })
                 )}
               </ScrollView>
