@@ -3314,6 +3314,11 @@ export default function App() {
           if (cloudOrders && cloudOrders.length > 0) {
             const now = Date.now();
             const caughtUp = cloudOrders.map((ord) => calculateOrderRiderProgress(ord, now));
+            caughtUp.forEach((o) => {
+              if (o.status === 'Delivered' || o.eta === 'Delivered' || o.isReviewed) {
+                promptedReviewsRef.current.add(o.id);
+              }
+            });
             setOrders(caughtUp);
             await AsyncStorage.setItem('getit_orders', JSON.stringify(caughtUp));
           } else {
@@ -3328,6 +3333,11 @@ export default function App() {
               const parsed = JSON.parse(storedOrders);
               const now = Date.now();
               const caughtUp = (parsed || []).map((ord) => calculateOrderRiderProgress(ord, now));
+              caughtUp.forEach((o) => {
+                if (o.status === 'Delivered' || o.eta === 'Delivered' || o.isReviewed) {
+                  promptedReviewsRef.current.add(o.id);
+                }
+              });
               setOrders(caughtUp);
             } catch (e) {}
           }
@@ -4676,18 +4686,34 @@ export default function App() {
       return;
     }
 
+    // A brand new or unauthenticated user must NEVER be prompted with a review modal
+    if (!currentUser?.id) {
+      if (reviewModalVisible) {
+        setReviewModalVisible(false);
+      }
+      return;
+    }
+
     if (!reviewModalVisible) {
-      const deliveredOrder = orders.find(
-        (o) => (o.status === 'Delivered' || o.eta === 'Delivered') && !promptedReviewsRef.current.has(o.id)
-      );
+      const deliveredOrder = orders.find((o) => {
+        // STRICT: Order MUST belong to this specific authenticated user
+        const belongsToUser =
+          (o.userId && o.userId === currentUser.id) ||
+          (o.customerId && o.customerId === currentUser.id);
+        const isDelivered = o.status === 'Delivered' || o.eta === 'Delivered';
+        const notYetPrompted = !promptedReviewsRef.current.has(o.id);
+        const notReviewed = !o.isReviewed;
+
+        return belongsToUser && isDelivered && notYetPrompted && notReviewed;
+      });
+
       if (deliveredOrder) {
-        // If customer is authenticated, only prompt if this order belongs to this customer
-        if (currentUser?.id && deliveredOrder.userId && deliveredOrder.userId !== currentUser.id) {
-          return;
-        }
         promptedReviewsRef.current.add(deliveredOrder.id);
-        // Immediately pop up Rate Experience modal as soon as motto reaches buyer!
-        if (appModeRef.current === 'customer' && currentUserRef.current?.role !== 'seller') {
+        // Only auto-prompt if order was delivered recently in the current active session
+        const deliveryTime = deliveredOrder.deliveredAt || deliveredOrder.timestamp;
+        const isRecent = deliveryTime ? Date.now() - new Date(deliveryTime).getTime() < 30 * 60 * 1000 : false;
+
+        if (isRecent && appModeRef.current === 'customer' && currentUserRef.current?.role !== 'seller') {
           openReviewModalForOrder(deliveredOrder);
         }
       }
@@ -4700,8 +4726,15 @@ export default function App() {
     if (appModeRef.current !== 'customer' || currentUserRef.current?.role === 'seller') {
       return;
     }
-    // If customer is authenticated, ensure this order was placed by them
-    if (currentUserRef.current?.id && ord.userId && ord.userId !== currentUserRef.current.id) {
+    // Strict ownership: Must belong to this customer
+    if (currentUserRef.current?.id) {
+      const belongsToUser =
+        (ord.userId && ord.userId === currentUserRef.current.id) ||
+        (ord.customerId && ord.customerId === currentUserRef.current.id);
+      if (!belongsToUser) {
+        return;
+      }
+    } else {
       return;
     }
     setTargetReviewOrder(ord);
@@ -6368,6 +6401,9 @@ export default function App() {
     setCurrentUser(newBuyer);
     setAppMode('customer');
     setAuthModalVisible(false);
+    setReviewModalVisible(false);
+    setTargetReviewOrder(null);
+    orders.forEach((o) => promptedReviewsRef.current.add(o.id));
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(newBuyer));
     } catch (e) {}
@@ -6442,6 +6478,9 @@ export default function App() {
     setCurrentUser(newSeller);
     setAppMode('merchant');
     setAuthModalVisible(false);
+    setReviewModalVisible(false);
+    setTargetReviewOrder(null);
+    orders.forEach((o) => promptedReviewsRef.current.add(o.id));
 
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(newSeller));
