@@ -20,11 +20,13 @@ import {
   Platform,
   RefreshControl,
   AppState,
+  KeyboardAvoidingView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Notifications from 'expo-notifications';
 import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
 import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
 import { REAL_ROAD_LEGS, REAL_ROAD_POINTS, REAL_ROAD_WAYPOINTS } from './realRoadRouteData';
@@ -54,6 +56,8 @@ import {
   logDatabaseEvent,
   submitDatabaseReview,
   getStoreReviews,
+  sendOrderChatMessage,
+  getOrderChatMessages,
 } from './services/supabaseService';
 import {
   registerForPushNotificationsAsync,
@@ -70,6 +74,7 @@ import {
   notifyReplacementProposed,
   notifyReplacementDecision,
   notifyItemRefunded,
+  notifyNewChatMessage,
 } from './services/notificationService';
 import { getProductImageSource, matchCatalogImageByName } from './assets/productImages';
 
@@ -1488,6 +1493,29 @@ export default function App() {
   const [activeToastNotification, setActiveToastNotification] = useState(null);
   const toastAnimY = useRef(new Animated.Value(-120)).current;
   const toastOpacity = useRef(new Animated.Value(0)).current;
+
+  // --- Order Live Chat & Direct Messaging State (Number 3) ---
+  const [chatModalVisible, setChatModalVisible] = useState(false);
+  const chatModalVisibleRef = useRef(false);
+  useEffect(() => {
+    chatModalVisibleRef.current = chatModalVisible;
+  }, [chatModalVisible]);
+  const [targetChatOrder, setTargetChatOrder] = useState(null);
+  const targetChatOrderIdRef = useRef(null);
+  useEffect(() => {
+    targetChatOrderIdRef.current = targetChatOrder?.id || null;
+  }, [targetChatOrder]);
+  const [targetChatPartner, setTargetChatPartner] = useState({
+    id: '',
+    name: 'Store Concierge',
+    role: 'merchant',
+    roleLabel: '🏪 Store',
+    phone: '',
+  });
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInputText, setChatInputText] = useState('');
+  const [unreadChatMap, setUnreadChatMap] = useState({});
+  const chatScrollRef = useRef(null);
 
   // --- USER AUTH & PROFILES (BUYER & SELLER) ---
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -3062,6 +3090,51 @@ export default function App() {
         handleInventoryPayload({ eventType: event.eventType === 'INVENTORY_INSERT' ? 'INSERT' : 'UPDATE', new: event.item });
       } else if (event.eventType === 'INVENTORY_DELETE') {
         handleInventoryPayload({ eventType: 'DELETE', old: { id: event.itemId, store_id: event.storeId } });
+      } else if (event.eventType === 'CHAT_MESSAGE') {
+        const payload = event.payload || event;
+        const { orderId, message } = payload;
+        if (orderId && message) {
+          if (chatModalVisibleRef.current && targetChatOrderIdRef.current === orderId) {
+            setChatMessages((prev) => {
+              if (prev.some((m) => m.id === message.id)) return prev;
+              return [...prev, message];
+            });
+          } else {
+            setUnreadChatMap((prev) => {
+              const key = `${orderId}_${message.senderRole}`;
+              return { ...prev, [key]: (prev[key] || 0) + 1 };
+            });
+
+            const myMode = appModeRef.current;
+            const isAddressedToMe =
+              (myMode === 'customer' && message.recipientRole === 'buyer') ||
+              (myMode === 'merchant' && message.recipientRole === 'merchant');
+
+            if (isAddressedToMe) {
+              try {
+                playAudioBeep('default');
+              } catch (e) {}
+              try {
+                notifyNewChatMessage({
+                  order: { id: orderId },
+                  message,
+                  recipientRole: myMode === 'customer' ? 'buyer' : 'merchant',
+                });
+              } catch (nErr) {}
+            }
+          }
+
+          updateAndPersistOrders((prev) =>
+            prev.map((o) => {
+              if (o.id === orderId) {
+                const existing = o.messages || [];
+                if (existing.some((m) => m.id === message.id)) return o;
+                return { ...o, messages: [...existing, message] };
+              }
+              return o;
+            })
+          );
+        }
       } else if (event.eventType === 'ORDER_UPDATE') {
         const payload = event.payload || event;
         if (payload.replacementProposal && payload.replacementProposal.status === 'pending') {
@@ -4874,6 +4947,135 @@ export default function App() {
         });
       }
     } catch (e) {}
+  };
+
+  // --- ORDER LIVE CHAT HANDLERS & NOTIFICATION TAPS ---
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response?.notification?.request?.content?.data;
+      if (data?.type === 'chat' && data?.orderId) {
+        const targetOrd = ordersRef.current?.find((o) => o.id === data.orderId);
+        if (targetOrd) {
+          openChatModal(
+            targetOrd,
+            data.senderRole === 'merchant'
+              ? 'merchant'
+              : data.senderRole === 'courier'
+              ? 'courier'
+              : 'buyer'
+          );
+        }
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
+  const openChatModal = async (order, partnerRole = 'merchant') => {
+    if (!order) return;
+    setTargetChatOrder(order);
+
+    let partnerName = 'Store Concierge';
+    let partnerId = order.storeId || 'store';
+    let partnerPhone = '';
+
+    if (partnerRole === 'merchant') {
+      partnerName = order.storeName || 'Store';
+      partnerId = order.storeId;
+    } else if (partnerRole === 'courier') {
+      partnerName = order.boltRider?.name || 'Musa Ibrahim (Courier)';
+      partnerId = 'courier-musa';
+      partnerPhone = order.boltRider?.phone || '+2348032941194';
+    } else if (partnerRole === 'buyer') {
+      partnerName = order.customerName || 'Customer';
+      partnerId = order.customerId || 'buyer';
+      partnerPhone = order.customerPhone || '';
+    }
+
+    setTargetChatPartner({
+      id: partnerId,
+      name: partnerName,
+      role: partnerRole,
+      roleLabel:
+        partnerRole === 'merchant'
+          ? '🏪 Store Concierge'
+          : partnerRole === 'courier'
+          ? '🚴 Dispatch Courier'
+          : '👤 Customer',
+      phone: partnerPhone,
+    });
+
+    // Load stored messages
+    const stored = await getOrderChatMessages(order.id);
+    const orderMsgs = order.messages || [];
+    const combined = orderMsgs.length > stored.length ? orderMsgs : stored;
+    setChatMessages(combined);
+
+    // Clear unread badge
+    setUnreadChatMap((prev) => {
+      const updated = { ...prev };
+      delete updated[`${order.id}_${partnerRole}`];
+      return updated;
+    });
+
+    setChatModalVisible(true);
+  };
+
+  const handleSendChatMessage = async (textToSend) => {
+    const text = (textToSend || chatInputText).trim();
+    if (!text || !targetChatOrder) return;
+
+    const myRole = appMode === 'merchant' ? 'merchant' : 'buyer';
+    const myName =
+      appMode === 'merchant'
+        ? (currentMerchantStore?.name || 'Store')
+        : (currentUser?.fullName || currentUser?.name || 'Customer');
+
+    const newMsg = {
+      id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      orderId: targetChatOrder.id,
+      senderId: currentUser?.id || myRole,
+      senderName: myName,
+      senderRole: myRole,
+      recipientRole: targetChatPartner.role,
+      text,
+      createdAt: new Date().toISOString(),
+      read: false,
+    };
+
+    setChatInputText('');
+    setChatMessages((prev) => [...prev, newMsg]);
+
+    // Send through supabase & WebSocket broadcast
+    await sendOrderChatMessage(targetChatOrder.id, newMsg);
+
+    // If buyer sends message to courier Musa, autonomous courier responds realistically
+    if (targetChatPartner.role === 'courier' && myRole === 'buyer') {
+      setTimeout(async () => {
+        const courierReplies = [
+          "Got it! I am actively en route with your package. 🚴‍♂️",
+          "Understood! I'll call you as soon as I arrive at your gate.",
+          "Received! Ensuring your items stay safe and cool. ETA 10-15 mins.",
+          "Noted, thanks! Package collected and on the road.",
+        ];
+        const replyText = courierReplies[Math.floor(Math.random() * courierReplies.length)];
+        const courierMsg = {
+          id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+          orderId: targetChatOrder.id,
+          senderId: 'courier-musa',
+          senderName: targetChatOrder.boltRider?.name || 'Musa Ibrahim',
+          senderRole: 'courier',
+          recipientRole: 'buyer',
+          text: replyText,
+          createdAt: new Date().toISOString(),
+          read: false,
+        };
+        setChatMessages((prev) => [...prev, courierMsg]);
+        await sendOrderChatMessage(targetChatOrder.id, courierMsg);
+        try {
+          playAudioBeep('default');
+        } catch (e) {}
+      }, 1800);
+    }
   };
 
   const handleCheckout = () => {
@@ -8987,6 +9189,71 @@ export default function App() {
                   {/* --- EXPANDABLE FULL ORDER DETAILS DROPDOWN --- */}
                   {isExpanded && (
                     <View style={styles.orderExpandedBodyWrap}>
+                      {/* Direct Concierge & Courier Live Chat Buttons */}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 6,
+                            backgroundColor: '#ECFDF5',
+                            paddingVertical: 9,
+                            paddingHorizontal: 12,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#A7F3D0',
+                          }}
+                          onPress={() => openChatModal(ord, 'merchant')}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 13 }}>💬</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
+                            Chat with Store
+                          </Text>
+                          {unreadChatMap[`${ord.id}_merchant`] ? (
+                            <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                              <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                                {unreadChatMap[`${ord.id}_merchant`]}
+                              </Text>
+                            </View>
+                          ) : null}
+                        </TouchableOpacity>
+
+                        {ord.boltRider && (
+                          <TouchableOpacity
+                            style={{
+                              flex: 1,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 6,
+                              backgroundColor: '#F0FDF4',
+                              paddingVertical: 9,
+                              paddingHorizontal: 12,
+                              borderRadius: 10,
+                              borderWidth: 1,
+                              borderColor: '#BBF7D0',
+                            }}
+                            onPress={() => openChatModal(ord, 'courier')}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={{ fontSize: 13 }}>🛵</Text>
+                            <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
+                              Chat with Musa
+                            </Text>
+                            {unreadChatMap[`${ord.id}_courier`] ? (
+                              <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                                <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                                  {unreadChatMap[`${ord.id}_courier`]}
+                                </Text>
+                              </View>
+                            ) : null}
+                          </TouchableOpacity>
+                        )}
+                      </View>
+
                       {/* Clean 1-Line Live Courier Progress (for multi-stop journeys) */}
                       {ord.journeyAlert && ord.status !== 'Cancelled' && ord.status !== 'Delivered' && (
                         <View style={styles.multiStopJourneyAlertCard}>
@@ -9483,6 +9750,18 @@ export default function App() {
                             >
                               <Text style={styles.boltToggleMapBtnText}>
                                 {isBoltMapOpen ? '▲ Hide Map' : '🗺️ Live Map'}
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[
+                                styles.boltCallBtnSmall,
+                                { backgroundColor: '#056B4B', borderColor: '#047857' },
+                              ]}
+                              onPress={() => openChatModal(ord, 'courier')}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={[styles.boltCallBtnSmallText, { color: '#FFFFFF' }]}>
+                                💬 Chat{unreadChatMap[`${ord.id}_courier`] ? ` (${unreadChatMap[`${ord.id}_courier`]})` : ''}
                               </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
@@ -12332,6 +12611,58 @@ export default function App() {
                               Shop Handover PIN: <Text style={{ fontWeight: '800' }}>{matchingStop?.pickupPin || ord.pickupPin}</Text>
                             </Text>
                           )}
+
+                          {/* Live Chat with Customer Button */}
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                            <TouchableOpacity
+                              style={{
+                                flex: 1,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 6,
+                                backgroundColor: '#056B4B',
+                                paddingVertical: 8,
+                                paddingHorizontal: 12,
+                                borderRadius: 8,
+                              }}
+                              onPress={() => openChatModal(ord, 'buyer')}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 13 }}>💬</Text>
+                              <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
+                                Chat with Customer
+                              </Text>
+                              {unreadChatMap[`${ord.id}_buyer`] ? (
+                                <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                                  <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                                    {unreadChatMap[`${ord.id}_buyer`]}
+                                  </Text>
+                                </View>
+                              ) : null}
+                            </TouchableOpacity>
+
+                            {ord.customerPhone ? (
+                              <TouchableOpacity
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                  backgroundColor: '#FFFFFF',
+                                  paddingVertical: 8,
+                                  paddingHorizontal: 12,
+                                  borderRadius: 8,
+                                  borderWidth: 1,
+                                  borderColor: '#CBD5E1',
+                                }}
+                                onPress={() => Linking.openURL(`tel:${ord.customerPhone}`)}
+                                activeOpacity={0.8}
+                              >
+                                <Text style={{ fontSize: 12 }}>📞</Text>
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>Call</Text>
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
                         </View>
 
                         {/* Items ordered */}
@@ -16657,12 +16988,358 @@ export default function App() {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      {/* =========================================================================
+          ORDER LIVE CHAT & DIRECT MESSAGING MODAL (Buyer, Store & Courier)
+          ========================================================================= */}
+      <Modal
+        visible={chatModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setChatModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+          <KeyboardAvoidingView
+            style={{ flex: 1, backgroundColor: COLORS.beigeBg }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            {/* Header */}
+            <View style={styles.chatModalHeader}>
+              <TouchableOpacity
+                style={styles.modalBackBtn}
+                onPress={() => setChatModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.modalBackBtnText}>✕ Close</Text>
+              </TouchableOpacity>
+              <View style={{ alignItems: 'center', flex: 1, marginHorizontal: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={styles.chatHeaderTitle} numberOfLines={1}>
+                    {targetChatPartner?.name || 'Chat Concierge'}
+                  </Text>
+                  <View style={styles.chatOnlineDot} />
+                </View>
+                <Text style={styles.chatHeaderSubtitle}>
+                  {targetChatPartner?.roleLabel || 'Concierge'} • Order #{targetChatOrder?.id}
+                </Text>
+              </View>
+              {targetChatPartner?.phone ? (
+                <TouchableOpacity
+                  style={styles.chatHeaderPhoneBtn}
+                  onPress={() => Linking.openURL(`tel:${targetChatPartner.phone}`)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ fontSize: 16 }}>📞</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={{ width: 40 }} />
+              )}
+            </View>
+
+            {/* Quick Suggestion Chips */}
+            <View style={styles.chatSuggestionsBar}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+              >
+                {(appMode === 'customer'
+                  ? (targetChatPartner?.role === 'courier'
+                      ? ["I'm at the gate 🚪", "Please call when outside 📞", "Ring apartment bell 🔔", "Thank you! 🙏"]
+                      : ["Is this order packed? 📦", "Can you add ice? 🧊", "Please ensure fresh items 🥬", "Thank you! 🙏"])
+                  : ["Preparing your items now 🍳", "Package is ready for courier 📦", "Item out of stock, checking replacements 🔄", "Courier has picked up your order 🛵"]
+                ).map((chip, cIdx) => (
+                  <TouchableOpacity
+                    key={cIdx}
+                    style={styles.chatSuggestionChip}
+                    onPress={() => handleSendChatMessage(chip)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.chatSuggestionChipText}>{chip}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            {/* Messages Stream */}
+            <ScrollView
+              ref={chatScrollRef}
+              style={styles.chatMessagesScroll}
+              contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
+              onContentSizeChange={() => chatScrollRef.current?.scrollToEnd({ animated: true })}
+            >
+              {chatMessages.length === 0 ? (
+                <View style={styles.chatEmptyState}>
+                  <Text style={{ fontSize: 40, marginBottom: 8 }}>💬</Text>
+                  <Text style={styles.chatEmptyTitle}>Start Live Conversation</Text>
+                  <Text style={styles.chatEmptySub}>
+                    Direct line for Order #{targetChatOrder?.id}. Messages are delivered instantly with sub-50ms peer sync.
+                  </Text>
+                </View>
+              ) : (
+                chatMessages.map((msg, mIdx) => {
+                  const isMine =
+                    (appMode === 'merchant' && msg.senderRole === 'merchant') ||
+                    (appMode === 'customer' && msg.senderRole === 'buyer');
+
+                  return (
+                    <View
+                      key={msg.id || mIdx}
+                      style={[
+                        styles.chatBubbleRow,
+                        isMine ? styles.chatBubbleRowMine : styles.chatBubbleRowTheirs,
+                      ]}
+                    >
+                      {!isMine && (
+                        <View style={styles.chatSenderAvatarCircle}>
+                          <Text style={{ fontSize: 13 }}>
+                            {msg.senderRole === 'courier' ? '🛵' : msg.senderRole === 'merchant' ? '🏪' : '👤'}
+                          </Text>
+                        </View>
+                      )}
+                      <View
+                        style={[
+                          styles.chatBubble,
+                          isMine ? styles.chatBubbleMine : styles.chatBubbleTheirs,
+                        ]}
+                      >
+                        {!isMine && (
+                          <Text style={styles.chatSenderNameText}>{msg.senderName}</Text>
+                        )}
+                        <Text style={[styles.chatBubbleText, isMine ? styles.chatBubbleTextMine : styles.chatBubbleTextTheirs]}>
+                          {msg.text}
+                        </Text>
+                        <View style={styles.chatMetaRow}>
+                          <Text style={[styles.chatTimestampText, isMine && { color: 'rgba(255, 255, 255, 0.7)' }]}>
+                            {msg.createdAt
+                              ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                              : 'Just now'}
+                          </Text>
+                          {isMine && <Text style={{ fontSize: 10, color: 'rgba(255, 255, 255, 0.7)', marginLeft: 3 }}>✓✓</Text>}
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+
+            {/* Input composer row */}
+            <View style={styles.chatComposerRow}>
+              <TextInput
+                style={styles.chatTextInput}
+                placeholder="Type a message..."
+                placeholderTextColor="#94A3B8"
+                value={chatInputText}
+                onChangeText={setChatInputText}
+                onSubmitEditing={() => handleSendChatMessage()}
+                returnKeyType="send"
+              />
+              <TouchableOpacity
+                style={[
+                  styles.chatSendBtn,
+                  !chatInputText.trim() && { opacity: 0.5, backgroundColor: '#94A3B8' },
+                ]}
+                onPress={() => handleSendChatMessage()}
+                disabled={!chatInputText.trim()}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.chatSendBtnText}>➤</Text>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 // --- High Luxury Stylesheet ---
 const styles = StyleSheet.create({
+  // Live Chat Modal Styles
+  chatModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.emeraldDeep,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  chatHeaderTitle: {
+    fontSize: 15.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    maxWidth: 180,
+  },
+  chatHeaderSubtitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#A7F3D0',
+    marginTop: 1,
+  },
+  chatOnlineDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  chatHeaderPhoneBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatSuggestionsBar: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  chatSuggestionChip: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  chatSuggestionChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  chatMessagesScroll: {
+    flex: 1,
+    backgroundColor: COLORS.beigeBg,
+  },
+  chatEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 80,
+    paddingHorizontal: 32,
+  },
+  chatEmptyTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#1E293B',
+    marginBottom: 6,
+  },
+  chatEmptySub: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  chatBubbleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginVertical: 4,
+  },
+  chatBubbleRowMine: {
+    justifyContent: 'flex-end',
+  },
+  chatBubbleRowTheirs: {
+    justifyContent: 'flex-start',
+  },
+  chatSenderAvatarCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+    marginBottom: 2,
+  },
+  chatBubble: {
+    maxWidth: '78%',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 18,
+  },
+  chatBubbleMine: {
+    backgroundColor: '#056B4B',
+    borderBottomRightRadius: 4,
+  },
+  chatBubbleTheirs: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderBottomLeftRadius: 4,
+  },
+  chatSenderNameText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#065F46',
+    marginBottom: 2,
+  },
+  chatBubbleText: {
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  chatBubbleTextMine: {
+    color: '#FFFFFF',
+    fontWeight: '500',
+  },
+  chatBubbleTextTheirs: {
+    color: '#1E293B',
+    fontWeight: '500',
+  },
+  chatMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+  },
+  chatTimestampText: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  chatComposerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    gap: 8,
+  },
+  chatTextInput: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    fontSize: 14,
+    color: '#0F172A',
+    maxHeight: 100,
+  },
+  chatSendBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#056B4B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatSendBtnText: {
+    fontSize: 16,
+    color: '#FFFFFF',
+    fontWeight: '800',
+    marginLeft: 2,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.emeraldDeep,

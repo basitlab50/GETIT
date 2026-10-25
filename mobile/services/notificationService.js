@@ -189,6 +189,17 @@ export async function registerForPushNotificationsAsync() {
         lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         bypassDnd: true,
       });
+
+      // Channel 3: Order Live Chat & Direct Messages
+      await Notifications.setNotificationChannelAsync('chat_messages', {
+        name: 'GETIT Order Live Chat',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 200, 100, 200],
+        lightColor: '#056B4B',
+        sound: 'default',
+        enableVibrate: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      });
     }
 
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -258,7 +269,12 @@ export async function triggerNotification({
 
   // 3. Schedule OS notification (Pops up on Lock Screen and System Tray)
   try {
-    const channelId = type === 'merchant_new_order' ? 'merchant_orders' : 'order_updates';
+    const channelId =
+      type === 'merchant_new_order'
+        ? 'merchant_orders'
+        : type === 'chat'
+        ? 'chat_messages'
+        : 'order_updates';
     await Notifications.scheduleNotificationAsync({
       content: {
         title,
@@ -266,7 +282,12 @@ export async function triggerNotification({
         sound: 'default',
         priority: Notifications.AndroidNotificationPriority.MAX,
         data: { ...data, type },
-        vibrate: type === 'merchant_new_order' ? [0, 500, 200, 500] : [0, 250, 250, 250],
+        vibrate:
+          type === 'merchant_new_order'
+            ? [0, 500, 200, 500]
+            : type === 'chat'
+            ? [0, 200, 100, 200]
+            : [0, 250, 250, 250],
         channelId,
       },
       trigger: null, // null means fire immediately!
@@ -475,6 +496,25 @@ export function notifyItemRefunded(order, item, refundAmount) {
       orderId: order.id,
       audience: 'buyer',
       role: 'customer',
+      customerId: order.customerId || order.customer_id,
+    },
+  });
+}
+
+// K. Order Live Chat & Direct Messages (For Buyer, Merchant, & Courier)
+export function notifyNewChatMessage({ order, message, recipientRole }) {
+  triggerNotification({
+    title: `💬 ${message.senderName}`,
+    body: message.text,
+    type: 'chat',
+    data: {
+      orderId: order.id,
+      messageId: message.id,
+      audience: recipientRole,
+      role: recipientRole,
+      senderRole: message.senderRole,
+      senderName: message.senderName,
+      storeId: order.storeId || order.store_id,
       customerId: order.customerId || order.customer_id,
     },
   });
