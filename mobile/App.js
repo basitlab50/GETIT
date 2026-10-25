@@ -5305,12 +5305,34 @@ export default function App() {
         `Your multi-store order (${masterOrder.id}) with ${stops.length} pickup hubs is confirmed!\n\n` +
           `• Outermost Hub: ${stops[0].storeName} (Stop 1)\n` +
           stops.map((s) => `• Stop ${s.stopNumber}: ${s.storeName} (${formatNaira(s.subtotal)})\n   Pickup PIN: ${s.pickupPin}`).join('\n\n') +
-          `\n\nYour order has been sent to the shops. Once packaged, an available courier will be dispatched to pick up your provisions!`
+          `\n\nYour order has been sent to the shops. Once packaged, an available courier will be dispatched to pick up your provisions!`,
+        [
+          {
+            text: '💬 Message Seller',
+            onPress: () => openChatModal(masterOrder, 'merchant'),
+          },
+          {
+            text: 'Track Order',
+            style: 'default',
+            onPress: () => setExpandedOrderId(masterOrder.id),
+          },
+        ]
       );
     } else {
       Alert.alert(
         'Order Confirmed! ⚡',
-        `Your order ${masterOrder.id} for ${stops[0]?.storeName} has been sent to the store. Once packaged and ready, a courier will be dispatched for pickup.`
+        `Your order ${masterOrder.id} for ${stops[0]?.storeName} has been sent to the store. Once packaged and ready, a courier will be dispatched for pickup.`,
+        [
+          {
+            text: '💬 Message Seller',
+            onPress: () => openChatModal(masterOrder, 'merchant'),
+          },
+          {
+            text: 'Track Order',
+            style: 'default',
+            onPress: () => setExpandedOrderId(masterOrder.id),
+          },
+        ]
       );
     }
 
@@ -9147,6 +9169,80 @@ export default function App() {
                       </View>
                     </View>
                   </TouchableOpacity>
+
+                  {/* Always-Visible Quick Chat Action Bar (Visible in both collapsed & expanded states) */}
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 8,
+                      paddingHorizontal: 14,
+                      paddingVertical: 9,
+                      backgroundColor: '#F8FAFC',
+                      borderTopWidth: 1,
+                      borderTopColor: '#E2E8F0',
+                    }}
+                  >
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        backgroundColor: '#056B4B',
+                        paddingVertical: 8,
+                        paddingHorizontal: 12,
+                        borderRadius: 8,
+                      }}
+                      onPress={() => openChatModal(ord, 'merchant')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 13 }}>💬</Text>
+                      <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' }}>
+                        Message Seller
+                      </Text>
+                      {unreadChatMap[`${ord.id}_merchant`] ? (
+                        <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                          <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                            {unreadChatMap[`${ord.id}_merchant`]}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+
+                    {ord.boltRider && (
+                      <TouchableOpacity
+                        style={{
+                          flex: 1,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6,
+                          backgroundColor: '#F0FDF4',
+                          borderWidth: 1,
+                          borderColor: '#BBF7D0',
+                          paddingVertical: 8,
+                          paddingHorizontal: 12,
+                          borderRadius: 8,
+                        }}
+                        onPress={() => openChatModal(ord, 'courier')}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 13 }}>🛵</Text>
+                        <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#065F46' }}>
+                          Message Courier
+                        </Text>
+                        {unreadChatMap[`${ord.id}_courier`] ? (
+                          <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                              {unreadChatMap[`${ord.id}_courier`]}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </TouchableOpacity>
+                    )}
+                  </View>
 
                   {/* Vibrant Item Replacement Request Card (Always visible on card when pending) */}
                   {ord.replacementProposal && ord.replacementProposal.status === 'pending' && (
