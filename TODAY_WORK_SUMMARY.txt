@@ -799,6 +799,24 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        - Top Row: Crossed-out original product (`❌ Original: ~~1x Old Product~~`) with `[Out of Stock]` tag.
        - Bottom Row: Highlighted emerald card showing `🔄 Swapped with: 1x New Product • ₦...` with `✅ Approved by Customer` sub-badge.
 
+31. Fixed Merchant Order Card ReferenceError (`isPreparing`):
+   - Defined `const isPreparing = isPrep;` in `merchantFilteredOrders.map` so the Out of Stock / Replace trigger button does not throw runtime reference errors on mobile.
+
+32. Clean Collapsed "View Details" Accordions (Customer & Shop Owner Views):
+   - Shop Owner Side: Order cards now show only a sleek, ~75px summary header (Order ID, item count, customer name, earnings value, and status badge with a `▼ View Details` button). All heavy details (GPS coords, Google Maps link, landmark, PIN, item list, earnings breakdown, and action buttons) are hidden until the shop owner taps the order.
+   - Customer Side: Cards start collapsed by default (`expandedOrderId = null`). Tapping `▼ View Details` reveals the live tracking map, journey milestones, and ordered provisions all at once.
+
+33. Silenced Repeated "Customer Approved Substitute" Alert After Ready Stage:
+   - Deduplicated decision broadcasts via `alertedReplacementDecisionsRef`.
+   - Gate check prevents alert from firing once the order reaches `Ready for Pickup`, `On the Way`, `Delivered`, or `Completed`.
+   - In `readyMerchantOrder`, decision keys are registered immediately to silence any further substitution alerts once packaging is complete.
+   - Merchant item row transitions from `✅ Approved by Customer • Package Now` during prep to a quiet `✅ Replaced & Confirmed` once ready.
+
+34. Prevent Premature "How Was Your Order?" Rating Modal on New Accounts:
+   - Root Cause: Weak ownership check (`ord.userId && ord.userId !== currentUser.id`) allowed legacy demo orders without a `userId` to trigger the rating modal as soon as any new customer registered.
+   - Fix: Enforced strict user ownership (`(o.userId === currentUser.id || o.customerId === currentUser.id)`), verified unreviewed status (`!o.isReviewed`), and added a 30-minute recency window for auto-prompts.
+   - On account registration and app startup, existing orders are automatically seeded into `promptedReviewsRef` so past orders never pop up unexpectedly.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
