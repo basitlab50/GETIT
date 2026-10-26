@@ -1733,7 +1733,7 @@ export default function App() {
   const [ordersFilterTab, setOrdersFilterTab] = useState('active'); // 'active' | 'all' | 'completed' | 'cancelled'
   const [lastPlacedOrderId, setLastPlacedOrderId] = useState(null);
   const [expandedOrderId, setExpandedOrderId] = useState(null); // Accordion: details hidden by default until user taps "View Details"
-  const [expandedMerchantOrderId, setExpandedMerchantOrderId] = useState(null); // Shop side: details hidden by default until tapped
+  const [collapsedMerchantOrderIds, setCollapsedMerchantOrderIds] = useState([]); // Shop side: details open by default; owner can collapse on tap
   const [collapsedBoltMapOrderIds, setCollapsedBoltMapOrderIds] = useState([]);
   const [collapsedItemsOrderIds, setCollapsedItemsOrderIds] = useState([]);
   const [expandedStopsTimelineOrderIds, setExpandedStopsTimelineOrderIds] = useState([]);
@@ -1774,7 +1774,9 @@ export default function App() {
   };
 
   const toggleMerchantOrderAccordion = (orderId) => {
-    setExpandedMerchantOrderId((prev) => (prev === orderId ? null : orderId));
+    setCollapsedMerchantOrderIds((prev) =>
+      prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
+    );
   };
 
   const toggleBoltMapCollapse = (orderId) => {
@@ -12731,7 +12733,6 @@ export default function App() {
                         style={[styles.merchantFilterChip, active && styles.merchantFilterChipActive]}
                         onPress={() => {
                           setMerchantOrderFilter(f.id);
-                          setExpandedMerchantOrderId(null);
                         }}
                       >
                         <Text style={[styles.merchantFilterText, active && styles.merchantFilterTextActive]}>
@@ -12760,7 +12761,7 @@ export default function App() {
                     const isPreparing = isPrep;
                     const isReady = stopStatus === 'Ready for Pickup';
                     const isDone = stopStatus === 'Completed';
-                    const isExpanded = expandedMerchantOrderId === ord.id;
+                    const isExpanded = !collapsedMerchantOrderIds.includes(ord.id);
                     const itemsList = (matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items;
                     const itemsCount = ord.itemsCount || itemsList?.length || 0;
                     const earningsAmount = getMerchantOrderProductAmount(ord);
@@ -12902,7 +12903,7 @@ export default function App() {
                           );
                         })()}
 
-                        {/* All Order Details Hidden Until Tapped */}
+                        {/* All Order Details (Visible by default on merchant side) */}
                         {isExpanded && (
                           <View style={{ marginTop: 8 }}>
 

@@ -893,6 +893,16 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * In `handleLogout`, ensured `lastPlacedOrderId` and `expandedOrderId` are cleared to null to prevent cached order IDs from persisting across account sign-ins.
      * Scoped `clearAllOrdersHistory` and the `🗑️ Clean` button to operate solely on `myCustomerOrders` so buyers never accidentally wipe other accounts' orders.
 
+40. Default Expanded Order Cards for Store Owners (Merchant Side):
+   - Changed Default Accordion State for Store Owners:
+     * Store owners no longer have to tap "View Details" to see incoming order items, customer addresses, GPS coordinates, pickup PINs, and order actions.
+     * Replaced single-order `expandedMerchantOrderId` tracking with `collapsedMerchantOrderIds` array initialized to empty `[]`.
+     * Evaluated `isExpanded = !collapsedMerchantOrderIds.includes(ord.id)`, ensuring all merchant orders render fully opened by default.
+   - Interactive On-Demand Collapse:
+     * Store owners can collapse any order card on demand by tapping `▲ Hide Details`, adding the ID to `collapsedMerchantOrderIds`. Tapping again re-opens it.
+   - Preserved Customer Side Experience:
+     * Customer orders remain collapsed by default (`expandedOrderId === ord.id`), completely unaffected as requested.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
