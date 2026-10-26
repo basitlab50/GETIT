@@ -1744,6 +1744,31 @@ export default function App() {
   const merchantOrdersRef = useRef([]);
   const alertedReplacementDecisionsRef = useRef(new Set()); // Prevents recurring duplicate merchant decision alerts
 
+  // Strict Account-Isolated Customer Orders: Only orders placed by this authenticated customer!
+  const myCustomerOrders = useMemo(() => {
+    if (!currentUser) return [];
+
+    const userPhoneDigits = (currentUser.phone || '').replace(/\D/g, '');
+    const userEmail = (currentUser.email || '').trim().toLowerCase();
+    const userId = currentUser.id;
+
+    return orders.filter((o) => {
+      if (lastPlacedOrderId && o.id === lastPlacedOrderId) return true;
+      if (userId && (o.customerId === userId || o.customer_id === userId)) return true;
+      if (userEmail && o.customerEmail && o.customerEmail.toLowerCase() === userEmail) return true;
+      const orderPhoneDigits = (o.customerPhone || o.customer_phone || '').replace(/\D/g, '');
+      if (userPhoneDigits && orderPhoneDigits) {
+        if (userPhoneDigits.endsWith(orderPhoneDigits.slice(-10)) || orderPhoneDigits.endsWith(userPhoneDigits.slice(-10))) {
+          return true;
+        }
+      }
+      const orderName = (o.customerName || o.customer_name || '').trim().toLowerCase();
+      const userName = (currentUser.fullName || currentUser.name || '').trim().toLowerCase();
+      if (userName && orderName && userName === orderName) return true;
+      return false;
+    });
+  }, [orders, currentUser, lastPlacedOrderId]);
+
   const toggleOrderAccordion = (orderId) => {
     setExpandedOrderId((prev) => (prev === orderId ? null : orderId));
   };
@@ -1780,17 +1805,21 @@ export default function App() {
           text: 'Remove Old / Cancelled',
           style: 'default',
           onPress: () => {
-            const activeOnly = orders.filter(
-              (o) => o.status === 'New Order' || o.status === 'Preparing' || o.status === 'On the Way'
-            );
-            updateAndPersistOrders(activeOnly);
+            const myOrderIds = new Set(myCustomerOrders.map((o) => o.id));
+            const remaining = orders.filter((o) => {
+              if (!myOrderIds.has(o.id)) return true;
+              return o.status === 'New Order' || o.status === 'Preparing' || o.status === 'On the Way' || o.status === 'Ready for Pickup' || o.status === 'Looking for Courier';
+            });
+            updateAndPersistOrders(remaining);
           },
         },
         {
           text: 'Clear All Orders',
           style: 'destructive',
           onPress: () => {
-            updateAndPersistOrders([]);
+            const myOrderIds = new Set(myCustomerOrders.map((o) => o.id));
+            const remaining = orders.filter((o) => !myOrderIds.has(o.id));
+            updateAndPersistOrders(remaining);
           },
         },
       ]
@@ -4394,29 +4423,7 @@ export default function App() {
   // - Chronologically sorted (newest orders first)
   // - Filterable by Active, All, Delivered, Cancelled
   const sortedAndFilteredOrders = useMemo(() => {
-    if (!currentUser) return [];
-
-    const userPhoneDigits = (currentUser.phone || '').replace(/\D/g, '');
-    const userEmail = (currentUser.email || '').trim().toLowerCase();
-    const userId = currentUser.id;
-
-    // Strict Buyer Account Isolation: Show only orders placed by this account!
-    const myOrders = orders.filter((o) => {
-      if (userId && (o.customerId === userId || o.customer_id === userId)) return true;
-      if (userEmail && o.customerEmail && o.customerEmail.toLowerCase() === userEmail) return true;
-      const orderPhoneDigits = (o.customerPhone || o.customer_phone || '').replace(/\D/g, '');
-      if (userPhoneDigits && orderPhoneDigits) {
-        if (userPhoneDigits.endsWith(orderPhoneDigits.slice(-10)) || orderPhoneDigits.endsWith(userPhoneDigits.slice(-10))) {
-          return true;
-        }
-      }
-      const orderName = (o.customerName || o.customer_name || '').trim().toLowerCase();
-      const userName = (currentUser.fullName || currentUser.name || '').trim().toLowerCase();
-      if (userName && orderName && userName === orderName) return true;
-      return false;
-    });
-
-    const sorted = [...myOrders].sort((a, b) => {
+    const sorted = [...myCustomerOrders].sort((a, b) => {
       if (lastPlacedOrderId && a.id === lastPlacedOrderId) return -1;
       if (lastPlacedOrderId && b.id === lastPlacedOrderId) return 1;
       return (b.timestamp || 0) - (a.timestamp || 0);
@@ -4432,7 +4439,7 @@ export default function App() {
       return sorted.filter((o) => o.status === 'Cancelled');
     }
     return sorted;
-  }, [orders, ordersFilterTab, lastPlacedOrderId, currentUser]);
+  }, [myCustomerOrders, ordersFilterTab, lastPlacedOrderId]);
 
   // 1-Tap Delivery Handover & PIN Verification
   const completeDeliveryHandover = (orderId) => {
@@ -5507,7 +5514,7 @@ export default function App() {
     return ord.status || 'New Order';
   };
 
-  const pendingReplacementOrder = orders.find(
+  const pendingReplacementOrder = (myCustomerOrders || []).find(
     (o) =>
       o.replacementProposal &&
       o.replacementProposal.status === 'pending' &&
@@ -5604,13 +5611,13 @@ export default function App() {
 
   const customerUnreadCount = useMemo(() => {
     let count = 0;
-    (orders || []).forEach((ord) => {
+    (myCustomerOrders || []).forEach((ord) => {
       count += getOrderUnreadCount(ord, 'buyer');
     });
     Object.entries(unreadChatMap).forEach(([key, val]) => {
       if (
         (key.endsWith('_merchant') || key.endsWith('_courier')) &&
-        !orders.some(
+        (myCustomerOrders || []).some(
           (o) => `${o.id}_merchant` === key || `${o.id}_courier` === key
         )
       ) {
@@ -5618,7 +5625,7 @@ export default function App() {
       }
     });
     return count;
-  }, [orders, unreadChatMap, getOrderUnreadCount]);
+  }, [myCustomerOrders, unreadChatMap, getOrderUnreadCount]);
 
   const merchantUnreadCount = useMemo(() => {
     let count = 0;
@@ -7241,6 +7248,8 @@ export default function App() {
     } catch (e) {}
     setCurrentUser(null);
     setOrders([]);
+    setLastPlacedOrderId(null);
+    setExpandedOrderId(null);
     setIsLoggedIn(false);
     setAuthScreenRole('buyer');
     setAuthScreenMode('signin');
@@ -9118,7 +9127,7 @@ export default function App() {
                   {isRefreshingOrders ? '⏳ Syncing...' : '🔄 Sync'}
                 </Text>
               </TouchableOpacity>
-              {orders.length > 0 && (
+              {myCustomerOrders.length > 0 && (
                 <TouchableOpacity
                   onPress={clearAllOrdersHistory}
                   style={styles.ordersClearHistoryBtn}
@@ -9146,7 +9155,7 @@ export default function App() {
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'active' && styles.ordersFilterTabTextActive]}>
-                🟢 Active ({orders.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled').length})
+                🟢 Active ({myCustomerOrders.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled').length})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -9158,7 +9167,7 @@ export default function App() {
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'completed' && styles.ordersFilterTabTextActive]}>
-                ✅ Delivered ({orders.filter((o) => o.status === 'Delivered').length})
+                ✅ Delivered ({myCustomerOrders.filter((o) => o.status === 'Delivered').length})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -9170,7 +9179,7 @@ export default function App() {
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'cancelled' && styles.ordersFilterTabTextActive]}>
-                ❌ Cancelled ({orders.filter((o) => o.status === 'Cancelled').length})
+                ❌ Cancelled ({myCustomerOrders.filter((o) => o.status === 'Cancelled').length})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -9182,7 +9191,7 @@ export default function App() {
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'all' && styles.ordersFilterTabTextActive]}>
-                📦 All ({orders.length})
+                📦 All ({myCustomerOrders.length})
               </Text>
             </TouchableOpacity>
           </ScrollView>

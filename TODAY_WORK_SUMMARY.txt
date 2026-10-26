@@ -877,6 +877,22 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - Verified dependency tree with `npx expo install --check` reporting clean compatibility.
    - Restores direct QR code launching from physical iOS devices running the App Store version of Expo Go.
 
+39. Strict Account Isolation for Customer Active Order Filter Tabs & Unread Chat Badges:
+   - Diagnosed & Resolved Ghost "Active (1)" Badge:
+     * Identified root cause: Filter tab pill headers (`🟢 Active`, `✅ Delivered`, `❌ Cancelled`, `📦 All`) were reading counts from global `orders` (the shared database array containing all orders across all accounts and merchants) rather than the authenticated buyer's orders.
+     * When any other account or merchant placed an order in the system, `orders.filter(...)` evaluated to `1`, rendering `🟢 Active (1)`, while the orders list underneath correctly isolated to the logged-in customer's orders and displayed 0 items ("No Active Orders").
+   - Introduced Memoized `myCustomerOrders`:
+     * Centrally isolates customer orders matching `currentUser.id`, `currentUser.email`, `currentUser.phone` (10-digit suffix matching), or `lastPlacedOrderId`.
+     * Replaced global `orders.filter` with `myCustomerOrders.filter` across all status filter tabs:
+       - `🟢 Active ({myCustomerOrders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length})`
+       - `✅ Delivered ({myCustomerOrders.filter(o => o.status === 'Delivered').length})`
+       - `❌ Cancelled ({myCustomerOrders.filter(o => o.status === 'Cancelled').length})`
+       - `📦 All ({myCustomerOrders.length})`
+   - Account-Isolated Unread Badges & Notifications:
+     * Updated `customerUnreadCount` and `pendingReplacementOrder` to strictly evaluate against `myCustomerOrders`, eliminating unread count bleeding from other accounts' orders.
+     * In `handleLogout`, ensured `lastPlacedOrderId` and `expandedOrderId` are cleared to null to prevent cached order IDs from persisting across account sign-ins.
+     * Scoped `clearAllOrdersHistory` and the `🗑️ Clean` button to operate solely on `myCustomerOrders` so buyers never accidentally wipe other accounts' orders.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
