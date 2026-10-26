@@ -939,6 +939,17 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Configured `completed` ("Done") and `all` tabs to render orders collapsed by default, requiring store owners to tap `▼ View Details` to expand.
      * Maintained active tabs (`new`, `preparing`, `ready`) expanded by default so incoming orders are instantly readable without extra taps.
 
+43. Buyer Side "All" & "Delivered" Receipt Suite (View, Share & Download):
+   - 🚫 Removed "Message Seller" & "Message Courier" from Buyer Done & All Tabs:
+     * When buyers view orders on the `Delivered` tab (`completed`) or `All` tab, or when an order has reached `Delivered` status, active chat buttons are removed.
+     * Prevents post-delivery confusion and replaces communication buttons with post-order receipt fulfillment actions.
+   - 🧾 Integrated 3-Button Receipt Suite on Buyer Order Cards:
+     * **`[ 👁️ View Receipt ]`**: Opens the Classy GETIT Visual Digital Receipt Modal with watermark logo, official seal, and itemized breakdown.
+     * **`[ 📤 Share ]`**: Opens native share sheet to export receipt directly to WhatsApp or friends.
+     * **`[ 💾 Download ]`**: Uses `expo-print` & `expo-sharing` to generate and download an official tax-invoice PDF receipt document (with web browser print dialog fallback).
+   - 💾 Added Download / Print Action Inside Receipt Modal:
+     * Added **`[ 💾 Download / Print PDF Receipt ]`** button directly into the Classy Digital Receipt Modal actions.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

@@ -28,6 +28,8 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Notifications from 'expo-notifications';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
 import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
 import { REAL_ROAD_LEGS, REAL_ROAD_POINTS, REAL_ROAD_WAYPOINTS } from './realRoadRouteData';
@@ -5865,6 +5867,166 @@ Support: help@getit.ng | Abuja, Nigeria`;
     }
   };
 
+  // Download & Export Official PDF Receipt
+  const handleDownloadOrderReceipt = async (ord) => {
+    if (!ord) return;
+    try {
+      playAudioBeep('default');
+      const subtotal = Number(ord.subtotal) || Number(ord.itemsSubtotal) || Number(ord.total) || 0;
+      const deliveryFee = Number(ord.deliveryFee) || 0;
+      const total = Number(ord.total) || (subtotal + deliveryFee);
+      const itemsList = Array.isArray(ord.items) ? ord.items : [];
+      const dateStr = ord.createdAt || new Date(ord.timestamp || Date.now()).toLocaleDateString([], {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+          <style>
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 24px; color: #1e293b; background: #ffffff; }
+            .receipt-box { max-width: 480px; margin: 0 auto; border: 2px solid #e2e8f0; border-radius: 16px; padding: 24px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); }
+            .header { text-align: center; border-bottom: 2px dashed #cbd5e1; padding-bottom: 16px; margin-bottom: 16px; }
+            .brand-title { font-size: 22px; font-weight: 900; color: #056b4b; letter-spacing: 1px; margin: 0; }
+            .brand-sub { font-size: 11px; font-weight: 800; color: #b45309; letter-spacing: 2px; margin-top: 4px; }
+            .meta-row { display: flex; justify-content: space-between; font-size: 12px; margin-top: 12px; color: #64748b; }
+            .order-id { font-family: monospace; font-size: 13px; font-weight: bold; color: #0f172a; }
+            .status-badge { background: #dcfce7; color: #166534; padding: 3px 8px; border-radius: 6px; font-weight: bold; font-size: 11px; }
+            .parties { display: flex; justify-content: space-between; background: #f8fafc; border-radius: 10px; padding: 12px; margin: 16px 0; font-size: 11px; }
+            .party-col { width: 48%; }
+            .party-label { font-size: 9px; font-weight: bold; color: #94a3b8; letter-spacing: 0.5px; }
+            .party-name { font-weight: 800; color: #0f172a; font-size: 12px; margin-top: 2px; }
+            .table-title { font-size: 11px; font-weight: 800; color: #64748b; margin-bottom: 8px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+            th { text-align: left; font-size: 10px; color: #64748b; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+            td { padding: 8px 0; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
+            .price-col { text-align: right; font-weight: bold; }
+            .totals { border-top: 2px dashed #cbd5e1; padding-top: 12px; margin-top: 8px; font-size: 12px; }
+            .totals-row { display: flex; justify-content: space-between; margin-bottom: 6px; color: #64748b; }
+            .grand-total { display: flex; justify-content: space-between; border-top: 2px solid #0f172a; padding-top: 10px; margin-top: 10px; font-size: 18px; font-weight: 900; color: #056b4b; }
+            .stamp { text-align: center; margin-top: 20px; padding: 8px; border: 2px solid #059669; border-radius: 8px; color: #059669; font-weight: 900; font-size: 12px; letter-spacing: 2px; display: inline-block; transform: rotate(-3deg); }
+            .footer-note { text-align: center; font-size: 10px; color: #94a3b8; margin-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <div class="receipt-box">
+            <div class="header">
+              <h1 class="brand-title">GETIT PRIVILÈGE DISPATCH</h1>
+              <div class="brand-sub">OFFICIAL TAX INVOICE & RECEIPT</div>
+              <div class="meta-row">
+                <span class="order-id">#${ord.id}</span>
+                <span class="status-badge">${ord.status === 'Delivered' ? 'DELIVERED' : ord.status?.toUpperCase()}</span>
+              </div>
+              <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">${dateStr} • Abuja, Nigeria</div>
+            </div>
+
+            <div class="parties">
+              <div class="party-col">
+                <div class="party-label">MERCHANT / STORE</div>
+                <div class="party-name">${ord.storeName || 'GETIT Partner Store'}</div>
+                <div style="color: #64748b; margin-top: 2px;">Verified Merchant Hub</div>
+              </div>
+              <div class="party-col">
+                <div class="party-label">BILLED TO RECIPIENT</div>
+                <div class="party-name">${ord.customerName || 'Valued Customer'}</div>
+                <div style="color: #64748b; margin-top: 2px;">${ord.customerAddress || 'Abuja, Nigeria'}</div>
+              </div>
+            </div>
+
+            <div class="table-title">ITEMIZED PROVISIONS BREAKDOWN</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>ITEM</th>
+                  <th style="text-align: center; width: 40px;">QTY</th>
+                  <th style="text-align: right; width: 80px;">AMOUNT</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemsList.length === 0 ? `
+                  <tr>
+                    <td>Provisions Order Bundle</td>
+                    <td style="text-align: center;">1x</td>
+                    <td class="price-col">${formatNaira(total)}</td>
+                  </tr>
+                ` : itemsList.map(it => `
+                  <tr>
+                    <td>
+                      <div style="font-weight: 600;">${it.name}</div>
+                      ${it.isReplacement ? '<span style="font-size: 9px; color: #0284c7; font-weight: bold;">[Swapped & Approved]</span>' : ''}
+                    </td>
+                    <td style="text-align: center;">${it.qty || 1}x</td>
+                    <td class="price-col">${formatNaira((Number(it.price) || 0) * (Number(it.qty) || 1))}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+
+            <div class="totals">
+              <div class="totals-row">
+                <span>Items Subtotal</span>
+                <span style="font-weight: 600; color: #1e293b;">${formatNaira(subtotal)}</span>
+              </div>
+              <div class="totals-row">
+                <span>Bolt Express Delivery</span>
+                <span style="font-weight: 600; color: #1e293b;">${deliveryFee > 0 ? formatNaira(deliveryFee) : '₦0.00 (Complimentary)'}</span>
+              </div>
+              <div class="totals-row">
+                <span>Value Added Tax (7.5%)</span>
+                <span style="color: #059669; font-weight: 600;">₦0.00 (Waived)</span>
+              </div>
+              <div class="grand-total">
+                <div>
+                  <div>TOTAL PAID</div>
+                  <div style="font-size: 9px; color: #059669; font-weight: normal;">Paystack Verified Settlement</div>
+                </div>
+                <div>${formatNaira(total)}</div>
+              </div>
+            </div>
+
+            <div style="text-align: center;">
+              <div class="stamp">PAID & VERIFIED • GETIT OFFICIAL</div>
+            </div>
+
+            <div class="footer-note">
+              <div>Handover Security PIN: <b>${ord.deliveryPin || '8492'}</b></div>
+              <div style="margin-top: 4px;">Thank you for shopping with GETIT! Powered by Bolt Logistics.</div>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      if (Platform.OS === 'web') {
+        const printWindow = window.open('', '', 'width=600,height=800');
+        if (printWindow) {
+          printWindow.document.write(htmlContent);
+          printWindow.document.close();
+          printWindow.focus();
+          printWindow.print();
+        } else {
+          handleShareOrderReceipt(ord, 'buyer');
+        }
+      } else {
+        const { uri } = await Print.printToFileAsync({ html: htmlContent });
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf', dialogTitle: `GETIT_Receipt_${ord.id}.pdf` });
+        } else {
+          Alert.alert('Receipt Downloaded', `Official PDF receipt generated for Order #${ord.id}.`);
+        }
+      }
+    } catch (err) {
+      console.warn('Download receipt error:', err);
+      handleShareOrderReceipt(ord, 'buyer');
+    }
+  };
+
   const acceptMerchantOrder = (orderId) => {
     if (lastMerchantReminderRef.current) {
       delete lastMerchantReminderRef.current.newOrdersInit;
@@ -9487,6 +9649,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
                   {/* Always-Visible Quick Chat Action Bar (Visible in both collapsed & expanded states) */}
                   {(() => {
+                    const isDeliveredOrPast = ord.status === 'Delivered' || ord.status === 'Cancelled' || ordersFilterTab === 'completed' || ordersFilterTab === 'all';
                     const buyerUnread = getOrderUnreadCount(ord, 'buyer');
                     const incomingMsgs = (ord.messages || []).filter(
                       (m) => (m.recipientRole === 'buyer' || m.senderRole === 'merchant' || m.senderRole === 'courier') && !m.readByBuyer && m.senderRole !== 'buyer'
@@ -9503,29 +9666,77 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           borderTopColor: '#E2E8F0',
                         }}
                       >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                          <TouchableOpacity
-                            style={{
-                              flex: 1,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 6,
-                              backgroundColor: buyerUnread > 0 ? '#DC2626' : '#056B4B',
-                              paddingVertical: 8,
-                              paddingHorizontal: 12,
-                              borderRadius: 8,
-                            }}
-                            onPress={() => openChatModal(ord, 'merchant')}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={{ fontSize: 13 }}>💬</Text>
-                            <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' }}>
-                              Message Seller{buyerUnread > 0 ? ` (${buyerUnread} New)` : ''}
-                            </Text>
-                          </TouchableOpacity>
+                        {isDeliveredOrPast ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <TouchableOpacity
+                              style={{
+                                flex: 1.2,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 5,
+                                backgroundColor: '#056B4B',
+                                paddingVertical: 8,
+                                paddingHorizontal: 10,
+                                borderRadius: 8,
+                              }}
+                              onPress={() => handleOpenReceiptModal(ord)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 13 }}>👁️</Text>
+                              <Text style={{ fontSize: 11.5, fontWeight: '800', color: '#FFFFFF' }}>
+                                View Receipt
+                              </Text>
+                            </TouchableOpacity>
 
-                          {ord.boltRider && (
+                            <TouchableOpacity
+                              style={{
+                                flex: 1,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 4,
+                                backgroundColor: '#FFFFFF',
+                                borderWidth: 1,
+                                borderColor: '#CBD5E1',
+                                paddingVertical: 8,
+                                paddingHorizontal: 8,
+                                borderRadius: 8,
+                              }}
+                              onPress={() => handleShareOrderReceipt(ord, 'buyer')}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 12 }}>📤</Text>
+                              <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#334155' }}>
+                                Share
+                              </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={{
+                                flex: 1.1,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 4,
+                                backgroundColor: '#F0FDF4',
+                                borderWidth: 1,
+                                borderColor: '#86EFAC',
+                                paddingVertical: 8,
+                                paddingHorizontal: 8,
+                                borderRadius: 8,
+                              }}
+                              onPress={() => handleDownloadOrderReceipt(ord)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 12 }}>💾</Text>
+                              <Text style={{ fontSize: 11.5, fontWeight: '800', color: '#166534' }}>
+                                Download
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                             <TouchableOpacity
                               style={{
                                 flex: 1,
@@ -9533,25 +9744,48 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 gap: 6,
-                                backgroundColor: '#F0FDF4',
-                                borderWidth: 1,
-                                borderColor: '#BBF7D0',
+                                backgroundColor: buyerUnread > 0 ? '#DC2626' : '#056B4B',
                                 paddingVertical: 8,
                                 paddingHorizontal: 12,
                                 borderRadius: 8,
                               }}
-                              onPress={() => openChatModal(ord, 'courier')}
+                              onPress={() => openChatModal(ord, 'merchant')}
                               activeOpacity={0.8}
                             >
-                              <Text style={{ fontSize: 13 }}>🛵</Text>
-                              <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#065F46' }}>
-                                Message Courier
+                              <Text style={{ fontSize: 13 }}>💬</Text>
+                              <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' }}>
+                                Message Seller{buyerUnread > 0 ? ` (${buyerUnread} New)` : ''}
                               </Text>
                             </TouchableOpacity>
-                          )}
-                        </View>
 
-                        {buyerUnread > 0 && latestMsg?.text && (
+                            {ord.boltRider && (
+                              <TouchableOpacity
+                                style={{
+                                  flex: 1,
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 6,
+                                  backgroundColor: '#F0FDF4',
+                                  borderWidth: 1,
+                                  borderColor: '#BBF7D0',
+                                  paddingVertical: 8,
+                                  paddingHorizontal: 12,
+                                  borderRadius: 8,
+                                }}
+                                onPress={() => openChatModal(ord, 'courier')}
+                                activeOpacity={0.8}
+                              >
+                                <Text style={{ fontSize: 13 }}>🛵</Text>
+                                <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#065F46' }}>
+                                  Message Courier
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        )}
+
+                        {!isDeliveredOrPast && buyerUnread > 0 && latestMsg?.text && (
                           <View style={{ marginTop: 6, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#FEF2F2', borderRadius: 6, borderWidth: 1, borderColor: '#FECACA', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                             <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '800' }}>{latestMsg.senderName || 'Store'}:</Text>
                             <Text style={{ fontSize: 11, color: '#991B1B', fontWeight: '600', flex: 1 }} numberOfLines={1}>
@@ -18272,7 +18506,16 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   activeOpacity={0.85}
                 >
                   <Text style={{ fontSize: 16 }}>📤</Text>
-                  <Text style={styles.receiptShareActionBtnText}>Share to WhatsApp / Save Receipt</Text>
+                  <Text style={styles.receiptShareActionBtnText}>Share to WhatsApp & Friends</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.receiptDownloadActionBtn}
+                  onPress={() => handleDownloadOrderReceipt(selectedReceiptOrder)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={{ fontSize: 16 }}>💾</Text>
+                  <Text style={styles.receiptDownloadActionBtnText}>Download / Print PDF Receipt</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -27925,6 +28168,27 @@ const styles = StyleSheet.create({
     fontSize: 14.5,
     fontWeight: '900',
     color: '#FFFFFF',
+  },
+  receiptDownloadActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#334155',
+    borderRadius: 14,
+    paddingVertical: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  receiptDownloadActionBtnText: {
+    fontSize: 14.5,
+    fontWeight: '900',
+    color: '#F8FAFC',
   },
   receiptDoneActionBtn: {
     alignItems: 'center',
