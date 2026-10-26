@@ -903,6 +903,27 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - Preserved Customer Side Experience:
      * Customer orders remain collapsed by default (`expandedOrderId === ord.id`), completely unaffected as requested.
 
+41. Comprehensive Merchant & Customer Experience Suite (Search, Bank Payouts, Receipts & Quick Replies):
+   - 🔍 Instant Merchant Order Search & Filter Bar:
+     * Added high-performance real-time search input above merchant status chips.
+     * Filter dynamically queries Order ID (`#ORD-XXX`), Customer Name, Phone Number, Customer Address, and Item Names.
+     * Integrated live match counter badge with one-tap `Clear` reset button.
+   - 🏦 Merchant Bank Details & Automated Payout / Withdrawal System:
+     * Persistent settlement bank info stored in AsyncStorage (`getit_merchant_bank_info`) with default Nigerian bank presets (Zenith, GTBank, Access, First Bank, UBA, Kuda, OPay, Moniepoint).
+     * Added sleek "Edit Bank Details" modal with instant validation and security notice.
+     * Interactive "Request Bank Withdrawal" modal with available settlement balance display, preset quick-amount chips (₦5,000, ₦10,000, ₦25,000, Full Balance), and numeric custom amount input.
+     * Persistent Payout History ledger (`getit_merchant_payouts`) with automated Paystack transaction reference codes, dates, and `✅ Settled` badges.
+   - 🧾 One-Tap Shareable Order Receipt (Native Share & WhatsApp):
+     * Integrated React Native `Share` API with web fallback (Web Share API / Clipboard copy).
+     * Formats official GETIT receipt including Order ID, Timestamp, Store Name, Delivery Address & Landmark, Itemized Breakdown with quantities and prices, Subtotal, Delivery Fee, Total Paid, Handover PIN, and Courier details.
+     * Accessible on Customer Order Cards (`[ 🧾 Receipt ]`) and Merchant Action Bars (`[ 🧾 Receipt ]`).
+   - ⚡ Rich Contextual Chat Quick-Reply Suggestion Chips:
+     * Expanded quick suggestion pills inside the live Chat Modal with role-tailored responses for:
+       - Customer to Courier ("I'm at the gate 🚪", "Please call me 📞", "PIN is ready 🔢", "Ride safely 🙏")
+       - Customer to Merchant ("When will order be ready? ⏱️", "Ensure fresh & sealed 🥬", "Add cutlery 🍴")
+       - Merchant to Customer ("Prepping your provisions now 👨‍🍳", "Ready for pickup 📦", "Bolt courier assigned 🛵", "On the way ⚡")
+     * Instant 1-tap send with haptic/chime feedback and automatic auto-scroll.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

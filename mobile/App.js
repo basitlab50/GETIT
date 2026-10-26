@@ -21,6 +21,7 @@ import {
   RefreshControl,
   AppState,
   KeyboardAvoidingView,
+  Share,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, Polyline } from 'react-native-maps';
@@ -1743,6 +1744,32 @@ export default function App() {
   }, [orders]);
   const merchantOrdersRef = useRef([]);
   const alertedReplacementDecisionsRef = useRef(new Set()); // Prevents recurring duplicate merchant decision alerts
+
+  // Merchant Order Search
+  const [merchantOrderSearchQuery, setMerchantOrderSearchQuery] = useState('');
+
+  // Merchant Settlement Bank Info & Payout System
+  const [merchantBankInfo, setMerchantBankInfo] = useState({
+    bankName: 'Zenith Bank Plc',
+    accountNumber: '2109384102',
+    accountName: 'Basit Retail & Provisions',
+  });
+  const [bankEditModalVisible, setBankEditModalVisible] = useState(false);
+  const [payoutModalVisible, setPayoutModalVisible] = useState(false);
+  const [payoutAmountInput, setPayoutAmountInput] = useState('');
+  const [payoutHistory, setPayoutHistory] = useState([]);
+
+  // Load saved bank details and payout records on startup
+  useEffect(() => {
+    (async () => {
+      try {
+        const savedBank = await AsyncStorage.getItem('getit_merchant_bank_info');
+        if (savedBank) setMerchantBankInfo(JSON.parse(savedBank));
+        const savedPayouts = await AsyncStorage.getItem('getit_merchant_payouts');
+        if (savedPayouts) setPayoutHistory(JSON.parse(savedPayouts));
+      } catch (e) {}
+    })();
+  }, []);
 
   // Strict Account-Isolated Customer Orders: Only orders placed by this authenticated customer!
   const myCustomerOrders = useMemo(() => {
@@ -5645,21 +5672,38 @@ export default function App() {
     return count;
   }, [merchantOrders, unreadChatMap, getOrderUnreadCount]);
 
-  const merchantFilteredOrders = [...merchantOrders]
-    .sort((a, b) => {
-      const timeA = new Date(a.createdAt || a.created_at || 0).getTime() || 0;
-      const timeB = new Date(b.createdAt || b.created_at || 0).getTime() || 0;
-      return timeB - timeA;
-    })
-    .filter((o) => {
-      const stopStatus = getMerchantStopStatus(o, currentMerchantStore);
-      if (merchantOrderFilter === 'all') return true;
-      if (merchantOrderFilter === 'new') return stopStatus === 'New Order';
-      if (merchantOrderFilter === 'preparing') return stopStatus === 'Preparing';
-      if (merchantOrderFilter === 'ready') return stopStatus === 'Ready for Pickup';
-      if (merchantOrderFilter === 'completed') return stopStatus === 'Completed';
-      return true;
-    });
+  const merchantFilteredOrders = useMemo(() => {
+    return [...merchantOrders]
+      .sort((a, b) => {
+        const timeA = new Date(a.createdAt || a.created_at || 0).getTime() || 0;
+        const timeB = new Date(b.createdAt || b.created_at || 0).getTime() || 0;
+        return timeB - timeA;
+      })
+      .filter((o) => {
+        if (merchantOrderSearchQuery.trim()) {
+          const q = merchantOrderSearchQuery.trim().toLowerCase();
+          const cleanQPhone = q.replace(/\D/g, '');
+          const matchesId = (o.id || '').toLowerCase().includes(q);
+          const matchesCust = (o.customerName || o.customer_name || '').toLowerCase().includes(q);
+          const oPhone = (o.customerPhone || o.customer_phone || '').replace(/\D/g, '');
+          const matchesPhone = Boolean(cleanQPhone && oPhone && (oPhone.includes(cleanQPhone) || cleanQPhone.includes(oPhone)));
+          const matchesAddress = (o.customerAddress || o.customer_address || '').toLowerCase().includes(q);
+          const matchingStop = getMerchantStopForOrder(o, currentMerchantStore);
+          const items = (matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : o.items;
+          const matchesItem = (items || []).some((it) => (it.name || '').toLowerCase().includes(q));
+          if (!matchesId && !matchesCust && !matchesPhone && !matchesAddress && !matchesItem) {
+            return false;
+          }
+        }
+        const stopStatus = getMerchantStopStatus(o, currentMerchantStore);
+        if (merchantOrderFilter === 'all') return true;
+        if (merchantOrderFilter === 'new') return stopStatus === 'New Order';
+        if (merchantOrderFilter === 'preparing') return stopStatus === 'Preparing';
+        if (merchantOrderFilter === 'ready') return stopStatus === 'Ready for Pickup';
+        if (merchantOrderFilter === 'completed') return stopStatus === 'Completed';
+        return true;
+      });
+  }, [merchantOrders, merchantOrderFilter, merchantOrderSearchQuery, currentMerchantStore]);
 
   const getMerchantOrderProductAmount = (ord) => {
     const matchingStop = getMerchantStopForOrder(ord, currentMerchantStore);
@@ -5688,6 +5732,121 @@ export default function App() {
     (sum, o) => sum + getMerchantOrderProductAmount(o),
     0
   );
+
+  const totalPaidOut = useMemo(() => {
+    return (payoutHistory || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  }, [payoutHistory]);
+
+  const availableSettlementBalance = useMemo(() => {
+    const raw = (merchantTotalRevenue || 0) - totalPaidOut;
+    return raw > 0 ? raw : 0;
+  }, [merchantTotalRevenue, totalPaidOut]);
+
+  const handleSaveBankInfo = async (newInfo) => {
+    if (!newInfo.bankName || !newInfo.accountNumber || !newInfo.accountName) {
+      Alert.alert('Incomplete Information', 'Please provide a valid bank name, 10-digit account number, and account name.');
+      return;
+    }
+    setMerchantBankInfo(newInfo);
+    try {
+      await AsyncStorage.setItem('getit_merchant_bank_info', JSON.stringify(newInfo));
+    } catch (e) {}
+    setBankEditModalVisible(false);
+    Alert.alert('✅ Bank Details Saved', `Settlement destination updated to ${newInfo.bankName} (${newInfo.accountNumber}).`);
+  };
+
+  const handleRequestPayout = async (amountToWithdraw) => {
+    const amount = Number(amountToWithdraw) || availableSettlementBalance;
+    if (amount <= 0) {
+      Alert.alert('Zero Balance', 'You currently have ₦0 available to payout.');
+      return;
+    }
+    if (amount > availableSettlementBalance) {
+      Alert.alert('Insufficient Balance', `Requested amount of ${formatNaira(amount)} exceeds your available settlement balance of ${formatNaira(availableSettlementBalance)}.`);
+      return;
+    }
+    const newPayout = {
+      id: `PAYOUT-${Date.now().toString().slice(-6)}`,
+      amount,
+      date: new Date().toISOString(),
+      bankName: merchantBankInfo.bankName,
+      accountNumber: merchantBankInfo.accountNumber,
+      accountName: merchantBankInfo.accountName,
+      status: 'Settled',
+      reference: `PSTK-REF-${Math.floor(100000 + Math.random() * 900000)}`,
+    };
+    const updated = [newPayout, ...payoutHistory];
+    setPayoutHistory(updated);
+    try {
+      await AsyncStorage.setItem('getit_merchant_payouts', JSON.stringify(updated));
+    } catch (e) {}
+    setPayoutModalVisible(false);
+    setPayoutAmountInput('');
+    playAudioBeep('default');
+    Alert.alert(
+      '🎉 Payout Dispatched & Settled!',
+      `Payout of ${formatNaira(amount)} has been sent to ${merchantBankInfo.bankName} (Acct *${merchantBankInfo.accountNumber.slice(-4)}).\n\nTransaction Reference: ${newPayout.reference}`
+    );
+  };
+
+  // One-Tap Shareable Order Receipt Formatter
+  const handleShareOrderReceipt = async (ord, role = 'buyer') => {
+    if (!ord) return;
+    const isMulti = ord.isMultiStore || (ord.stops && ord.stops.length > 1);
+    const dateStr = ord.createdAt || new Date(ord.timestamp || Date.now()).toLocaleString();
+    const itemsList = Array.isArray(ord.items) ? ord.items : [];
+    const itemsFormatted = itemsList
+      .map((it) => `• ${it.qty || 1}x ${it.name} (${formatNaira((it.price || 0) * (it.qty || 1))})`)
+      .join('\n');
+
+    const receiptText = 
+`==============================
+🧾 GETIT OFFICIAL ORDER RECEIPT
+==============================
+Order ID: #${ord.id}
+Date: ${dateStr}
+Status: ${ord.status}
+${isMulti ? `Type: Multi-Store Dispatch (${ord.stops.length} Hubs)` : `Store: ${ord.storeName || 'GETIT Store'}`}
+Customer: ${ord.customerName || 'Valued Customer'}
+${ord.customerPhone ? `Phone: ${ord.customerPhone}\n` : ''}Delivery Address: ${ord.customerAddress || 'Abuja, Nigeria'}
+${ord.deliveryLocation?.landmark ? `Landmark: ${ord.deliveryLocation.landmark}\n` : ''}------------------------------
+PROVISIONS PURCHASED:
+${itemsFormatted || '• 1x Provisions Order'}
+------------------------------
+Subtotal: ${formatNaira(ord.subtotal || ord.itemsSubtotal || ord.total || 0)}
+Delivery Fee: ${formatNaira(ord.deliveryFee || 0)}
+TOTAL AMOUNT: ${formatNaira(ord.total || 0)}
+Payment: Verified via Paystack Ledger
+------------------------------
+Delivery Security PIN: ${ord.deliveryPin || 'N/A'}
+Courier: ${ord.boltRider?.name || 'Musa Ibrahim (Bolt Courier)'}
+==============================
+Delivered with GETIT • Fast Provisions Dispatch
+Support: help@getit.ng | Abuja, Nigeria`;
+
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.share) {
+          await navigator.share({
+            title: `GETIT Order #${ord.id}`,
+            text: receiptText,
+          });
+        } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+          await navigator.clipboard.writeText(receiptText);
+          Alert.alert('📋 Copied!', 'Order receipt formatted and copied to clipboard.');
+        } else {
+          Alert.alert(`Order Receipt #${ord.id}`, receiptText);
+        }
+      } else {
+        await Share.share({
+          title: `GETIT Receipt #${ord.id}`,
+          message: receiptText,
+        });
+      }
+    } catch (err) {
+      console.warn('Share error:', err);
+    }
+  };
 
   const acceptMerchantOrder = (orderId) => {
     if (lastMerchantReminderRef.current) {
@@ -10365,6 +10524,13 @@ export default function App() {
                         {ord.status === 'Cancelled' ? 'Status: Cancelled' : `Est. Arrival: ${ord.eta || '15-25 min'}`}
                       </Text>
                     </View>
+                    <TouchableOpacity
+                      style={styles.buyerReceiptBtn}
+                      onPress={() => handleShareOrderReceipt(ord, 'buyer')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.buyerReceiptBtnText}>🧾 Receipt</Text>
+                    </TouchableOpacity>
                     {ord.status !== 'Cancelled' && ord.status !== 'Delivered' && (
                       <TouchableOpacity
                         style={[styles.buyerOrderSupportBtn, { flexShrink: 0 }]}
@@ -12712,6 +12878,39 @@ export default function App() {
                   </View>
                 </View>
 
+                {/* Instant Search Bar for Merchant Orders */}
+                <View style={styles.mOrderSearchWrapper}>
+                  <Text style={styles.mOrderSearchIcon}>🔍</Text>
+                  <TextInput
+                    style={styles.mOrderSearchInput}
+                    placeholder="Search Order #, customer, phone, or item..."
+                    placeholderTextColor="#94A3B8"
+                    value={merchantOrderSearchQuery}
+                    onChangeText={setMerchantOrderSearchQuery}
+                    clearButtonMode="while-editing"
+                  />
+                  {merchantOrderSearchQuery.length > 0 && (
+                    <TouchableOpacity
+                      onPress={() => setMerchantOrderSearchQuery('')}
+                      style={styles.mOrderSearchClearBtn}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.mOrderSearchClearText}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {merchantOrderSearchQuery.trim().length > 0 && (
+                  <View style={styles.mOrderSearchResultsBanner}>
+                    <Text style={styles.mOrderSearchResultsText}>
+                      Found {merchantFilteredOrders.length} matching order{merchantFilteredOrders.length === 1 ? '' : 's'} for "{merchantOrderSearchQuery.trim()}"
+                    </Text>
+                    <TouchableOpacity onPress={() => setMerchantOrderSearchQuery('')}>
+                      <Text style={styles.mOrderSearchResultsClear}>Clear</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 {/* Status Filter Chips */}
                 <ScrollView
                   horizontal
@@ -12889,6 +13088,25 @@ export default function App() {
                                     <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#334155' }}>Call</Text>
                                   </TouchableOpacity>
                                 ) : null}
+
+                                <TouchableOpacity
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    backgroundColor: '#FFFFFF',
+                                    paddingVertical: 8,
+                                    paddingHorizontal: 10,
+                                    borderRadius: 8,
+                                    borderWidth: 1,
+                                    borderColor: '#CBD5E1',
+                                  }}
+                                  onPress={() => handleShareOrderReceipt(ord, 'merchant')}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={{ fontSize: 12 }}>🧾</Text>
+                                  <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#334155' }}>Receipt</Text>
+                                </TouchableOpacity>
                               </View>
 
                               {merchantUnread > 0 && latestUnread?.text && (
@@ -13393,23 +13611,33 @@ export default function App() {
                 {/* Wallet Balance Hero */}
                 <View style={styles.financesHeroCard}>
                   <Text style={styles.financesHeroSub}>AVAILABLE SETTLEMENT BALANCE</Text>
-                  <Text style={styles.financesHeroVal}>{formatNaira(merchantTotalRevenue)}</Text>
+                  <Text style={styles.financesHeroVal}>{formatNaira(availableSettlementBalance)}</Text>
                   <Text style={styles.financesHeroNote}>
                     Ready for instant payout to registered bank account.
                   </Text>
 
+                  <View style={styles.financesStatsRow}>
+                    <View style={styles.financesStatBox}>
+                      <Text style={styles.financesStatLabel}>Lifetime Sales</Text>
+                      <Text style={styles.financesStatVal}>{formatNaira(merchantTotalRevenue)}</Text>
+                    </View>
+                    <View style={styles.financesStatDivider} />
+                    <View style={styles.financesStatBox}>
+                      <Text style={styles.financesStatLabel}>Total Dispatched</Text>
+                      <Text style={styles.financesStatVal}>{formatNaira(totalPaidOut)}</Text>
+                    </View>
+                  </View>
+
                   <TouchableOpacity
                     style={styles.requestPayoutBtn}
                     onPress={() => {
-                      if (merchantTotalRevenue === 0) {
-                        Alert.alert('No Balance', 'You currently have ₦0 available to payout.');
+                      if (availableSettlementBalance <= 0) {
+                        Alert.alert('No Balance Available', 'You currently have ₦0 available to payout. Completed customer orders will credit your settlement balance.');
                         return;
                       }
-                      Alert.alert(
-                        'Payout Dispatched',
-                        `Payout request of ${formatNaira(merchantTotalRevenue)} sent to Zenith Bank (Acct *4102). Settles in 30 mins.`
-                      );
+                      setPayoutModalVisible(true);
                     }}
+                    activeOpacity={0.85}
                   >
                     <Text style={styles.requestPayoutBtnText}>Request Bank Payout ➔</Text>
                   </TouchableOpacity>
@@ -13425,36 +13653,97 @@ export default function App() {
                     </Text>
                   </View>
                   <View style={styles.financeRow}>
-                    <Text style={styles.financeLabel}>Delivery Fee</Text>
-                    <Text style={[styles.financeVal, { color: COLORS.emeraldPrimary, fontWeight: '700' }]}>
-                      ₦0.00 (Customer to Courier)
+                    <Text style={styles.financeLabel}>Settled to Bank</Text>
+                    <Text style={[styles.financeVal, { color: '#B45309', fontWeight: '700' }]}>
+                      {formatNaira(totalPaidOut)}
                     </Text>
                   </View>
                   <View style={styles.financeDivider} />
                   <View style={styles.financeRow}>
                     <Text style={[styles.financeLabel, { fontWeight: '800', color: COLORS.textDark }]}>
-                      Your Product Earnings
+                      Available in Wallet
                     </Text>
                     <Text style={[styles.financeVal, { color: COLORS.emeraldPrimary, fontWeight: '900' }]}>
-                      {formatNaira(merchantTotalRevenue)}
+                      {formatNaira(availableSettlementBalance)}
                     </Text>
                   </View>
                 </View>
 
-                {/* Bank Account */}
+                {/* Settlement Bank Account Card */}
                 <View style={styles.bankAccountCard}>
-                  <Text style={styles.financeCardTitle}>Settlement Bank Account</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
-                    <Text style={{ fontSize: 24, marginRight: 10 }}>🏦</Text>
-                    <View>
-                      <Text style={{ fontWeight: '800', color: COLORS.textDark, fontSize: 13 }}>
-                        Zenith Bank Plc
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <Text style={styles.financeCardTitle}>Settlement Bank Account</Text>
+                    <TouchableOpacity
+                      onPress={() => setBankEditModalVisible(true)}
+                      style={styles.bankAccountEditPill}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.bankAccountEditPillText}>✏️ Edit Details</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                    <Text style={{ fontSize: 26, marginRight: 10 }}>🏦</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontWeight: '800', color: COLORS.textDark, fontSize: 14 }}>
+                        {merchantBankInfo.bankName}
                       </Text>
-                      <Text style={{ color: COLORS.textMuted, fontSize: 11.5 }}>
-                        Acct: 2109384102 • {currentMerchantStore?.name}
+                      <Text style={{ color: COLORS.textMuted, fontSize: 12, marginTop: 2 }}>
+                        Acct: {merchantBankInfo.accountNumber} • {merchantBankInfo.accountName}
                       </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                        <Text style={{ fontSize: 10, color: '#059669', fontWeight: '700' }}>
+                          ✅ Verified for Automated Paystack Settlements
+                        </Text>
+                      </View>
                     </View>
                   </View>
+                </View>
+
+                {/* Settlement & Payout History */}
+                <View style={[styles.bankAccountCard, { marginTop: 14 }]}>
+                  <Text style={styles.financeCardTitle}>Settlement & Payout History</Text>
+                  {payoutHistory.length === 0 ? (
+                    <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 28, marginBottom: 6 }}>📜</Text>
+                      <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#64748B' }}>No Payouts Requested Yet</Text>
+                      <Text style={{ fontSize: 11, color: '#94A3B8', textAlign: 'center', marginTop: 2, paddingHorizontal: 16 }}>
+                        Completed withdrawals will appear here with automated Paystack transaction reference codes.
+                      </Text>
+                    </View>
+                  ) : (
+                    payoutHistory.map((p, pIdx) => (
+                      <View
+                        key={p.id || pIdx}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingVertical: 10,
+                          borderBottomWidth: pIdx < payoutHistory.length - 1 ? 1 : 0,
+                          borderBottomColor: '#F1F5F9',
+                        }}
+                      >
+                        <View style={{ flex: 1, marginRight: 10 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={{ fontSize: 12.5, fontWeight: '800', color: COLORS.textDark }}>
+                              {p.id}
+                            </Text>
+                            <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 4 }}>
+                              <Text style={{ fontSize: 10, fontWeight: '800', color: '#166534' }}>
+                                ✅ {p.status || 'Settled'}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
+                            {p.bankName} (*{String(p.accountNumber).slice(-4)}) • {new Date(p.date).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 13.5, fontWeight: '900', color: COLORS.emeraldDeep }}>
+                          {formatNaira(p.amount)}
+                        </Text>
+                      </View>
+                    ))
+                  )}
                 </View>
               </ScrollView>
             )}
@@ -17402,9 +17691,29 @@ export default function App() {
               >
                 {(appMode === 'customer'
                   ? (targetChatPartner?.role === 'courier'
-                      ? ["I'm at the gate 🚪", "Please call when outside 📞", "Ring apartment bell 🔔", "Thank you! 🙏"]
-                      : ["Is this order packed? 📦", "Can you add ice? 🧊", "Please ensure fresh items 🥬", "Thank you! 🙏"])
-                  : ["Preparing your items now 🍳", "Package is ready for courier 📦", "Item out of stock, checking replacements 🔄", "Courier has picked up your order 🛵"]
+                      ? [
+                          "I'm at the gate / security post 🚪",
+                          "Please call me when outside 📞",
+                          "Security PIN is ready for you 🔢",
+                          "Ring apartment bell 🔔",
+                          "Please handle packages with care 📦",
+                          "Thank you! Ride safely 🙏",
+                        ]
+                      : [
+                          "Hi! When will order be ready? ⏱️",
+                          "Please ensure items are fresh & sealed 🥬",
+                          "Can you add extra napkins / cutlery? 🍴",
+                          "Is the order packed? 📦",
+                          "Thank you for the quick update! ⭐",
+                        ])
+                  : [
+                      "Preparing your provisions now 👨‍🍳",
+                      "All items packaged and ready for pickup 📦",
+                      "Bolt courier has been assigned 🛵",
+                      "Checking stock on replacement items 🔄",
+                      "Courier is on the way to your door ⚡",
+                      "Thank you for ordering with us! ⭐",
+                    ]
                 ).map((chip, cIdx) => (
                   <TouchableOpacity
                     key={cIdx}
@@ -17506,6 +17815,199 @@ export default function App() {
             </View>
           </KeyboardAvoidingView>
         </SafeAreaView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* --- EDIT SETTLEMENT BANK DETAILS MODAL --- */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={bankEditModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setBankEditModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalBackdropOverlay}
+        >
+          <View style={styles.bankModalCard}>
+            <View style={styles.modalDragHandle} />
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalSheetTitle}>Settlement Bank Details</Text>
+                <Text style={styles.modalSheetSub}>Automated earnings payout ledger</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setBankEditModalVisible(false)}
+                style={styles.modalCloseCircle}
+              >
+                <Text style={styles.modalCloseCircleText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 440 }}>
+              <Text style={styles.inputSectionLabel}>POPULAR NIGERIAN BANKS</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                {[
+                  'Zenith Bank Plc',
+                  'Guaranty Trust Bank (GTB)',
+                  'Access Bank',
+                  'First Bank of Nigeria',
+                  'United Bank for Africa (UBA)',
+                  'Kuda Microfinance Bank',
+                  'OPay Digital Services',
+                  'Moniepoint Microfinance Bank',
+                ].map((bName) => {
+                  const isSelected = merchantBankInfo.bankName === bName;
+                  return (
+                    <TouchableOpacity
+                      key={bName}
+                      onPress={() => setMerchantBankInfo((prev) => ({ ...prev, bankName: bName }))}
+                      style={[styles.bankChoiceChip, isSelected && styles.bankChoiceChipActive]}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.bankChoiceChipText, isSelected && styles.bankChoiceChipTextActive]}>
+                        {bName}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <Text style={styles.inputSectionLabel}>BANK NAME</Text>
+              <TextInput
+                style={styles.formTextInput}
+                value={merchantBankInfo.bankName}
+                onChangeText={(val) => setMerchantBankInfo((prev) => ({ ...prev, bankName: val }))}
+                placeholder="Bank Name (e.g. Zenith Bank Plc)"
+                placeholderTextColor="#94A3B8"
+              />
+
+              <Text style={styles.inputSectionLabel}>10-DIGIT NUBAN ACCOUNT NUMBER</Text>
+              <TextInput
+                style={styles.formTextInput}
+                value={merchantBankInfo.accountNumber}
+                onChangeText={(val) => setMerchantBankInfo((prev) => ({ ...prev, accountNumber: val.replace(/[^0-9]/g, '').slice(0, 10) }))}
+                placeholder="e.g. 2109384102"
+                placeholderTextColor="#94A3B8"
+                keyboardType="numeric"
+                maxLength={10}
+              />
+
+              <Text style={styles.inputSectionLabel}>ACCOUNT BENEFICIARY NAME</Text>
+              <TextInput
+                style={styles.formTextInput}
+                value={merchantBankInfo.accountName}
+                onChangeText={(val) => setMerchantBankInfo((prev) => ({ ...prev, accountName: val }))}
+                placeholder="e.g. Basit Provisions Store"
+                placeholderTextColor="#94A3B8"
+              />
+
+              <View style={styles.bankSecurityNoticeBox}>
+                <Text style={{ fontSize: 13, marginRight: 6 }}>🔒</Text>
+                <Text style={styles.bankSecurityNoticeText}>
+                  Your account details are securely encrypted and verified through Paystack Instant Settlements.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.saveBankBtn}
+                onPress={() => handleSaveBankInfo(merchantBankInfo)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.saveBankBtnText}>Save Bank Account ➔</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* --- REQUEST PAYOUT MODAL --- */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={payoutModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setPayoutModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalBackdropOverlay}
+        >
+          <View style={styles.bankModalCard}>
+            <View style={styles.modalDragHandle} />
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalSheetTitle}>Request Bank Withdrawal</Text>
+                <Text style={styles.modalSheetSub}>Instant settlement to your bank</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPayoutModalVisible(false)}
+                style={styles.modalCloseCircle}
+              >
+                <Text style={styles.modalCloseCircleText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 440 }}>
+              <View style={styles.payoutBalanceHeroCard}>
+                <Text style={styles.payoutBalanceHeroSub}>AVAILABLE BALANCE</Text>
+                <Text style={styles.payoutBalanceHeroVal}>{formatNaira(availableSettlementBalance)}</Text>
+              </View>
+
+              <View style={styles.payoutBankDestCard}>
+                <Text style={{ fontSize: 20, marginRight: 8 }}>🏦</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.payoutBankDestName}>{merchantBankInfo.bankName}</Text>
+                  <Text style={styles.payoutBankDestAcct}>
+                    Acct *{String(merchantBankInfo.accountNumber).slice(-4)} • {merchantBankInfo.accountName}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.inputSectionLabel}>QUICK AMOUNT PRESETS</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                {[5000, 10000, 25000, availableSettlementBalance].map((presetAmt, pIdx) => {
+                  if (presetAmt <= 0) return null;
+                  const isAll = presetAmt === availableSettlementBalance;
+                  return (
+                    <TouchableOpacity
+                      key={pIdx}
+                      style={styles.payoutPresetChip}
+                      onPress={() => setPayoutAmountInput(String(Math.floor(presetAmt)))}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.payoutPresetChipText}>
+                        {isAll ? `Full Balance (${formatNaira(presetAmt)})` : formatNaira(presetAmt)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.inputSectionLabel}>ENTER WITHDRAWAL AMOUNT (₦)</Text>
+              <TextInput
+                style={styles.formTextInput}
+                value={payoutAmountInput}
+                onChangeText={(val) => setPayoutAmountInput(val.replace(/[^0-9]/g, ''))}
+                placeholder={`e.g. ${availableSettlementBalance || 5000}`}
+                placeholderTextColor="#94A3B8"
+                keyboardType="numeric"
+              />
+
+              <TouchableOpacity
+                style={styles.confirmPayoutBtn}
+                onPress={() => handleRequestPayout(Number(payoutAmountInput) || availableSettlementBalance)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.confirmPayoutBtnText}>
+                  Dispatched {formatNaira(Number(payoutAmountInput) || availableSettlementBalance)} to Bank ➔
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -26385,6 +26887,332 @@ const styles = StyleSheet.create({
     color: '#E2E8F0',
     fontWeight: '600',
     lineHeight: 15,
+  },
+
+  // --- Merchant Order Search Styles ---
+  mOrderSearchWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    marginVertical: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  mOrderSearchIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  mOrderSearchInput: {
+    flex: 1,
+    paddingVertical: 10,
+    fontSize: 13.5,
+    color: '#0F172A',
+    fontWeight: '600',
+  },
+  mOrderSearchClearBtn: {
+    padding: 6,
+  },
+  mOrderSearchClearText: {
+    fontSize: 14,
+    color: '#94A3B8',
+    fontWeight: '800',
+  },
+  mOrderSearchResultsBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 6,
+  },
+  mOrderSearchResultsText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#166534',
+    flex: 1,
+  },
+  mOrderSearchResultsClear: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#15803D',
+    marginLeft: 8,
+  },
+
+  // --- Buyer Receipt Button ---
+  buyerReceiptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginRight: 6,
+  },
+  buyerReceiptBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+  },
+
+  // --- Merchant Finances & Payout Modals ---
+  financesStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginVertical: 12,
+  },
+  financesStatBox: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  financesStatLabel: {
+    fontSize: 10.5,
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  financesStatVal: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    marginTop: 2,
+  },
+  financesStatDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  bankAccountEditPill: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  bankAccountEditPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+  },
+
+  // Modal Sheet Components
+  modalBackdropOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'flex-end',
+  },
+  bankModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+    maxHeight: '90%',
+  },
+  modalDragHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: '#CBD5E1',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    paddingBottom: 10,
+  },
+  modalSheetTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: COLORS.emeraldDeep,
+  },
+  modalSheetSub: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  modalCloseCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseCircleText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  inputSectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    marginTop: 10,
+    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  formTextInput: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0F172A',
+    marginBottom: 10,
+  },
+  bankChoiceChip: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 8,
+  },
+  bankChoiceChipActive: {
+    backgroundColor: '#056B4B',
+    borderColor: '#056B4B',
+  },
+  bankChoiceChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  bankChoiceChipTextActive: {
+    color: '#FFFFFF',
+  },
+  bankSecurityNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  bankSecurityNoticeText: {
+    flex: 1,
+    fontSize: 11.5,
+    color: '#166534',
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+  saveBankBtn: {
+    backgroundColor: '#056B4B',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 6,
+    marginBottom: 10,
+    shadowColor: '#056B4B',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  saveBankBtnText: {
+    fontSize: 14.5,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  payoutBalanceHeroCard: {
+    backgroundColor: '#056B4B',
+    borderRadius: 14,
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  payoutBalanceHeroSub: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: 'rgba(255, 255, 255, 0.75)',
+    letterSpacing: 0.5,
+  },
+  payoutBalanceHeroVal: {
+    fontSize: 26,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    marginTop: 4,
+  },
+  payoutBankDestCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+  },
+  payoutBankDestName: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: COLORS.textDark,
+  },
+  payoutBankDestAcct: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  payoutPresetChip: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  payoutPresetChipText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  confirmPayoutBtn: {
+    backgroundColor: '#056B4B',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 10,
+    marginBottom: 10,
+    shadowColor: '#056B4B',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  confirmPayoutBtnText: {
+    fontSize: 14.5,
+    fontWeight: '900',
+    color: '#FFFFFF',
   },
 
 });
