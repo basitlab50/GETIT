@@ -640,7 +640,7 @@ let liveBroadcastChannel = null;
 function getLiveBroadcastChannel() {
   if (!liveBroadcastChannel) {
     liveBroadcastChannel = supabase.channel('getit_live_sync_channel', {
-      config: { broadcast: { ack: false } },
+      config: { broadcast: { ack: false, self: true } },
     });
     liveBroadcastChannel.subscribe();
   }

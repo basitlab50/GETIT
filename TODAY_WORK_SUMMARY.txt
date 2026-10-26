@@ -831,6 +831,21 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Interactive Chat Modal: Full-screen modal with quick-reply suggestion chips ("I'm at the gate", "Please add ice", "Order is packed"), emerald sent bubbles (`✓✓` delivered checkmarks), sender role avatars (`🏪`, `🛵`, `👤`), timestamps, and auto-scroll.
      * Autonomous Courier Response Simulation: When the buyer chats with courier Musa, Musa sends realistic transit confirmations ("Heading your way right now", "Will call when outside gate") after a natural delay.
 
+36. Comprehensive Unread Message Badges, Role-Based Audio Chimes, and Global Floating Banners:
+   - Elevated In-App Notification Toast to Global Screen Level:
+     * Positioned above both Customer and Merchant absolute viewports (`zIndex: 99999`) so merchants and customers immediately see incoming slide-down notification banners.
+     * Tapping the banner immediately opens the Live Chat modal for that exact order.
+   - Distinct Role-Based Audio & Haptic Alerts:
+     * Seller Alert: Loud 4-note ascending merchant audio chime (`merchant_new_order`) + distinctive vibration pattern (`[0, 500, 200, 500]`) when receiving customer messages.
+     * Buyer Alert: Soft luxury concierge chime (`default`) when receiving messages from seller or courier.
+   - Comprehensive Visual Unread Badges:
+     * Bottom Navigation Bar: Red badge counters on "Orders" tab for both Customer (`📦 [count]`) and Merchant (`🔔 💬 [count]`).
+     * Order Cards (Collapsed & Expanded):
+       - Customer Side: `💬 New Message` badge in order header + `(count)` badge on `💬 Message Seller`.
+       - Merchant Side: `💬 [count] New` badge in order header + always-visible button `[ 💬 Chat with Customer ([count] Unread) ]` with red highlight when unread.
+   - Supabase Realtime Loopback:
+     * Configured `broadcast: { ack: false, self: true }` in `supabaseService.js` to guarantee broadcast receipt across multi-role device testing.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

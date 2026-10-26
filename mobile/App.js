@@ -1517,6 +1517,24 @@ export default function App() {
   const [unreadChatMap, setUnreadChatMap] = useState({});
   const chatScrollRef = useRef(null);
 
+  const customerUnreadCount = useMemo(() => {
+    return Object.entries(unreadChatMap).reduce((sum, [key, count]) => {
+      if (key.endsWith('_merchant') || key.endsWith('_courier')) {
+        return sum + (Number(count) || 0);
+      }
+      return sum;
+    }, 0);
+  }, [unreadChatMap]);
+
+  const merchantUnreadCount = useMemo(() => {
+    return Object.entries(unreadChatMap).reduce((sum, [key, count]) => {
+      if (key.endsWith('_buyer')) {
+        return sum + (Number(count) || 0);
+      }
+      return sum;
+    }, 0);
+  }, [unreadChatMap]);
+
   // --- USER AUTH & PROFILES (BUYER & SELLER) ---
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authScreenRole, setAuthScreenRole] = useState('buyer'); // 'buyer' | 'seller'
@@ -3094,29 +3112,39 @@ export default function App() {
         const payload = event.payload || event;
         const { orderId, message } = payload;
         if (orderId && message) {
+          const myMode = appModeRef.current;
+          const currentUserId = currentUserRef.current?.id;
+          const isFromSelf =
+            (message.senderId && currentUserId && message.senderId === currentUserId) ||
+            (message.senderRole === (myMode === 'merchant' ? 'merchant' : 'buyer') && !message.isSimulation);
+
           if (chatModalVisibleRef.current && targetChatOrderIdRef.current === orderId) {
             setChatMessages((prev) => {
               if (prev.some((m) => m.id === message.id)) return prev;
               return [...prev, message];
             });
-          } else {
+          } else if (!isFromSelf) {
             setUnreadChatMap((prev) => {
               const key = `${orderId}_${message.senderRole}`;
-              return { ...prev, [key]: (prev[key] || 0) + 1 };
+              return { ...prev, [key]: (Number(prev[key]) || 0) + 1 };
             });
 
-            const myMode = appModeRef.current;
             const isAddressedToMe =
               (myMode === 'customer' && message.recipientRole === 'buyer') ||
               (myMode === 'merchant' && message.recipientRole === 'merchant');
 
             if (isAddressedToMe) {
+              const targetOrd = ordersRef.current?.find((o) => o.id === orderId) || {
+                id: orderId,
+                storeId: message.storeId,
+                customerId: message.customerId,
+              };
               try {
-                playAudioBeep('default');
+                playAudioBeep(myMode === 'merchant' ? 'merchant_new_order' : 'default');
               } catch (e) {}
               try {
                 notifyNewChatMessage({
-                  order: { id: orderId },
+                  order: targetOrd,
                   message,
                   recipientRole: myMode === 'customer' ? 'buyer' : 'merchant',
                 });
@@ -8477,55 +8505,6 @@ export default function App() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
 
-      {/* --- IN-APP FLOATING NOTIFICATION BANNER (AUDIO BEEP + SLIDE DOWN) --- */}
-      {activeToastNotification && (
-        <Animated.View
-          style={[
-            styles.floatingNotificationBanner,
-            {
-              transform: [{ translateY: toastAnimY }],
-              opacity: toastOpacity,
-            },
-          ]}
-        >
-          <TouchableOpacity
-            style={styles.floatingNotificationInner}
-            onPress={() => {
-              setActiveToastNotification(null);
-              setActiveTab('orders');
-            }}
-            activeOpacity={0.9}
-          >
-            <View style={styles.floatingNotificationIconBox}>
-              <Text style={{ fontSize: 20 }}>
-                {activeToastNotification.type === 'merchant_new_order'
-                  ? '💰'
-                  : activeToastNotification.type === 'arrived'
-                  ? '📍'
-                  : '🔔'}
-              </Text>
-            </View>
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={styles.floatingNotificationTitle} numberOfLines={1}>
-                  {activeToastNotification.title}
-                </Text>
-                <Text style={styles.floatingNotificationTime}>Just now</Text>
-              </View>
-              <Text style={styles.floatingNotificationBody} numberOfLines={2}>
-                {activeToastNotification.body}
-              </Text>
-            </View>
-            <TouchableOpacity
-              onPress={() => setActiveToastNotification(null)}
-              style={styles.floatingNotificationClose}
-            >
-              <Text style={{ color: '#94A3B8', fontSize: 13, fontWeight: '700' }}>✕</Text>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </Animated.View>
-      )}
-
       {/* --- TOP LUXURY HEADER --- */}
       <View style={styles.header}>
         {/* Brand & Location Row */}
@@ -9115,7 +9094,16 @@ export default function App() {
                     activeOpacity={0.8}
                   >
                     <View style={{ flex: 1, marginRight: 8 }}>
-                      <Text style={styles.orderCardTitle} numberOfLines={1}>{ord.storeName}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.orderCardTitle} numberOfLines={1}>{ord.storeName}</Text>
+                        {(unreadChatMap[`${ord.id}_merchant`] > 0 || unreadChatMap[`${ord.id}_courier`] > 0) && (
+                          <View style={{ backgroundColor: '#EF4444', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                              💬 New Message
+                            </Text>
+                          </View>
+                        )}
+                      </View>
                       <Text style={styles.orderCardSub} numberOfLines={1}>
                         {ord.id} • {ord.itemsCount} {ord.itemsCount === 1 ? 'item' : 'items'} • {formatNaira(ord.total || ord.subtotal || 0)}
                       </Text>
@@ -12431,9 +12419,16 @@ export default function App() {
           }}
           activeOpacity={0.8}
         >
-          <Text style={[styles.navIcon, activeTab === 'orders' && styles.navIconActive]}>
-            📦
-          </Text>
+          <View>
+            <Text style={[styles.navIcon, activeTab === 'orders' && styles.navIconActive]}>
+              📦
+            </Text>
+            {customerUnreadCount > 0 && (
+              <View style={styles.navChatUnreadBadge}>
+                <Text style={styles.navChatUnreadBadgeText}>{customerUnreadCount}</Text>
+              </View>
+            )}
+          </View>
           <Text style={[styles.navText, activeTab === 'orders' && styles.navTextActive]}>
             Orders
           </Text>
@@ -12634,6 +12629,13 @@ export default function App() {
                               <Text style={{ fontSize: 11, color: COLORS.emeraldDeep, fontWeight: '700' }}>
                                 • {itemsCount} {itemsCount === 1 ? 'item' : 'items'}
                               </Text>
+                              {unreadChatMap[`${ord.id}_buyer`] > 0 && (
+                                <View style={{ backgroundColor: '#EF4444', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                                  <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                                    💬 {unreadChatMap[`${ord.id}_buyer`]} New
+                                  </Text>
+                                </View>
+                              )}
                             </View>
                             <Text style={styles.mOrderTime} numberOfLines={1}>
                               {ord.createdAt || 'Just now'} • {ord.customerName || 'Customer'}
@@ -12672,6 +12674,62 @@ export default function App() {
                             </View>
                           </View>
                         </TouchableOpacity>
+
+                        {/* Always-visible Quick Chat Action Bar for Merchant */}
+                        <View
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 8,
+                            paddingHorizontal: 12,
+                            paddingVertical: 7,
+                            backgroundColor: '#F8FAFC',
+                            borderTopWidth: 1,
+                            borderTopColor: '#E2E8F0',
+                          }}
+                        >
+                          <TouchableOpacity
+                            style={{
+                              flex: 1,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 6,
+                              backgroundColor: unreadChatMap[`${ord.id}_buyer`] > 0 ? '#DC2626' : '#056B4B',
+                              paddingVertical: 7,
+                              paddingHorizontal: 10,
+                              borderRadius: 8,
+                            }}
+                            onPress={() => openChatModal(ord, 'buyer')}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={{ fontSize: 13 }}>💬</Text>
+                            <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
+                              Chat with Customer{unreadChatMap[`${ord.id}_buyer`] ? ` (${unreadChatMap[`${ord.id}_buyer`]} Unread)` : ''}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {ord.customerPhone ? (
+                            <TouchableOpacity
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 4,
+                                backgroundColor: '#FFFFFF',
+                                paddingVertical: 7,
+                                paddingHorizontal: 10,
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: '#CBD5E1',
+                              }}
+                              onPress={() => Linking.openURL(`tel:${ord.customerPhone}`)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 12 }}>📞</Text>
+                              <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#334155' }}>Call</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
 
                         {/* All Order Details Hidden Until Tapped */}
                         {isExpanded && (
@@ -13636,10 +13694,12 @@ export default function App() {
                   <Text style={[styles.merchantNavIcon, merchantTab === 'orders' && styles.merchantNavIconActive]}>
                     🔔
                   </Text>
-                  {merchantOrders.filter((o) => o.status === 'New Order').length > 0 && (
-                    <View style={styles.merchantUnreadDot}>
+                  {(merchantOrders.filter((o) => o.status === 'New Order').length > 0 || merchantUnreadCount > 0) && (
+                    <View style={[styles.merchantUnreadDot, merchantUnreadCount > 0 && { backgroundColor: '#EF4444' }]}>
                       <Text style={styles.merchantUnreadDotText}>
-                        {merchantOrders.filter((o) => o.status === 'New Order').length}
+                        {merchantUnreadCount > 0
+                          ? `💬 ${merchantUnreadCount}`
+                          : merchantOrders.filter((o) => o.status === 'New Order').length}
                       </Text>
                     </View>
                   )}
@@ -13687,6 +13747,85 @@ export default function App() {
             </View>
           </SafeAreaView>
         </View>
+      )}
+
+      {/* --- GLOBAL IN-APP FLOATING NOTIFICATION BANNER (AUDIO BEEP + SLIDE DOWN FOR BOTH MODES) --- */}
+      {activeToastNotification && (
+        <Animated.View
+          style={[
+            styles.floatingNotificationBanner,
+            {
+              transform: [{ translateY: toastAnimY }],
+              opacity: toastOpacity,
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={[
+              styles.floatingNotificationInner,
+              (activeToastNotification.data?.type === 'chat' || activeToastNotification.type === 'chat') && {
+                borderColor: '#10B981',
+                backgroundColor: '#064E3B',
+              },
+            ]}
+            onPress={() => {
+              const notif = activeToastNotification;
+              setActiveToastNotification(null);
+              if (
+                notif?.data?.orderId &&
+                (notif?.type === 'chat' || notif?.data?.type === 'chat' || notif?.data?.senderRole)
+              ) {
+                const targetOrd = ordersRef.current?.find((o) => o.id === notif.data.orderId);
+                if (targetOrd) {
+                  openChatModal(
+                    targetOrd,
+                    notif.data.senderRole === 'merchant'
+                      ? 'merchant'
+                      : notif.data.senderRole === 'courier'
+                      ? 'courier'
+                      : 'buyer'
+                  );
+                  return;
+                }
+              }
+              if (appModeRef.current === 'merchant') {
+                setMerchantTab('orders');
+              } else {
+                setActiveTab('orders');
+              }
+            }}
+            activeOpacity={0.9}
+          >
+            <View style={styles.floatingNotificationIconBox}>
+              <Text style={{ fontSize: 20 }}>
+                {activeToastNotification.data?.type === 'chat' || activeToastNotification.type === 'chat'
+                  ? '💬'
+                  : activeToastNotification.type === 'merchant_new_order'
+                  ? '💰'
+                  : activeToastNotification.type === 'arrived'
+                  ? '📍'
+                  : '🔔'}
+              </Text>
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={styles.floatingNotificationTitle} numberOfLines={1}>
+                  {activeToastNotification.title}
+                </Text>
+                <Text style={styles.floatingNotificationTime}>Just now</Text>
+              </View>
+              <Text style={styles.floatingNotificationBody} numberOfLines={2}>
+                {activeToastNotification.body}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setActiveToastNotification(null)}
+              style={styles.floatingNotificationClose}
+            >
+              <Text style={{ color: '#94A3B8', fontSize: 13, fontWeight: '700' }}>✕</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Animated.View>
       )}
 
       {/* ========================================================================= */}
@@ -21003,6 +21142,25 @@ const styles = StyleSheet.create({
   navBadgeText: {
     color: '#FFFFFF',
     fontSize: 8.5,
+    fontWeight: '900',
+  },
+  navChatUnreadBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -8,
+    backgroundColor: '#EF4444',
+    borderRadius: 9,
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  navChatUnreadBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9.5,
     fontWeight: '900',
   },
 

@@ -506,7 +506,7 @@ export function notifyNewChatMessage({ order, message, recipientRole }) {
   triggerNotification({
     title: `💬 ${message.senderName}`,
     body: message.text,
-    type: 'chat',
+    type: recipientRole === 'merchant' ? 'merchant_new_order' : 'chat',
     data: {
       orderId: order.id,
       messageId: message.id,
