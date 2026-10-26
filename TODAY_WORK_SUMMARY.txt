@@ -924,6 +924,21 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        - Merchant to Customer ("Prepping your provisions now 👨‍🍳", "Ready for pickup 📦", "Bolt courier assigned 🛵", "On the way ⚡")
      * Instant 1-tap send with haptic/chime feedback and automatic auto-scroll.
 
+42. Classy GETIT Visual Receipt & Merchant Done/All Workflow Refinements:
+   - 🧾 Classy Visual Digital Receipt Modal with Watermark:
+     * Transformed receipt experience from simple text dump to an ultra-luxurious mobile receipt document.
+     * Rendered official GETIT transparent watermark logo (`LOGO_TRANSPARENT`) in the parchment background.
+     * Features gold/emerald circular emblem (`LOGO_CREAM`), `GETIT PRIVILÈGE DISPATCH` tax invoice header, and top & bottom perforated scalloped cutout notches.
+     * Includes aesthetic monospace barcode with Order ID, status pill, store and customer party profiles, itemized table with replacement tags, subtotal, delivery fee, and grand total in bold luxury emerald.
+     * Added verified Paystack digital settlement stamp (`PAID & VERIFIED`), Handover PIN, and assigned Bolt courier details.
+     * Integrated one-tap `[ 📤 Share to WhatsApp / Save Receipt ]` button invoking native share sheet directly from the receipt.
+   - 🚫 Removed Customer Chat on Merchant "Done" and "All" Tabs:
+     * Enforced business rule: once an order is completed or delivered, customer chat is completely disabled and hidden on the merchant side.
+     * Replaced chat button on `completed` and `all` tabs with a balanced, full-width `[ 📞 Call ]` and `[ 🧾 Official Receipt ]` action layout.
+   - 📦 Default Collapsed Orders on "Done" and "All" Tabs:
+     * Configured `completed` ("Done") and `all` tabs to render orders collapsed by default, requiring store owners to tap `▼ View Details` to expand.
+     * Maintained active tabs (`new`, `preparing`, `ready`) expanded by default so incoming orders are instantly readable without extra taps.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

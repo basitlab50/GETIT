@@ -1734,7 +1734,10 @@ export default function App() {
   const [ordersFilterTab, setOrdersFilterTab] = useState('active'); // 'active' | 'all' | 'completed' | 'cancelled'
   const [lastPlacedOrderId, setLastPlacedOrderId] = useState(null);
   const [expandedOrderId, setExpandedOrderId] = useState(null); // Accordion: details hidden by default until user taps "View Details"
-  const [collapsedMerchantOrderIds, setCollapsedMerchantOrderIds] = useState([]); // Shop side: details open by default; owner can collapse on tap
+  const [collapsedMerchantOrderIds, setCollapsedMerchantOrderIds] = useState([]); // Shop side: active tabs (new, prep, ready) open by default; can collapse on tap
+  const [expandedMerchantOrderIds, setExpandedMerchantOrderIds] = useState([]); // Shop side: 'done' and 'all' tabs collapsed by default; tap to expand
+  const [receiptModalVisible, setReceiptModalVisible] = useState(false); // Classy GETIT visual digital receipt modal
+  const [selectedReceiptOrder, setSelectedReceiptOrder] = useState(null);
   const [collapsedBoltMapOrderIds, setCollapsedBoltMapOrderIds] = useState([]);
   const [collapsedItemsOrderIds, setCollapsedItemsOrderIds] = useState([]);
   const [expandedStopsTimelineOrderIds, setExpandedStopsTimelineOrderIds] = useState([]);
@@ -1801,9 +1804,23 @@ export default function App() {
   };
 
   const toggleMerchantOrderAccordion = (orderId) => {
-    setCollapsedMerchantOrderIds((prev) =>
-      prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
-    );
+    const startsCollapsed = merchantOrderFilter === 'completed' || merchantOrderFilter === 'all';
+    if (startsCollapsed) {
+      setExpandedMerchantOrderIds((prev) =>
+        prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
+      );
+    } else {
+      setCollapsedMerchantOrderIds((prev) =>
+        prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
+      );
+    }
+  };
+
+  const handleOpenReceiptModal = (ord) => {
+    if (!ord) return;
+    setSelectedReceiptOrder(ord);
+    setReceiptModalVisible(true);
+    playAudioBeep('default');
   };
 
   const toggleBoltMapCollapse = (orderId) => {
@@ -10526,7 +10543,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     </View>
                     <TouchableOpacity
                       style={styles.buyerReceiptBtn}
-                      onPress={() => handleShareOrderReceipt(ord, 'buyer')}
+                      onPress={() => handleOpenReceiptModal(ord)}
                       activeOpacity={0.8}
                     >
                       <Text style={styles.buyerReceiptBtnText}>🧾 Receipt</Text>
@@ -12932,6 +12949,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         style={[styles.merchantFilterChip, active && styles.merchantFilterChipActive]}
                         onPress={() => {
                           setMerchantOrderFilter(f.id);
+                          setExpandedMerchantOrderIds([]);
                         }}
                       >
                         <Text style={[styles.merchantFilterText, active && styles.merchantFilterTextActive]}>
@@ -12959,8 +12977,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     const isPrep = stopStatus === 'Preparing';
                     const isPreparing = isPrep;
                     const isReady = stopStatus === 'Ready for Pickup';
-                    const isDone = stopStatus === 'Completed';
-                    const isExpanded = !collapsedMerchantOrderIds.includes(ord.id);
+                    const isDone = stopStatus === 'Completed' || ord.status === 'Delivered';
+                    const startsCollapsed = merchantOrderFilter === 'completed' || merchantOrderFilter === 'all';
+                    const isExpanded = startsCollapsed
+                      ? expandedMerchantOrderIds.includes(ord.id)
+                      : !collapsedMerchantOrderIds.includes(ord.id);
+                    const showCustomerChat = !isDone && merchantOrderFilter !== 'completed' && merchantOrderFilter !== 'all';
                     const itemsList = (matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items;
                     const itemsCount = ord.itemsCount || itemsList?.length || 0;
                     const earningsAmount = getMerchantOrderProductAmount(ord);
@@ -13047,35 +13069,39 @@ Support: help@getit.ng | Abuja, Nigeria`;
                               }}
                             >
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                <TouchableOpacity
-                                  style={{
-                                    flex: 1,
-                                    flexDirection: 'row',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: 6,
-                                    backgroundColor: merchantUnread > 0 ? '#DC2626' : '#056B4B',
-                                    paddingVertical: 8,
-                                    paddingHorizontal: 12,
-                                    borderRadius: 8,
-                                  }}
-                                  onPress={() => openChatModal(ord, 'buyer')}
-                                  activeOpacity={0.8}
-                                >
-                                  <Text style={{ fontSize: 13 }}>💬</Text>
-                                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
-                                    Chat with Customer{merchantUnread > 0 ? ` (${merchantUnread} New)` : ''}
-                                  </Text>
-                                </TouchableOpacity>
+                                {showCustomerChat && (
+                                  <TouchableOpacity
+                                    style={{
+                                      flex: 1,
+                                      flexDirection: 'row',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: 6,
+                                      backgroundColor: merchantUnread > 0 ? '#DC2626' : '#056B4B',
+                                      paddingVertical: 8,
+                                      paddingHorizontal: 12,
+                                      borderRadius: 8,
+                                    }}
+                                    onPress={() => openChatModal(ord, 'buyer')}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Text style={{ fontSize: 13 }}>💬</Text>
+                                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
+                                      Chat with Customer{merchantUnread > 0 ? ` (${merchantUnread} New)` : ''}
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
 
                                 {ord.customerPhone ? (
                                   <TouchableOpacity
                                     style={{
+                                      flex: showCustomerChat ? undefined : 1,
                                       flexDirection: 'row',
                                       alignItems: 'center',
-                                      gap: 4,
+                                      justifyContent: 'center',
+                                      gap: 5,
                                       backgroundColor: '#FFFFFF',
-                                      paddingVertical: 8,
+                                      paddingVertical: 9,
                                       paddingHorizontal: 12,
                                       borderRadius: 8,
                                       borderWidth: 1,
@@ -13084,28 +13110,32 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                     onPress={() => Linking.openURL(`tel:${ord.customerPhone}`)}
                                     activeOpacity={0.8}
                                   >
-                                    <Text style={{ fontSize: 12 }}>📞</Text>
-                                    <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#334155' }}>Call</Text>
+                                    <Text style={{ fontSize: 13 }}>📞</Text>
+                                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>Call</Text>
                                   </TouchableOpacity>
                                 ) : null}
 
                                 <TouchableOpacity
                                   style={{
+                                    flex: showCustomerChat ? undefined : 1,
                                     flexDirection: 'row',
                                     alignItems: 'center',
-                                    gap: 4,
-                                    backgroundColor: '#FFFFFF',
-                                    paddingVertical: 8,
-                                    paddingHorizontal: 10,
+                                    justifyContent: 'center',
+                                    gap: 5,
+                                    backgroundColor: showCustomerChat ? '#FFFFFF' : '#056B4B',
+                                    paddingVertical: 9,
+                                    paddingHorizontal: 12,
                                     borderRadius: 8,
                                     borderWidth: 1,
-                                    borderColor: '#CBD5E1',
+                                    borderColor: showCustomerChat ? '#CBD5E1' : '#047857',
                                   }}
-                                  onPress={() => handleShareOrderReceipt(ord, 'merchant')}
+                                  onPress={() => handleOpenReceiptModal(ord)}
                                   activeOpacity={0.8}
                                 >
-                                  <Text style={{ fontSize: 12 }}>🧾</Text>
-                                  <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#334155' }}>Receipt</Text>
+                                  <Text style={{ fontSize: 13 }}>🧾</Text>
+                                  <Text style={{ fontSize: 12, fontWeight: '800', color: showCustomerChat ? '#334155' : '#FFFFFF' }}>
+                                    {showCustomerChat ? 'Receipt' : 'Official Receipt'}
+                                  </Text>
                                 </TouchableOpacity>
                               </View>
 
@@ -18008,6 +18038,254 @@ Support: help@getit.ng | Abuja, Nigeria`;
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* --- CLASSY GETIT VISUAL DIGITAL RECEIPT MODAL --- */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={receiptModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setReceiptModalVisible(false)}
+      >
+        <View style={styles.receiptModalOverlay}>
+          <View style={styles.receiptModalContainer}>
+            {/* Modal Top Actions */}
+            <View style={styles.receiptTopBar}>
+              <Text style={styles.receiptTopBarTitle}>Official Order Receipt</Text>
+              <TouchableOpacity
+                onPress={() => setReceiptModalVisible(false)}
+                style={styles.receiptCloseBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.receiptCloseBtnText}>✕ Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Scrollable Receipt Body */}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.receiptScrollContent}
+            >
+              {selectedReceiptOrder && (() => {
+                const ord = selectedReceiptOrder;
+                const isMulti = ord.isMultiStore || (ord.stops && ord.stops.length > 1);
+                const itemsList = Array.isArray(ord.items) ? ord.items : [];
+                const subtotal = Number(ord.subtotal) || Number(ord.itemsSubtotal) || Number(ord.total) || 0;
+                const deliveryFee = Number(ord.deliveryFee) || 0;
+                const total = Number(ord.total) || (subtotal + deliveryFee);
+                const dateStr = ord.createdAt || new Date(ord.timestamp || Date.now()).toLocaleDateString([], {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                });
+
+                return (
+                  <View style={styles.receiptParchment}>
+                    {/* Watermark Logo in the Background */}
+                    <Image
+                      source={LOGO_TRANSPARENT}
+                      style={styles.receiptWatermarkLogo}
+                      resizeMode="contain"
+                    />
+
+                    {/* Top Scalloped / Notch Pattern Decoration */}
+                    <View style={styles.receiptTopNotchRow}>
+                      {[...Array(16)].map((_, i) => (
+                        <View key={i} style={styles.receiptTopNotchCircle} />
+                      ))}
+                    </View>
+
+                    {/* Brand Crest Header */}
+                    <View style={styles.receiptBrandHeader}>
+                      <View style={styles.receiptEmblemWrap}>
+                        <Image source={LOGO_CREAM} style={styles.receiptEmblemImg} resizeMode="cover" />
+                      </View>
+                      <Text style={styles.receiptBrandSub}>GETIT PRIVILÈGE DISPATCH</Text>
+                      <Text style={styles.receiptBrandMain}>TAX INVOICE & RECEIPT</Text>
+                      <Text style={styles.receiptLocationSub}>Abuja, Federal Capital Territory • Instant Delivery</Text>
+                    </View>
+
+                    {/* Aesthetic Barcode Strip */}
+                    <View style={styles.receiptBarcodeBox}>
+                      <Text style={styles.receiptBarcodeLines}>||| | ||||| || |||||| | ||||||| ||| |||| | ||||||</Text>
+                      <View style={styles.receiptBarcodeMetaRow}>
+                        <Text style={styles.receiptBarcodeOrderId}>ORDER #{ord.id}</Text>
+                        <View style={styles.receiptStatusPill}>
+                          <Text style={styles.receiptStatusPillText}>
+                            {ord.status === 'Delivered' ? '✅ DELIVERED' : `🟢 ${ord.status?.toUpperCase() || 'ACTIVE'}`}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.receiptTimestampText}>{dateStr}</Text>
+                    </View>
+
+                    {/* Store & Customer Details Two-Column Card */}
+                    <View style={styles.receiptPartiesCard}>
+                      <View style={styles.receiptPartyCol}>
+                        <Text style={styles.receiptPartyRole}>ISSUED BY STORE</Text>
+                        <Text style={styles.receiptPartyName} numberOfLines={2}>
+                          {ord.storeName || currentMerchantStore?.name || 'GETIT Verified Store'}
+                        </Text>
+                        <Text style={styles.receiptPartySub}>
+                          {isMulti ? `Multi-Hub (${ord.stops.length} Stores)` : 'Verified Merchant Hub'}
+                        </Text>
+                      </View>
+                      <View style={styles.receiptPartyDivider} />
+                      <View style={styles.receiptPartyCol}>
+                        <Text style={styles.receiptPartyRole}>BILLED TO CLIENT</Text>
+                        <Text style={styles.receiptPartyName} numberOfLines={1}>
+                          {ord.customerName || 'Valued Customer'}
+                        </Text>
+                        <Text style={styles.receiptPartySub} numberOfLines={2}>
+                          {ord.customerAddress || 'Abuja, Nigeria'}
+                        </Text>
+                        {ord.deliveryLocation?.landmark ? (
+                          <Text style={styles.receiptPartyLandmark} numberOfLines={1}>
+                            Near: {ord.deliveryLocation.landmark}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+
+                    {/* Perforated Divider */}
+                    <View style={styles.receiptDashedLine} />
+
+                    {/* Itemized Table Header */}
+                    <View style={styles.receiptItemsHeaderRow}>
+                      <Text style={[styles.receiptItemsHeaderCol, { flex: 2 }]}>ITEM / DESCRIPTION</Text>
+                      <Text style={[styles.receiptItemsHeaderCol, { width: 44, textAlign: 'center' }]}>QTY</Text>
+                      <Text style={[styles.receiptItemsHeaderCol, { width: 80, textAlign: 'right' }]}>AMOUNT</Text>
+                    </View>
+
+                    {/* Item Rows */}
+                    <View style={styles.receiptItemsList}>
+                      {itemsList.length === 0 ? (
+                        <View style={styles.receiptItemRow}>
+                          <Text style={[styles.receiptItemName, { flex: 2 }]}>Provisions Order Bundle</Text>
+                          <Text style={[styles.receiptItemQty, { width: 44, textAlign: 'center' }]}>1x</Text>
+                          <Text style={[styles.receiptItemPrice, { width: 80, textAlign: 'right' }]}>{formatNaira(total)}</Text>
+                        </View>
+                      ) : (
+                        itemsList.map((it, itIdx) => (
+                          <View key={itIdx} style={styles.receiptItemRow}>
+                            <View style={{ flex: 2, paddingRight: 6 }}>
+                              <Text style={styles.receiptItemName}>{it.name}</Text>
+                              {it.storeName && (
+                                <Text style={styles.receiptItemStore}>{it.storeName}</Text>
+                              )}
+                              {it.isReplacement && (
+                                <Text style={styles.receiptItemReplacedTag}>🔄 Swapped & Approved</Text>
+                              )}
+                            </View>
+                            <View style={{ width: 44, alignItems: 'center' }}>
+                              <View style={styles.receiptQtyPill}>
+                                <Text style={styles.receiptQtyText}>{it.qty || 1}x</Text>
+                              </View>
+                            </View>
+                            <Text style={[styles.receiptItemPrice, { width: 80, textAlign: 'right' }]}>
+                              {formatNaira((Number(it.price) || 0) * (Number(it.qty) || 1))}
+                            </Text>
+                          </View>
+                        ))
+                      )}
+                    </View>
+
+                    {/* Perforated Divider */}
+                    <View style={styles.receiptDashedLine} />
+
+                    {/* Financial Summary Breakdown */}
+                    <View style={styles.receiptFinanceBlock}>
+                      <View style={styles.receiptFinanceRow}>
+                        <Text style={styles.receiptFinanceLabel}>Items Subtotal</Text>
+                        <Text style={styles.receiptFinanceVal}>{formatNaira(subtotal)}</Text>
+                      </View>
+                      <View style={styles.receiptFinanceRow}>
+                        <Text style={styles.receiptFinanceLabel}>Delivery & Dispatch</Text>
+                        <Text style={styles.receiptFinanceVal}>
+                          {deliveryFee > 0 ? formatNaira(deliveryFee) : '₦0.00 (Free)'}
+                        </Text>
+                      </View>
+                      <View style={styles.receiptFinanceRow}>
+                        <Text style={styles.receiptFinanceLabel}>Service & VAT (7.5%)</Text>
+                        <Text style={[styles.receiptFinanceVal, { color: '#059669' }]}>₦0.00 (Waived)</Text>
+                      </View>
+
+                      {/* Double Underline */}
+                      <View style={styles.receiptTotalDivider} />
+
+                      {/* Grand Total */}
+                      <View style={styles.receiptGrandTotalRow}>
+                        <View>
+                          <Text style={styles.receiptGrandTotalLabel}>TOTAL PAID</Text>
+                          <Text style={styles.receiptPaymentMethod}>Paystack Instant Settlement</Text>
+                        </View>
+                        <Text style={styles.receiptGrandTotalVal}>{formatNaira(total)}</Text>
+                      </View>
+                    </View>
+
+                    {/* Security Verification & Courier Badge */}
+                    <View style={styles.receiptSecurityBlock}>
+                      <View style={styles.receiptSecurityPinCard}>
+                        <Text style={styles.receiptSecurityPinTitle}>🔐 HANDOVER SECURITY PIN</Text>
+                        <Text style={styles.receiptSecurityPinCode}>{ord.deliveryPin || '8492'}</Text>
+                        <Text style={styles.receiptSecurityPinSub}>Presented to courier upon physical arrival</Text>
+                      </View>
+
+                      <View style={styles.receiptCourierCard}>
+                        <Text style={{ fontSize: 18, marginRight: 8 }}>🛵</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.receiptCourierName}>
+                            {ord.boltRider?.name || 'Musa Ibrahim (Bolt Courier)'}
+                          </Text>
+                          <Text style={styles.receiptCourierSub}>Verified Rapid Dispatch Courier • Abuja</Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Official Stamp */}
+                    <View style={styles.receiptStampWrap}>
+                      <View style={styles.receiptStampBox}>
+                        <Text style={styles.receiptStampText}>PAID & VERIFIED</Text>
+                        <Text style={styles.receiptStampSub}>GETIT • OFFICIAL LEDGER</Text>
+                      </View>
+                    </View>
+
+                    {/* Bottom Scalloped Notches */}
+                    <View style={styles.receiptBottomNotchRow}>
+                      {[...Array(16)].map((_, i) => (
+                        <View key={i} style={styles.receiptBottomNotchCircle} />
+                      ))}
+                    </View>
+                  </View>
+                );
+              })()}
+
+              {/* Action Buttons */}
+              <View style={styles.receiptActionsWrap}>
+                <TouchableOpacity
+                  style={styles.receiptShareActionBtn}
+                  onPress={() => handleShareOrderReceipt(selectedReceiptOrder)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={{ fontSize: 16 }}>📤</Text>
+                  <Text style={styles.receiptShareActionBtnText}>Share to WhatsApp / Save Receipt</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.receiptDoneActionBtn}
+                  onPress={() => setReceiptModalVisible(false)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.receiptDoneActionBtnText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -27212,6 +27490,454 @@ const styles = StyleSheet.create({
   confirmPayoutBtnText: {
     fontSize: 14.5,
     fontWeight: '900',
+    color: '#FFFFFF',
+  },
+
+  // --- Classy GETIT Visual Digital Receipt Styles ---
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+    paddingVertical: Platform.OS === 'ios' ? 44 : 24,
+  },
+  receiptModalContainer: {
+    width: '100%',
+    maxWidth: 440,
+    maxHeight: '94%',
+    backgroundColor: 'transparent',
+  },
+  receiptTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    marginBottom: 10,
+  },
+  receiptTopBarTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#F8FAFC',
+    letterSpacing: 0.5,
+  },
+  receiptCloseBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  receiptCloseBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  receiptScrollContent: {
+    paddingBottom: 24,
+  },
+  receiptParchment: {
+    backgroundColor: '#FCFAF7',
+    borderRadius: 18,
+    paddingHorizontal: 20,
+    paddingVertical: 22,
+    overflow: 'hidden',
+    position: 'relative',
+    borderWidth: 1.5,
+    borderColor: '#E2D9C8',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    elevation: 8,
+  },
+  receiptWatermarkLogo: {
+    position: 'absolute',
+    top: '32%',
+    left: '50%',
+    marginLeft: -125,
+    width: 250,
+    height: 250,
+    opacity: 0.05,
+  },
+  receiptTopNotchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    position: 'absolute',
+    top: -8,
+    left: 8,
+    right: 8,
+  },
+  receiptTopNotchCircle: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+  },
+  receiptBottomNotchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    position: 'absolute',
+    bottom: -8,
+    left: 8,
+    right: 8,
+  },
+  receiptBottomNotchCircle: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+  },
+  receiptBrandHeader: {
+    alignItems: 'center',
+    marginTop: 6,
+    marginBottom: 14,
+  },
+  receiptEmblemWrap: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#056B4B',
+    borderWidth: 2,
+    borderColor: '#D4AF37',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  receiptEmblemImg: {
+    width: 58,
+    height: 58,
+  },
+  receiptBrandSub: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 2,
+    color: '#854D0E',
+    marginBottom: 2,
+  },
+  receiptBrandMain: {
+    fontSize: 19,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: 0.5,
+  },
+  receiptLocationSub: {
+    fontSize: 10.5,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  receiptBarcodeBox: {
+    backgroundColor: '#F1ECE1',
+    borderRadius: 10,
+    padding: 10,
+    alignItems: 'center',
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E2D9C8',
+  },
+  receiptBarcodeLines: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 15,
+    letterSpacing: 3,
+    color: '#334155',
+    fontWeight: '900',
+    marginBottom: 4,
+  },
+  receiptBarcodeMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 2,
+  },
+  receiptBarcodeOrderId: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  receiptStatusPill: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  receiptStatusPillText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#166534',
+  },
+  receiptTimestampText: {
+    fontSize: 10.5,
+    color: '#64748B',
+    marginTop: 4,
+  },
+  receiptPartiesCard: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 10,
+    marginBottom: 12,
+  },
+  receiptPartyCol: {
+    flex: 1,
+  },
+  receiptPartyDivider: {
+    width: 1,
+    backgroundColor: '#E2E8F0',
+    marginHorizontal: 10,
+  },
+  receiptPartyRole: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    color: '#94A3B8',
+    marginBottom: 2,
+  },
+  receiptPartyName: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  receiptPartySub: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  receiptPartyLandmark: {
+    fontSize: 9.5,
+    color: '#059669',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  receiptDashedLine: {
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    marginVertical: 10,
+  },
+  receiptItemsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  receiptItemsHeaderCol: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    color: '#64748B',
+  },
+  receiptItemsList: {
+    paddingVertical: 6,
+  },
+  receiptItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#F1F5F9',
+  },
+  receiptItemName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  receiptItemStore: {
+    fontSize: 9.5,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  receiptItemReplacedTag: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#0284C7',
+    marginTop: 1,
+  },
+  receiptQtyPill: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  receiptQtyText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  receiptItemPrice: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  receiptFinanceBlock: {
+    paddingVertical: 4,
+  },
+  receiptFinanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 3,
+  },
+  receiptFinanceLabel: {
+    fontSize: 11.5,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  receiptFinanceVal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  receiptTotalDivider: {
+    height: 2,
+    backgroundColor: '#0F172A',
+    marginVertical: 8,
+  },
+  receiptGrandTotalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  receiptGrandTotalLabel: {
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    color: '#0F172A',
+  },
+  receiptPaymentMethod: {
+    fontSize: 9.5,
+    color: '#059669',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  receiptGrandTotalVal: {
+    fontSize: 21,
+    fontWeight: '900',
+    color: '#056B4B',
+  },
+  receiptSecurityBlock: {
+    marginTop: 12,
+    gap: 8,
+  },
+  receiptSecurityPinCard: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 10,
+    padding: 10,
+    alignItems: 'center',
+  },
+  receiptSecurityPinTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1,
+    color: '#92400E',
+  },
+  receiptSecurityPinCode: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 6,
+    color: '#B45309',
+    marginVertical: 2,
+  },
+  receiptSecurityPinSub: {
+    fontSize: 9.5,
+    color: '#78350F',
+    fontWeight: '600',
+  },
+  receiptCourierCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 10,
+  },
+  receiptCourierName: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  receiptCourierSub: {
+    fontSize: 9.5,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  receiptStampWrap: {
+    alignItems: 'center',
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  receiptStampBox: {
+    borderWidth: 2,
+    borderColor: '#059669',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 5,
+    transform: [{ rotate: '-4deg' }],
+    backgroundColor: 'rgba(220, 252, 231, 0.4)',
+    alignItems: 'center',
+  },
+  receiptStampText: {
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    color: '#059669',
+  },
+  receiptStampSub: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    letterSpacing: 1,
+    color: '#047857',
+    marginTop: 1,
+  },
+  receiptActionsWrap: {
+    marginTop: 12,
+    gap: 10,
+  },
+  receiptShareActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#056B4B',
+    borderRadius: 14,
+    paddingVertical: 14,
+    shadowColor: '#056B4B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  receiptShareActionBtnText: {
+    fontSize: 14.5,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  receiptDoneActionBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 14,
+    paddingVertical: 12,
+  },
+  receiptDoneActionBtnText: {
+    fontSize: 13.5,
+    fontWeight: '800',
     color: '#FFFFFF',
   },
 
