@@ -846,9 +846,28 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - Supabase Realtime Loopback:
      * Configured `broadcast: { ack: false, self: true }` in `supabaseService.js` to guarantee broadcast receipt across multi-role device testing.
 
+37. Single Seller Chat Action Button & Persistent Unread Message Notification System:
+   - Eliminated Duplicate Button on Seller Side:
+     * Removed the duplicate "Chat with Customer" and "Call" buttons from inside `mCustomerInfoBox`.
+     * Retained the single, prominent, always-visible quick action bar right below the order summary header with live unread indicators.
+   - Dynamic & Persistent Unread Message Counting:
+     * Derived unread counts directly from `order.messages` using `m.recipientRole`, `m.readByMerchant`, and `m.readByBuyer` via `getOrderUnreadCount(order, role)`.
+     * Persisted `unreadChatMap` to AsyncStorage (`getit_unread_chat_map`) so unread status is retained across mode switches (Buyer ↔ Seller) and app reloads.
+     * Bottom Navigation Bar: "Orders" tab now dynamically displays red unread badges with accurate counts for both Customer and Merchant.
+     * Order Card Badges:
+       - Header: Bright red pill `💬 [count] New Message(s)`.
+       - Action Button: Transitions to urgent crimson (`#DC2626`) with `💬 Chat with Customer ([count] New)` (or `💬 Message Seller ([count] New)`).
+       - Incoming Message Snippet: Displays a preview card showing the latest unread message text directly under the button.
+   - Reliable Notification & Chime Delivery:
+     * Fixed broadcast listener to evaluate `isAddressedToMe` without faulty self-ID dropping.
+     * Debounce window in `triggerNotification` adjusted to 200ms for chat messages so notifications are never suppressed.
+     * Global slide-down floating toast banner opens the exact chat modal for both Customer and Merchant when tapped.
+     * Opening the chat modal marks all messages as read (`readByMerchant: true` or `readByBuyer: true`), immediately clearing unread badges from navigation tabs and order cards.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
+
 
 
 

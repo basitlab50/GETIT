@@ -247,12 +247,14 @@ export async function triggerNotification({
   type = 'default',
   data = {},
 }) {
-  const notifKey = `${type}_${data.orderId || title}`;
+  const isChat = type === 'chat' || !!data.messageId || !!data.senderRole;
+  const notifKey = data.messageId ? `chat_${data.messageId}` : `${type}_${data.orderId || title}`;
   const now = Date.now();
   const lastFired = recentNotificationTimestamps.get(notifKey) || 0;
 
-  // Suppress duplicate notification if already sent recently (3s debounce)
-  if (now - lastFired < 3000) {
+  // Suppress duplicate notification if already sent recently (3s debounce for status, 200ms for chat)
+  const debounceWindow = isChat ? 200 : 3000;
+  if (now - lastFired < debounceWindow) {
     return;
   }
   recentNotificationTimestamps.set(notifKey, now);

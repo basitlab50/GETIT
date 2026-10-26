@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -1517,23 +1517,17 @@ export default function App() {
   const [unreadChatMap, setUnreadChatMap] = useState({});
   const chatScrollRef = useRef(null);
 
-  const customerUnreadCount = useMemo(() => {
-    return Object.entries(unreadChatMap).reduce((sum, [key, count]) => {
-      if (key.endsWith('_merchant') || key.endsWith('_courier')) {
-        return sum + (Number(count) || 0);
-      }
-      return sum;
-    }, 0);
-  }, [unreadChatMap]);
-
-  const merchantUnreadCount = useMemo(() => {
-    return Object.entries(unreadChatMap).reduce((sum, [key, count]) => {
-      if (key.endsWith('_buyer')) {
-        return sum + (Number(count) || 0);
-      }
-      return sum;
-    }, 0);
-  }, [unreadChatMap]);
+  // Load persistent unread badge map on app mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const storedMap = await AsyncStorage.getItem('getit_unread_chat_map');
+        if (storedMap) {
+          setUnreadChatMap(JSON.parse(storedMap));
+        }
+      } catch (e) {}
+    })();
+  }, []);
 
   // --- USER AUTH & PROFILES (BUYER & SELLER) ---
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -1747,6 +1741,7 @@ export default function App() {
   useEffect(() => {
     ordersRef.current = orders;
   }, [orders]);
+  const merchantOrdersRef = useRef([]);
   const alertedReplacementDecisionsRef = useRef(new Set()); // Prevents recurring duplicate merchant decision alerts
 
   const toggleOrderAccordion = (orderId) => {
@@ -3113,35 +3108,40 @@ export default function App() {
         const { orderId, message } = payload;
         if (orderId && message) {
           const myMode = appModeRef.current;
-          const currentUserId = currentUserRef.current?.id;
-          const isFromSelf =
-            (message.senderId && currentUserId && message.senderId === currentUserId) ||
-            (message.senderRole === (myMode === 'merchant' ? 'merchant' : 'buyer') && !message.isSimulation);
+          const isAddressedToMe =
+            (myMode === 'customer' && message.recipientRole === 'buyer') ||
+            (myMode === 'merchant' && message.recipientRole === 'merchant');
 
           if (chatModalVisibleRef.current && targetChatOrderIdRef.current === orderId) {
             setChatMessages((prev) => {
               if (prev.some((m) => m.id === message.id)) return prev;
               return [...prev, message];
             });
-          } else if (!isFromSelf) {
-            setUnreadChatMap((prev) => {
-              const key = `${orderId}_${message.senderRole}`;
-              return { ...prev, [key]: (Number(prev[key]) || 0) + 1 };
-            });
-
-            const isAddressedToMe =
-              (myMode === 'customer' && message.recipientRole === 'buyer') ||
-              (myMode === 'merchant' && message.recipientRole === 'merchant');
-
+          } else {
+            // When recipient is not actively inside the chat modal, trigger unread badge & chime/toast
             if (isAddressedToMe) {
-              const targetOrd = ordersRef.current?.find((o) => o.id === orderId) || {
+              setUnreadChatMap((prev) => {
+                const key = `${orderId}_${message.senderRole}`;
+                const updated = { ...prev, [key]: (Number(prev[key]) || 0) + 1 };
+                try {
+                  AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
+                } catch (e) {}
+                return updated;
+              });
+
+              const allOrders = [...(ordersRef.current || []), ...(merchantOrdersRef.current || [])];
+              const targetOrd = allOrders.find((o) => o.id === orderId) || {
                 id: orderId,
                 storeId: message.storeId,
                 customerId: message.customerId,
+                storeName: message.storeName || (message.senderRole === 'merchant' ? message.senderName : 'Store'),
+                customerName: message.customerName || (message.senderRole === 'buyer' ? message.senderName : 'Customer'),
               };
+
               try {
                 playAudioBeep(myMode === 'merchant' ? 'merchant_new_order' : 'default');
               } catch (e) {}
+
               try {
                 notifyNewChatMessage({
                   order: targetOrd,
@@ -5036,12 +5036,38 @@ export default function App() {
     const stored = await getOrderChatMessages(order.id);
     const orderMsgs = order.messages || [];
     const combined = orderMsgs.length > stored.length ? orderMsgs : stored;
-    setChatMessages(combined);
 
-    // Clear unread badge
+    const viewerRole = appMode === 'merchant' ? 'merchant' : 'buyer';
+    const readUpdated = combined.map((m) => {
+      if (viewerRole === 'merchant' && (m.recipientRole === 'merchant' || m.senderRole === 'buyer')) {
+        return { ...m, readByMerchant: true, read: true };
+      }
+      if (viewerRole === 'buyer' && (m.recipientRole === 'buyer' || m.senderRole === 'merchant' || m.senderRole === 'courier')) {
+        return { ...m, readByBuyer: true, read: true };
+      }
+      return m;
+    });
+
+    setChatMessages(readUpdated);
+
+    try {
+      await AsyncStorage.setItem(`getit_chat_messages_${order.id}`, JSON.stringify(readUpdated));
+    } catch (e) {}
+
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => (o.id === order.id ? { ...o, messages: readUpdated } : o))
+    );
+
+    // Clear unread badge in unreadChatMap and persist to AsyncStorage
     setUnreadChatMap((prev) => {
       const updated = { ...prev };
       delete updated[`${order.id}_${partnerRole}`];
+      delete updated[`${order.id}_buyer`];
+      delete updated[`${order.id}_merchant`];
+      delete updated[`${order.id}_courier`];
+      try {
+        AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
+      } catch (e) {}
       return updated;
     });
 
@@ -5061,6 +5087,8 @@ export default function App() {
     const newMsg = {
       id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       orderId: targetChatOrder.id,
+      storeId: targetChatOrder.storeId || targetChatOrder.store_id || currentMerchantStore?.id,
+      customerId: targetChatOrder.customerId || targetChatOrder.customer_id || currentUser?.id,
       senderId: currentUser?.id || myRole,
       senderName: myName,
       senderRole: myRole,
@@ -5068,13 +5096,36 @@ export default function App() {
       text,
       createdAt: new Date().toISOString(),
       read: false,
+      readByMerchant: myRole === 'merchant',
+      readByBuyer: myRole === 'buyer',
     };
 
     setChatInputText('');
     setChatMessages((prev) => [...prev, newMsg]);
 
+    // Update local state orders immediately
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === targetChatOrder.id) {
+          const existing = o.messages || [];
+          return { ...o, messages: [...existing, newMsg] };
+        }
+        return o;
+      })
+    );
+
     // Send through supabase & WebSocket broadcast
     await sendOrderChatMessage(targetChatOrder.id, newMsg);
+
+    // Increment unread count for recipient in unreadChatMap & AsyncStorage
+    setUnreadChatMap((prev) => {
+      const key = `${targetChatOrder.id}_${myRole}`;
+      const updated = { ...prev, [key]: (Number(prev[key]) || 0) + 1 };
+      try {
+        AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
 
     // If buyer sends message to courier Musa, autonomous courier responds realistically
     if (targetChatPartner.role === 'courier' && myRole === 'buyer') {
@@ -5089,6 +5140,8 @@ export default function App() {
         const courierMsg = {
           id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
           orderId: targetChatOrder.id,
+          storeId: targetChatOrder.storeId,
+          customerId: targetChatOrder.customerId,
           senderId: 'courier-musa',
           senderName: targetChatOrder.boltRider?.name || 'Musa Ibrahim',
           senderRole: 'courier',
@@ -5096,8 +5149,19 @@ export default function App() {
           text: replyText,
           createdAt: new Date().toISOString(),
           read: false,
+          readByMerchant: false,
+          readByBuyer: false,
         };
         setChatMessages((prev) => [...prev, courierMsg]);
+        updateAndPersistOrders((prev) =>
+          prev.map((o) => {
+            if (o.id === targetChatOrder.id) {
+              const existing = o.messages || [];
+              return { ...o, messages: [...existing, courierMsg] };
+            }
+            return o;
+          })
+        );
         await sendOrderChatMessage(targetChatOrder.id, courierMsg);
         try {
           playAudioBeep('default');
@@ -5495,6 +5559,82 @@ export default function App() {
     }
     return false;
   });
+
+  useEffect(() => {
+    merchantOrdersRef.current = merchantOrders;
+  }, [merchantOrders]);
+
+  // Dynamic & persistent unread count derivation from order.messages + live unreadChatMap
+  const getOrderUnreadCount = useCallback(
+    (order, role) => {
+      if (!order) return 0;
+      const msgs = order.messages || [];
+      let count = 0;
+      if (Array.isArray(msgs)) {
+        count = msgs.filter((m) => {
+          if (role === 'merchant') {
+            return (
+              (m.recipientRole === 'merchant' || m.senderRole === 'buyer') &&
+              !m.readByMerchant &&
+              m.senderRole !== 'merchant'
+            );
+          } else {
+            return (
+              (m.recipientRole === 'buyer' ||
+                m.senderRole === 'merchant' ||
+                m.senderRole === 'courier') &&
+              !m.readByBuyer &&
+              m.senderRole !== 'buyer'
+            );
+          }
+        }).length;
+      }
+      const partnerKey =
+        role === 'merchant' ? `${order.id}_buyer` : `${order.id}_merchant`;
+      const courierKey = `${order.id}_courier`;
+      const mapCount =
+        role === 'merchant'
+          ? Number(unreadChatMap[partnerKey]) || 0
+          : (Number(unreadChatMap[partnerKey]) || 0) +
+            (Number(unreadChatMap[courierKey]) || 0);
+      return Math.max(count, mapCount);
+    },
+    [unreadChatMap]
+  );
+
+  const customerUnreadCount = useMemo(() => {
+    let count = 0;
+    (orders || []).forEach((ord) => {
+      count += getOrderUnreadCount(ord, 'buyer');
+    });
+    Object.entries(unreadChatMap).forEach(([key, val]) => {
+      if (
+        (key.endsWith('_merchant') || key.endsWith('_courier')) &&
+        !orders.some(
+          (o) => `${o.id}_merchant` === key || `${o.id}_courier` === key
+        )
+      ) {
+        count += Number(val) || 0;
+      }
+    });
+    return count;
+  }, [orders, unreadChatMap, getOrderUnreadCount]);
+
+  const merchantUnreadCount = useMemo(() => {
+    let count = 0;
+    (merchantOrders || []).forEach((ord) => {
+      count += getOrderUnreadCount(ord, 'merchant');
+    });
+    Object.entries(unreadChatMap).forEach(([key, val]) => {
+      if (
+        key.endsWith('_buyer') &&
+        !merchantOrders.some((o) => `${o.id}_buyer` === key)
+      ) {
+        count += Number(val) || 0;
+      }
+    });
+    return count;
+  }, [merchantOrders, unreadChatMap, getOrderUnreadCount]);
 
   const merchantFilteredOrders = [...merchantOrders]
     .sort((a, b) => {
@@ -9096,10 +9236,10 @@ export default function App() {
                     <View style={{ flex: 1, marginRight: 8 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                         <Text style={styles.orderCardTitle} numberOfLines={1}>{ord.storeName}</Text>
-                        {(unreadChatMap[`${ord.id}_merchant`] > 0 || unreadChatMap[`${ord.id}_courier`] > 0) && (
+                        {getOrderUnreadCount(ord, 'buyer') > 0 && (
                           <View style={{ backgroundColor: '#EF4444', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
                             <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
-                              💬 New Message
+                              💬 {getOrderUnreadCount(ord, 'buyer')} New Message{getOrderUnreadCount(ord, 'buyer') > 1 ? 's' : ''}
                             </Text>
                           </View>
                         )}
@@ -9159,78 +9299,82 @@ export default function App() {
                   </TouchableOpacity>
 
                   {/* Always-Visible Quick Chat Action Bar (Visible in both collapsed & expanded states) */}
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 8,
-                      paddingHorizontal: 14,
-                      paddingVertical: 9,
-                      backgroundColor: '#F8FAFC',
-                      borderTopWidth: 1,
-                      borderTopColor: '#E2E8F0',
-                    }}
-                  >
-                    <TouchableOpacity
-                      style={{
-                        flex: 1,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                        backgroundColor: '#056B4B',
-                        paddingVertical: 8,
-                        paddingHorizontal: 12,
-                        borderRadius: 8,
-                      }}
-                      onPress={() => openChatModal(ord, 'merchant')}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={{ fontSize: 13 }}>💬</Text>
-                      <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' }}>
-                        Message Seller
-                      </Text>
-                      {unreadChatMap[`${ord.id}_merchant`] ? (
-                        <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
-                          <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
-                            {unreadChatMap[`${ord.id}_merchant`]}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </TouchableOpacity>
+                  {(() => {
+                    const buyerUnread = getOrderUnreadCount(ord, 'buyer');
+                    const incomingMsgs = (ord.messages || []).filter(
+                      (m) => (m.recipientRole === 'buyer' || m.senderRole === 'merchant' || m.senderRole === 'courier') && !m.readByBuyer && m.senderRole !== 'buyer'
+                    );
+                    const latestMsg = incomingMsgs[incomingMsgs.length - 1];
 
-                    {ord.boltRider && (
-                      <TouchableOpacity
+                    return (
+                      <View
                         style={{
-                          flex: 1,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 6,
-                          backgroundColor: '#F0FDF4',
-                          borderWidth: 1,
-                          borderColor: '#BBF7D0',
-                          paddingVertical: 8,
-                          paddingHorizontal: 12,
-                          borderRadius: 8,
+                          paddingHorizontal: 14,
+                          paddingVertical: 9,
+                          backgroundColor: '#F8FAFC',
+                          borderTopWidth: 1,
+                          borderTopColor: '#E2E8F0',
                         }}
-                        onPress={() => openChatModal(ord, 'courier')}
-                        activeOpacity={0.8}
                       >
-                        <Text style={{ fontSize: 13 }}>🛵</Text>
-                        <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#065F46' }}>
-                          Message Courier
-                        </Text>
-                        {unreadChatMap[`${ord.id}_courier`] ? (
-                          <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
-                            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
-                              {unreadChatMap[`${ord.id}_courier`]}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <TouchableOpacity
+                            style={{
+                              flex: 1,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 6,
+                              backgroundColor: buyerUnread > 0 ? '#DC2626' : '#056B4B',
+                              paddingVertical: 8,
+                              paddingHorizontal: 12,
+                              borderRadius: 8,
+                            }}
+                            onPress={() => openChatModal(ord, 'merchant')}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={{ fontSize: 13 }}>💬</Text>
+                            <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' }}>
+                              Message Seller{buyerUnread > 0 ? ` (${buyerUnread} New)` : ''}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {ord.boltRider && (
+                            <TouchableOpacity
+                              style={{
+                                flex: 1,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 6,
+                                backgroundColor: '#F0FDF4',
+                                borderWidth: 1,
+                                borderColor: '#BBF7D0',
+                                paddingVertical: 8,
+                                paddingHorizontal: 12,
+                                borderRadius: 8,
+                              }}
+                              onPress={() => openChatModal(ord, 'courier')}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 13 }}>🛵</Text>
+                              <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#065F46' }}>
+                                Message Courier
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+
+                        {buyerUnread > 0 && latestMsg?.text && (
+                          <View style={{ marginTop: 6, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#FEF2F2', borderRadius: 6, borderWidth: 1, borderColor: '#FECACA', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '800' }}>{latestMsg.senderName || 'Store'}:</Text>
+                            <Text style={{ fontSize: 11, color: '#991B1B', fontWeight: '600', flex: 1 }} numberOfLines={1}>
+                              "{latestMsg.text}"
                             </Text>
                           </View>
-                        ) : null}
-                      </TouchableOpacity>
-                    )}
-                  </View>
+                        )}
+                      </View>
+                    );
+                  })()}
 
                   {/* Vibrant Item Replacement Request Card (Always visible on card when pending) */}
                   {ord.replacementProposal && ord.replacementProposal.status === 'pending' && (
@@ -12629,10 +12773,10 @@ export default function App() {
                               <Text style={{ fontSize: 11, color: COLORS.emeraldDeep, fontWeight: '700' }}>
                                 • {itemsCount} {itemsCount === 1 ? 'item' : 'items'}
                               </Text>
-                              {unreadChatMap[`${ord.id}_buyer`] > 0 && (
-                                <View style={{ backgroundColor: '#EF4444', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                              {getOrderUnreadCount(ord, 'merchant') > 0 && (
+                                <View style={{ backgroundColor: '#EF4444', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
                                   <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
-                                    💬 {unreadChatMap[`${ord.id}_buyer`]} New
+                                    💬 {getOrderUnreadCount(ord, 'merchant')} New Message{getOrderUnreadCount(ord, 'merchant') > 1 ? 's' : ''}
                                   </Text>
                                 </View>
                               )}
@@ -12676,60 +12820,78 @@ export default function App() {
                         </TouchableOpacity>
 
                         {/* Always-visible Quick Chat Action Bar for Merchant */}
-                        <View
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: 8,
-                            paddingHorizontal: 12,
-                            paddingVertical: 7,
-                            backgroundColor: '#F8FAFC',
-                            borderTopWidth: 1,
-                            borderTopColor: '#E2E8F0',
-                          }}
-                        >
-                          <TouchableOpacity
-                            style={{
-                              flex: 1,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 6,
-                              backgroundColor: unreadChatMap[`${ord.id}_buyer`] > 0 ? '#DC2626' : '#056B4B',
-                              paddingVertical: 7,
-                              paddingHorizontal: 10,
-                              borderRadius: 8,
-                            }}
-                            onPress={() => openChatModal(ord, 'buyer')}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={{ fontSize: 13 }}>💬</Text>
-                            <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
-                              Chat with Customer{unreadChatMap[`${ord.id}_buyer`] ? ` (${unreadChatMap[`${ord.id}_buyer`]} Unread)` : ''}
-                            </Text>
-                          </TouchableOpacity>
+                        {(() => {
+                          const merchantUnread = getOrderUnreadCount(ord, 'merchant');
+                          const buyerMsgs = (ord.messages || []).filter(
+                            (m) => (m.recipientRole === 'merchant' || m.senderRole === 'buyer') && !m.readByMerchant && m.senderRole !== 'merchant'
+                          );
+                          const latestUnread = buyerMsgs[buyerMsgs.length - 1];
 
-                          {ord.customerPhone ? (
-                            <TouchableOpacity
+                          return (
+                            <View
                               style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 4,
-                                backgroundColor: '#FFFFFF',
-                                paddingVertical: 7,
-                                paddingHorizontal: 10,
-                                borderRadius: 8,
-                                borderWidth: 1,
-                                borderColor: '#CBD5E1',
+                                paddingHorizontal: 12,
+                                paddingVertical: 8,
+                                backgroundColor: '#F8FAFC',
+                                borderTopWidth: 1,
+                                borderTopColor: '#E2E8F0',
                               }}
-                              onPress={() => Linking.openURL(`tel:${ord.customerPhone}`)}
-                              activeOpacity={0.8}
                             >
-                              <Text style={{ fontSize: 12 }}>📞</Text>
-                              <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#334155' }}>Call</Text>
-                            </TouchableOpacity>
-                          ) : null}
-                        </View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <TouchableOpacity
+                                  style={{
+                                    flex: 1,
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 6,
+                                    backgroundColor: merchantUnread > 0 ? '#DC2626' : '#056B4B',
+                                    paddingVertical: 8,
+                                    paddingHorizontal: 12,
+                                    borderRadius: 8,
+                                  }}
+                                  onPress={() => openChatModal(ord, 'buyer')}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={{ fontSize: 13 }}>💬</Text>
+                                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
+                                    Chat with Customer{merchantUnread > 0 ? ` (${merchantUnread} New)` : ''}
+                                  </Text>
+                                </TouchableOpacity>
+
+                                {ord.customerPhone ? (
+                                  <TouchableOpacity
+                                    style={{
+                                      flexDirection: 'row',
+                                      alignItems: 'center',
+                                      gap: 4,
+                                      backgroundColor: '#FFFFFF',
+                                      paddingVertical: 8,
+                                      paddingHorizontal: 12,
+                                      borderRadius: 8,
+                                      borderWidth: 1,
+                                      borderColor: '#CBD5E1',
+                                    }}
+                                    onPress={() => Linking.openURL(`tel:${ord.customerPhone}`)}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Text style={{ fontSize: 12 }}>📞</Text>
+                                    <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#334155' }}>Call</Text>
+                                  </TouchableOpacity>
+                                ) : null}
+                              </View>
+
+                              {merchantUnread > 0 && latestUnread?.text && (
+                                <View style={{ marginTop: 6, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#FEF2F2', borderRadius: 6, borderWidth: 1, borderColor: '#FECACA', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                  <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '800' }}>New:</Text>
+                                  <Text style={{ fontSize: 11, color: '#991B1B', fontWeight: '600', flex: 1 }} numberOfLines={1}>
+                                    "{latestUnread.text}"
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                          );
+                        })()}
 
                         {/* All Order Details Hidden Until Tapped */}
                         {isExpanded && (
@@ -12765,58 +12927,6 @@ export default function App() {
                               Shop Handover PIN: <Text style={{ fontWeight: '800' }}>{matchingStop?.pickupPin || ord.pickupPin}</Text>
                             </Text>
                           )}
-
-                          {/* Live Chat with Customer Button */}
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
-                            <TouchableOpacity
-                              style={{
-                                flex: 1,
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 6,
-                                backgroundColor: '#056B4B',
-                                paddingVertical: 8,
-                                paddingHorizontal: 12,
-                                borderRadius: 8,
-                              }}
-                              onPress={() => openChatModal(ord, 'buyer')}
-                              activeOpacity={0.8}
-                            >
-                              <Text style={{ fontSize: 13 }}>💬</Text>
-                              <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
-                                Chat with Customer
-                              </Text>
-                              {unreadChatMap[`${ord.id}_buyer`] ? (
-                                <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
-                                  <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
-                                    {unreadChatMap[`${ord.id}_buyer`]}
-                                  </Text>
-                                </View>
-                              ) : null}
-                            </TouchableOpacity>
-
-                            {ord.customerPhone ? (
-                              <TouchableOpacity
-                                style={{
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  gap: 5,
-                                  backgroundColor: '#FFFFFF',
-                                  paddingVertical: 8,
-                                  paddingHorizontal: 12,
-                                  borderRadius: 8,
-                                  borderWidth: 1,
-                                  borderColor: '#CBD5E1',
-                                }}
-                                onPress={() => Linking.openURL(`tel:${ord.customerPhone}`)}
-                                activeOpacity={0.8}
-                              >
-                                <Text style={{ fontSize: 12 }}>📞</Text>
-                                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>Call</Text>
-                              </TouchableOpacity>
-                            ) : null}
-                          </View>
                         </View>
 
                         {/* Items ordered */}
@@ -13773,9 +13883,10 @@ export default function App() {
               setActiveToastNotification(null);
               if (
                 notif?.data?.orderId &&
-                (notif?.type === 'chat' || notif?.data?.type === 'chat' || notif?.data?.senderRole)
+                (notif?.type === 'chat' || notif?.data?.type === 'chat' || notif?.data?.senderRole || notif?.data?.messageId)
               ) {
-                const targetOrd = ordersRef.current?.find((o) => o.id === notif.data.orderId);
+                const allOrders = [...(ordersRef.current || []), ...(merchantOrdersRef.current || [])];
+                const targetOrd = allOrders.find((o) => o.id === notif.data.orderId);
                 if (targetOrd) {
                   openChatModal(
                     targetOrd,
