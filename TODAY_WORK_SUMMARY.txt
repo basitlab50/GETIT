@@ -864,6 +864,19 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Global slide-down floating toast banner opens the exact chat modal for both Customer and Merchant when tapped.
      * Opening the chat modal marks all messages as read (`readByMerchant: true` or `readByBuyer: true`), immediately clearing unread badges from navigation tabs and order cards.
 
+38. Expo SDK 58 Upgrade for iOS Expo Go 58.0.0 Compatibility:
+   - Upgraded core Expo runtime from SDK 57 (~57.0.26) to SDK 58 (`~58.0.0`, `58.0.19`).
+   - Aligned all ecosystem packages to SDK 58 compatibility:
+     * `react-native`: `0.88.0` (React `19.3.0`)
+     * `expo-location`: `~58.0.19`
+     * `expo-notifications`: `~58.1.6`
+     * `expo-audio`: `~58.0.10`
+     * `expo-status-bar`: `~58.0.4`
+     * `expo-document-picker`: `~58.0.4`
+     * `react-native-maps`: `1.29.11`
+   - Verified dependency tree with `npx expo install --check` reporting clean compatibility.
+   - Restores direct QR code launching from physical iOS devices running the App Store version of Expo Go.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
