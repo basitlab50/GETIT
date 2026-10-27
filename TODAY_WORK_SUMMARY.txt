@@ -1012,6 +1012,20 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - 📢 Customer-Side Pharmacy Empty State:
      * When buyer views the `[ 💊 Pharmacy ]` vertical and no stores exist yet in that district, renders a helpful notice card with a direct button: **`[ + Register Your Pharmacy Branch 🩺 ]`**.
 
+49. Unified Multi-Store & Tri-Mode Switching (Shopper ↔ Grocery Store ↔ Pharmacy):
+   - 🔄 Tri-Mode Single Phone Number Architecture:
+     * A single registered phone number can simultaneously be a **Shopper**, the owner of a **Grocery Store / Supermarket**, and the owner of a **Pharmacy Dispensary**.
+     * Tied store ownership by both `ownerId` and matching the last 8 digits of phone numbers.
+   - 🏬 Account Tab Multi-Store Hub:
+     * When an account owns multiple stores (e.g. Grocery + Pharmacy), the `Account` tab displays **"Your Stores & Dispensaries"** listing each branch with its type, district, and a direct **`[ Manage ➔ ]`** button.
+     * Tapping either branch immediately switches the active store context and opens Merchant Mode.
+   - ⚡ Merchant Top Header Branch Switcher Strip:
+     * If a merchant owns more than 1 store branch, a persistent horizontal strip appears right below the top bar:
+       `SWITCH BRANCH: [ 🛒 Basit Gourmet Mart ● ] [ 💊 Basit LifeCare Pharmacy ]`.
+     * Tapping any pill instantly flips the entire merchant portal between Grocery and Pharmacy with full theme and feature adaptations (prescribe tool, credentials, etc.).
+   - 🛒 1-Tap Shopper Toggle:
+     * Tapping **`[ 👤 Customer ]`** at the top right of the Merchant header returns the user to Shopper mode instantly.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

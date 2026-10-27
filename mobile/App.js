@@ -5946,12 +5946,14 @@ export default function App() {
     }).catch(() => { });
   };
 
-  // Merchant Helper Computations & Actions
+  // Merchant Helper Computations & Actions: Supports Multi-Store Ownership (Groceries + Pharmacy)
   const merchantOwnedStores = storesList.filter((st) => {
     if (!currentUser) return false;
+    if (merchantStoreId && st.id === merchantStoreId) return true;
     if (currentUser.storeId && st.id === currentUser.storeId) return true;
+    if (currentUser.id && st.ownerId && currentUser.id === st.ownerId) return true;
     const uPhone = (currentUser.phone || '').replace(/\D/g, '');
-    const sPhone = (st.phone || '').replace(/\D/g, '');
+    const sPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
     if (uPhone.length >= 8 && sPhone.length >= 8) {
       if (uPhone.slice(-8) === sPhone.slice(-8)) return true;
     }
@@ -7536,7 +7538,9 @@ Support: help@getit.ng | Abuja, Nigeria`;
       city: 'Abuja',
       latitude: selectedLoc.latitude || 9.0882,
       longitude: selectedLoc.longitude || 7.4933,
-      phone: newStorePhone.trim(),
+      phone: newStorePhone.trim() || currentUser?.phone || '+234 800 000 0000',
+      ownerId: currentUser?.id || null,
+      ownerPhone: currentUser?.phone || newStorePhone.trim(),
       rating: 5.0,
       isOpen: true,
       deliveryFee: Number(newStoreDeliveryFee) || 1200,
@@ -7549,6 +7553,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
       category: categoryKey,
       categoryLabel: isPharm ? 'Licensed Community Pharmacy' : newStoreCategory,
       pharmacist: pharmacistObj,
+      ownerId: currentUser?.id || null,
+      ownerPhone: currentUser?.phone || newStorePhone.trim(),
       rating: 5.0,
       reviewCount: 'New',
       distance: '0.9 km',
@@ -11572,15 +11578,20 @@ Support: help@getit.ng | Abuja, Nigeria`;
           </View>
 
           {/* --- MERCHANT HUB SWITCHER CARD --- */}
-          {currentUser?.role === 'seller' ? (
+          {/* --- MERCHANT HUB SWITCHER CARD --- */}
+          {currentUser?.role === 'seller' || merchantOwnedStores.length > 0 ? (
             <View style={styles.merchantSwitchCard}>
               <View style={styles.merchantSwitchTopRow}>
                 <View style={styles.merchantIconWrap}>
-                  <Text style={{ fontSize: 26 }}>🏪</Text>
+                  <Text style={{ fontSize: 26 }}>
+                    {currentMerchantStore?.storeType === 'pharmacy' ? '💊' : '🏪'}
+                  </Text>
                 </View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <View style={styles.merchantTagRow}>
-                    <Text style={styles.merchantTag}>SHOP OWNER / VENDOR</Text>
+                    <Text style={styles.merchantTag}>
+                      {currentMerchantStore?.storeType === 'pharmacy' ? 'PHARMACY DISPENSARY' : 'SHOP OWNER / VENDOR'}
+                    </Text>
                     <View style={styles.merchantActiveBadge}>
                       <Text style={styles.merchantActiveText}>PARTNER</Text>
                     </View>
@@ -11592,34 +11603,88 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 </View>
               </View>
 
-              <View style={styles.merchantStatsMiniRow}>
-                <View style={styles.merchantStatMini}>
-                  <Text style={styles.merchantStatVal}>{merchantOrders.length}</Text>
-                  <Text style={styles.merchantStatLbl}>Live Orders</Text>
-                </View>
-                <View style={styles.merchantStatDivider} />
-                <View style={styles.merchantStatMini}>
-                  <Text style={styles.merchantStatVal}>
-                    {formatNaira(merchantTotalRevenue)}
+              {/* Multi-Store Branches List (If owning Grocery + Pharmacy or multiple stores) */}
+              {merchantOwnedStores.length > 1 ? (
+                <View style={styles.accountMultiStoresWrap}>
+                  <Text style={styles.accountMultiStoresHeading}>
+                    Your Stores & Dispensaries ({merchantOwnedStores.length})
                   </Text>
-                  <Text style={styles.merchantStatLbl}>Net Revenue</Text>
+                  {merchantOwnedStores.map((st) => {
+                    const isSelected = st.id === (merchantStoreId || currentMerchantStore?.id);
+                    const isPharm = st.storeType === 'pharmacy';
+                    return (
+                      <TouchableOpacity
+                        key={`acc-store-${st.id}`}
+                        style={[
+                          styles.accountStoreRowItem,
+                          isSelected && (isPharm ? styles.accountStoreRowItemActivePharm : styles.accountStoreRowItemActiveGroc),
+                        ]}
+                        onPress={() => {
+                          handleSelectMerchantBranch(st.id);
+                          setAppMode('merchant');
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={{ fontSize: 24, marginRight: 10 }}>
+                          {isPharm ? '💊' : '🛒'}
+                        </Text>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.accountStoreRowName} numberOfLines={1}>
+                              {st.name}
+                            </Text>
+                            {isSelected && (
+                              <View style={styles.accountStoreActiveTag}>
+                                <Text style={styles.accountStoreActiveTagText}>SELECTED</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.accountStoreRowSub} numberOfLines={1}>
+                            {isPharm ? 'Licensed Community Pharmacy' : 'Supermarket & Groceries'} • {st.district}
+                          </Text>
+                        </View>
+                        <Text style={[styles.accountStoreManageBtnText, isPharm && { color: '#2563EB' }]}>
+                          Manage ➔
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-                <View style={styles.merchantStatDivider} />
-                <View style={styles.merchantStatMini}>
-                  <Text style={styles.merchantStatVal}>
-                    {currentMerchantStore?.rating || '5.0'} ★
-                  </Text>
-                  <Text style={styles.merchantStatLbl}>Store Rating</Text>
+              ) : (
+                <View style={styles.merchantStatsMiniRow}>
+                  <View style={styles.merchantStatMini}>
+                    <Text style={styles.merchantStatVal}>{merchantOrders.length}</Text>
+                    <Text style={styles.merchantStatLbl}>Live Orders</Text>
+                  </View>
+                  <View style={styles.merchantStatDivider} />
+                  <View style={styles.merchantStatMini}>
+                    <Text style={styles.merchantStatVal}>
+                      {formatNaira(merchantTotalRevenue)}
+                    </Text>
+                    <Text style={styles.merchantStatLbl}>Net Revenue</Text>
+                  </View>
+                  <View style={styles.merchantStatDivider} />
+                  <View style={styles.merchantStatMini}>
+                    <Text style={styles.merchantStatVal}>
+                      {currentMerchantStore?.rating || '5.0'} ★
+                    </Text>
+                    <Text style={styles.merchantStatLbl}>Store Rating</Text>
+                  </View>
                 </View>
-              </View>
+              )}
 
               <TouchableOpacity
-                style={styles.merchantSwitchBtn}
+                style={[
+                  styles.merchantSwitchBtn,
+                  currentMerchantStore?.storeType === 'pharmacy' && { backgroundColor: '#1E3A8A' },
+                ]}
                 onPress={() => setAppMode('merchant')}
                 activeOpacity={0.85}
               >
                 <Text style={styles.merchantSwitchBtnText}>
-                  Switch to Shop Owner Mode ➔
+                  {currentMerchantStore?.storeType === 'pharmacy'
+                    ? 'Enter Pharmacy Dispensary Hub 🩺 ➔'
+                    : 'Switch to Shop Owner Mode ➔'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -13805,6 +13870,48 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 </TouchableOpacity>
               </View>
             </View>
+
+            {/* Quick Multi-Store Branch Switcher Strip (If merchant owns Groceries + Pharmacy or multiple shops) */}
+            {merchantOwnedStores.length > 1 && (
+              <View style={styles.merchantBranchSwitcherStrip}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 8, gap: 8 }}
+                >
+                  <Text style={styles.merchantBranchStripLabel}>SWITCH BRANCH:</Text>
+                  {merchantOwnedStores.map((st) => {
+                    const isCurrent = st.id === (merchantStoreId || currentMerchantStore?.id);
+                    const isPharm = st.storeType === 'pharmacy';
+                    return (
+                      <TouchableOpacity
+                        key={`merchant-top-strip-${st.id}`}
+                        style={[
+                          styles.merchantBranchStripPill,
+                          isCurrent &&
+                            (isPharm
+                              ? styles.merchantBranchStripPillActivePharm
+                              : styles.merchantBranchStripPillActiveGroc),
+                        ]}
+                        onPress={() => handleSelectMerchantBranch(st.id)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={{ fontSize: 13, marginRight: 5 }}>{isPharm ? '💊' : '🛒'}</Text>
+                        <Text
+                          style={[
+                            styles.merchantBranchStripPillText,
+                            isCurrent && styles.merchantBranchStripPillTextActive,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {st.name} {isCurrent ? '●' : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
 
             {/* Merchant Tab Content */}
             {merchantTab === 'orders' && (
@@ -30002,6 +30109,107 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '900',
     fontSize: 13.5,
+  },
+
+  // --- MULTI-STORE ACCOUNT HUB (SHOPPER ↔ GROCERIES ↔ PHARMACY) ---
+  accountMultiStoresWrap: {
+    marginTop: 10,
+    marginBottom: 8,
+    gap: 8,
+  },
+  accountMultiStoresHeading: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  accountStoreRowItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    padding: 12,
+  },
+  accountStoreRowItemActiveGroc: {
+    borderColor: '#056B4B',
+    backgroundColor: '#F0FDF4',
+  },
+  accountStoreRowItemActivePharm: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
+  accountStoreRowName: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  accountStoreActiveTag: {
+    backgroundColor: '#056B4B',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  accountStoreActiveTagText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  accountStoreRowSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  accountStoreManageBtnText: {
+    fontSize: 12.5,
+    fontWeight: '900',
+    color: '#056B4B',
+    marginLeft: 8,
+  },
+
+  // --- MERCHANT TOP HEADER BRANCH SWITCHER STRIP ---
+  merchantBranchSwitcherStrip: {
+    backgroundColor: '#0F172A',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  merchantBranchStripLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#94A3B8',
+    alignSelf: 'center',
+    letterSpacing: 0.5,
+    marginRight: 4,
+  },
+  merchantBranchStripPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#334155',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  merchantBranchStripPillActiveGroc: {
+    backgroundColor: '#064E3B',
+    borderColor: '#10B981',
+  },
+  merchantBranchStripPillActivePharm: {
+    backgroundColor: '#1E3A8A',
+    borderColor: '#60A5FA',
+  },
+  merchantBranchStripPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#94A3B8',
+  },
+  merchantBranchStripPillTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '900',
   },
 
 });
