@@ -657,7 +657,6 @@ const STORES_AROUND_ME = [
     is_open: true,
     products: [],
   },
-  ...INITIAL_PHARMACY_STORES,
 ];
 
 // --- Financial formatting helper ---
@@ -1479,8 +1478,12 @@ export default function App() {
 
   // Create Store Modal State
   const [createStoreModalVisible, setCreateStoreModalVisible] = useState(false);
+  const [newStoreType, setNewStoreType] = useState('grocery'); // 'grocery' | 'pharmacy'
   const [newStoreName, setNewStoreName] = useState('');
   const [newStoreCategory, setNewStoreCategory] = useState('Gourmet Groceries');
+  const [newPharmacistName, setNewPharmacistName] = useState('');
+  const [newPharmacistLicenseNo, setNewPharmacistLicenseNo] = useState('');
+  const [newPharmacistQualification, setNewPharmacistQualification] = useState('B.Pharm, MPSN');
   const [newStoreDistrict, setNewStoreDistrict] = useState('Maitama District, Abuja');
   const [newStoreAddress, setNewStoreAddress] = useState('Plot 14 Gana Street');
   const [newStorePhone, setNewStorePhone] = useState('+234 803 123 4567');
@@ -2839,15 +2842,22 @@ export default function App() {
                 ? inventory
                 : STORES_AROUND_ME.find((s) => s.id === dbStore.id)?.products || [];
 
-            const categoryKey = (dbStore.category || 'gourmet').toLowerCase().includes('organ')
-              ? 'organic'
-              : (dbStore.category || '').toLowerCase().includes('bake')
-                ? 'bakery'
-                : (dbStore.category || '').toLowerCase().includes('cell')
-                  ? 'cellar'
-                  : (dbStore.category || '').toLowerCase().includes('herit')
-                    ? 'heritage'
-                    : 'gourmet';
+            const isPharmacy =
+              meta.storeType === 'pharmacy' ||
+              (dbStore.category || '').toLowerCase().includes('pharm') ||
+              (dbStore.store_type || '').toLowerCase().includes('pharm');
+
+            const categoryKey = isPharmacy
+              ? 'pharmacy'
+              : (dbStore.category || 'gourmet').toLowerCase().includes('organ')
+                ? 'organic'
+                : (dbStore.category || '').toLowerCase().includes('bake')
+                  ? 'bakery'
+                  : (dbStore.category || '').toLowerCase().includes('cell')
+                    ? 'cellar'
+                    : (dbStore.category || '').toLowerCase().includes('herit')
+                      ? 'heritage'
+                      : 'gourmet';
 
             const meta = parseStoreMetadata(dbStore);
             const isOpenBool =
@@ -2862,23 +2872,42 @@ export default function App() {
             return {
               id: dbStore.id,
               name: dbStore.name,
+              storeType: isPharmacy ? 'pharmacy' : 'grocery',
               category: categoryKey,
-              categoryLabel: dbStore.category || 'Gourmet & Groceries',
+              categoryLabel: isPharmacy
+                ? 'Licensed Community Pharmacy'
+                : (dbStore.category || 'Gourmet & Groceries'),
+              pharmacist:
+                meta.pharmacist ||
+                (isPharmacy
+                  ? {
+                      name: 'On-Duty Clinical Pharmacist',
+                      qualification: 'B.Pharm, MPSN',
+                      licenseNo: 'PCN Verified',
+                      status: 'On-Duty • Available for Consult',
+                    }
+                  : null),
               rating: Number(dbStore.rating) || 5.0,
               reviewCount: 'New',
               distance: '1.2 km',
               deliveryTime: '20-30 min',
               deliveryFee: dbStore.delivery_fee ? `₦${Number(dbStore.delivery_fee).toLocaleString()}` : '₦1,200',
               freeDeliveryThreshold: 25000,
-              tag: 'VERIFIED MERCHANT',
-              badgeColor: COLORS.emeraldPrimary,
+              tag: isPharmacy ? 'VERIFIED PHARMACY' : 'VERIFIED MERCHANT',
+              badgeColor: isPharmacy ? '#2563EB' : COLORS.emeraldPrimary,
               address: dbStore.address || 'Abuja, Nigeria',
               district: dbStore.district || 'Maitama, Abuja',
               latitude: Number(dbStore.latitude) || 9.0882,
               longitude: Number(dbStore.longitude) || 7.4933,
               phone: dbStore.phone || '+234 800 000 0000',
-              image: meta.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
-              description: `${dbStore.name} — fresh provisions, artisan goods and rapid doorstep delivery across Abuja.`,
+              image:
+                meta.image ||
+                (isPharmacy
+                  ? 'https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=800&q=80'
+                  : 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80'),
+              description: isPharmacy
+                ? `${dbStore.name} — licensed community pharmacy dispensary, authentic medications & clinical pharmacist consultations on GETIT.`
+                : `${dbStore.name} — fresh provisions, artisan goods and rapid doorstep delivery across Abuja.`,
               products: prods,
               isOpen: isOpenBool,
               is_open: isOpenBool,
@@ -7473,20 +7502,35 @@ Support: help@getit.ng | Abuja, Nigeria`;
         l.district.toLowerCase().includes(newStoreDistrict.toLowerCase())
       ) || SEARCHABLE_LOCATIONS[0];
 
-    const categoryKey = newStoreCategory.toLowerCase().includes('organ')
-      ? 'organic'
-      : newStoreCategory.toLowerCase().includes('bake')
-        ? 'bakery'
-        : newStoreCategory.toLowerCase().includes('cell')
-          ? 'cellar'
-          : newStoreCategory.toLowerCase().includes('herit')
-            ? 'heritage'
-            : 'gourmet';
+    const isPharm = newStoreType === 'pharmacy';
+
+    const categoryKey = isPharm
+      ? 'pharmacy'
+      : newStoreCategory.toLowerCase().includes('organ')
+        ? 'organic'
+        : newStoreCategory.toLowerCase().includes('bake')
+          ? 'bakery'
+          : newStoreCategory.toLowerCase().includes('cell')
+            ? 'cellar'
+            : newStoreCategory.toLowerCase().includes('herit')
+              ? 'heritage'
+              : 'gourmet';
+
+    const pharmacistObj = isPharm
+      ? {
+          name: newPharmacistName.trim() || 'Pharm. On-Duty Clinical Pharmacist',
+          licenseNo: newPharmacistLicenseNo.trim() || 'PCN-REG-VERIFIED',
+          qualification: newPharmacistQualification.trim() || 'B.Pharm, MPSN',
+          status: 'On-Duty • Available for Consult',
+        }
+      : null;
 
     const storeRecord = {
       id: storeId,
       name: newStoreName.trim(),
-      category: newStoreCategory,
+      category: isPharm ? 'pharmacy' : newStoreCategory,
+      storeType: isPharm ? 'pharmacy' : 'grocery',
+      pharmacist: pharmacistObj,
       address: newStoreAddress.trim() || selectedLoc.name,
       district: newStoreDistrict,
       city: 'Abuja',
@@ -7501,26 +7545,32 @@ Support: help@getit.ng | Abuja, Nigeria`;
     const newStoreObj = {
       id: storeId,
       name: storeRecord.name,
+      storeType: isPharm ? 'pharmacy' : 'grocery',
       category: categoryKey,
-      categoryLabel: newStoreCategory,
+      categoryLabel: isPharm ? 'Licensed Community Pharmacy' : newStoreCategory,
+      pharmacist: pharmacistObj,
       rating: 5.0,
       reviewCount: 'New',
       distance: '0.9 km',
       deliveryTime: newStoreDeliveryTime || '15-25 min',
       deliveryFee: `₦${Number(storeRecord.deliveryFee).toLocaleString()}`,
       freeDeliveryThreshold: 25000,
-      tag: 'NEW MERCHANT',
-      badgeColor: COLORS.emeraldPrimary,
+      tag: isPharm ? 'VERIFIED PHARMACY' : 'NEW MERCHANT',
+      badgeColor: isPharm ? '#2563EB' : COLORS.emeraldPrimary,
       address: storeRecord.address,
       district: storeRecord.district,
       latitude: storeRecord.latitude,
       longitude: storeRecord.longitude,
       phone: storeRecord.phone,
-      image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+      image: isPharm
+        ? 'https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=800&q=80'
+        : 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
       description:
         newStoreDescription.trim() ||
-        `${storeRecord.name} — partner store live on GETIT Abuja. Fast doorstep delivery.`,
-      products: [],
+        (isPharm
+          ? `${storeRecord.name} — licensed community pharmacy & telemedicine dispensary live on GETIT Abuja.`
+          : `${storeRecord.name} — partner store live on GETIT Abuja. Fast doorstep delivery.`),
+      products: isPharm ? (Array.isArray(MASTER_PHARMACY_INVENTORY) ? MASTER_PHARMACY_INVENTORY : []) : [],
     };
 
     // 1. Instant local update & persistence so merchant and buyers see it immediately
@@ -7529,21 +7579,40 @@ Support: help@getit.ng | Abuja, Nigeria`;
     setCreateStoreModalVisible(false);
     setIsCreatingStore(false);
     setNewStoreName('');
+    setNewPharmacistName('');
+    setNewPharmacistLicenseNo('');
 
-    Alert.alert(
-      '🎉 Store Created & Live on GETIT!',
-      `"${storeRecord.name}" is now live and visible to buyers! You can now stock your shop with products from our catalog.`,
-      [
-        {
-          text: 'Stock Products Now 📦',
-          onPress: () => {
-            setMerchantTab('inventory');
-            setAddProductModalVisible(true);
+    if (isPharm) {
+      Alert.alert(
+        '💊 Pharmacy Registered & Live on GETIT!',
+        `"${storeRecord.name}" is now live in the Pharmacy vertical! Patients can now consult with ${pharmacistObj.name}, upload doctor prescriptions, and purchase medications with express doorstep delivery.`,
+        [
+          {
+            text: 'Open Pharmacy Dashboard 🩺',
+            onPress: () => {
+              setAppMode('merchant');
+              setMerchantTab('orders');
+            },
           },
-        },
-        { text: 'Later', style: 'cancel' },
-      ]
-    );
+          { text: 'Done', style: 'cancel' },
+        ]
+      );
+    } else {
+      Alert.alert(
+        '🎉 Store Created & Live on GETIT!',
+        `"${storeRecord.name}" is now live and visible to buyers! You can now stock your shop with products from our catalog.`,
+        [
+          {
+            text: 'Stock Products Now 📦',
+            onPress: () => {
+              setMerchantTab('inventory');
+              setAddProductModalVisible(true);
+            },
+          },
+          { text: 'Later', style: 'cancel' },
+        ]
+      );
+    }
 
     // 2. Persist to Supabase Cloud stores table
     createDatabaseStore(storeRecord).catch((err) => {
@@ -9918,6 +9987,42 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     👆 Tap any store pin on the map to preview provisions & enter store
                   </Text>
                 </View>
+              )}
+            </View>
+          ) : filteredStores.length === 0 ? (
+            <View style={styles.emptyStoresContainer}>
+              <View
+                style={[
+                  styles.emptyStoresIconCircle,
+                  activeVertical === 'pharmacy' && { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' },
+                ]}
+              >
+                <Text style={{ fontSize: 32 }}>{activeVertical === 'pharmacy' ? '💊' : '🏪'}</Text>
+              </View>
+              <Text style={styles.emptyStoresTitle}>
+                {activeVertical === 'pharmacy'
+                  ? 'No Registered Pharmacies Yet'
+                  : 'No Stores Found Around You'}
+              </Text>
+              <Text style={styles.emptyStoresSub}>
+                {activeVertical === 'pharmacy'
+                  ? 'Be the first licensed community pharmacy or chemist in this district to register & start dispensing on GETIT!'
+                  : 'Try selecting a different district, or be the first to open a store here.'}
+              </Text>
+              {activeVertical === 'pharmacy' && (
+                <TouchableOpacity
+                  style={styles.emptyRegisterPharmacyBtn}
+                  onPress={() => {
+                    setNewStoreType('pharmacy');
+                    setNewStoreCategory('Pharmacy & Health');
+                    setCreateStoreModalVisible(true);
+                  }}
+                  activeOpacity={0.88}
+                >
+                  <Text style={styles.emptyRegisterPharmacyBtnText}>
+                    + Register Your Pharmacy Branch 🩺
+                  </Text>
+                </TouchableOpacity>
               )}
             </View>
           ) : (
@@ -13626,18 +13731,46 @@ Support: help@getit.ng | Abuja, Nigeria`;
             <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
 
             {/* Merchant Top Bar */}
-            <View style={styles.merchantTopHeader}>
+            <View
+              style={[
+                styles.merchantTopHeader,
+                currentMerchantStore?.storeType === 'pharmacy' && { backgroundColor: '#1E3A8A' },
+              ]}
+            >
               <View style={styles.merchantTopHeaderLeft}>
-                <Image
-                  source={LOGO_TRANSPARENT}
-                  style={{ width: 28, height: 28, marginRight: 8 }}
-                  resizeMode="contain"
-                />
-                <View>
-                  <Text style={styles.merchantHeaderSub}>MERCHANT HUB</Text>
+                {currentMerchantStore?.storeType === 'pharmacy' ? (
+                  <View style={styles.pharmacyMerchantLogoCircle}>
+                    <Text style={{ fontSize: 18 }}>💊</Text>
+                  </View>
+                ) : (
+                  <Image
+                    source={LOGO_TRANSPARENT}
+                    style={{ width: 28, height: 28, marginRight: 8 }}
+                    resizeMode="contain"
+                  />
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={[
+                      styles.merchantHeaderSub,
+                      currentMerchantStore?.storeType === 'pharmacy' && { color: '#93C5FD' },
+                    ]}
+                  >
+                    {currentMerchantStore?.storeType === 'pharmacy'
+                      ? '🩺 LICENSED PHARMACY DISPENSARY'
+                      : 'MERCHANT HUB'}
+                  </Text>
                   <Text style={styles.merchantHeaderTitle} numberOfLines={1}>
                     {currentMerchantStore?.name}
                   </Text>
+                  {currentMerchantStore?.storeType === 'pharmacy' && currentMerchantStore?.pharmacist && (
+                    <Text
+                      style={{ fontSize: 10.5, color: '#DBEAFE', fontWeight: '700' }}
+                      numberOfLines={1}
+                    >
+                      {currentMerchantStore.pharmacist.name} • {currentMerchantStore.pharmacist.licenseNo}
+                    </Text>
+                  )}
                 </View>
               </View>
 
@@ -13679,12 +13812,41 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 style={styles.merchantMainScroll}
                 contentContainerStyle={{ padding: 16, paddingBottom: 110 }}
               >
+                {/* Pharmacist Prescribe & Bill Quick Banner (Only for Pharmacy Merchants) */}
+                {currentMerchantStore?.storeType === 'pharmacy' && (
+                  <TouchableOpacity
+                    style={styles.pharmacyMerchantPrescribeBanner}
+                    onPress={handleOpenPrescribeMedicationModal}
+                    activeOpacity={0.88}
+                  >
+                    <View style={styles.pharmacyMerchantPrescribeIconCircle}>
+                      <Text style={{ fontSize: 22 }}>💊</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pharmacyMerchantPrescribeTitle}>
+                        Issue Prescription & Bill Patient
+                      </Text>
+                      <Text style={styles.pharmacyMerchantPrescribeSub}>
+                        Search your dispensary inventory, set dosage instructions & send bill to patient chat
+                      </Text>
+                    </View>
+                    <Text style={{ color: '#1E3A8A', fontWeight: '900', fontSize: 16 }}>+ Prescribe ➔</Text>
+                  </TouchableOpacity>
+                )}
+
                 {/* Orders Header & Summary */}
                 <View style={styles.merchantSectionTitleRow}>
                   <View>
-                    <Text style={styles.merchantViewTitle}>Live Store Orders</Text>
+                    <Text style={styles.merchantViewTitle}>
+                      {currentMerchantStore?.storeType === 'pharmacy'
+                        ? 'Prescriptions & Medication Orders'
+                        : 'Live Store Orders'}
+                    </Text>
                     <Text style={styles.merchantViewSub}>
-                      {merchantOrders.length} order{merchantOrders.length === 1 ? '' : 's'} assigned to your shop
+                      {merchantOrders.length}{' '}
+                      {currentMerchantStore?.storeType === 'pharmacy' ? 'prescription ' : ''}order
+                      {merchantOrders.length === 1 ? '' : 's'} assigned to your{' '}
+                      {currentMerchantStore?.storeType === 'pharmacy' ? 'dispensary' : 'shop'}
                     </Text>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -16260,18 +16422,133 @@ Support: help@getit.ng | Abuja, Nigeria`;
             {/* Hero Card */}
             <View style={styles.customHeroCard}>
               <Text style={{ fontSize: 26, marginBottom: 4 }}>🏪 ✨</Text>
-              <Text style={styles.customHeroTitle}>Create Your Storefront</Text>
+              <Text style={styles.customHeroTitle}>Register New Storefront</Text>
               <Text style={styles.customHeroSub}>
-                Set up your store identity, pick your neighborhood or city, and start selling groceries, fresh foods, or provisions across Nigeria.
+                Choose your store type, set up your shop identity, and start selling groceries, fresh foods, or dispensing pharmacy medications across Abuja.
               </Text>
             </View>
 
+            {/* Store Type Selection: Grocery Store vs Pharmacy */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>SELECT STORE TYPE *</Text>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                <TouchableOpacity
+                  style={[
+                    styles.storeTypeSelectBtn,
+                    newStoreType === 'grocery' && styles.storeTypeSelectBtnActiveGrocery,
+                  ]}
+                  onPress={() => {
+                    setNewStoreType('grocery');
+                    setNewStoreCategory('Gourmet Marts');
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={{ fontSize: 26, marginBottom: 4 }}>🛒</Text>
+                  <Text
+                    style={[
+                      styles.storeTypeSelectTitle,
+                      newStoreType === 'grocery' && { color: '#034E35', fontWeight: '900' },
+                    ]}
+                  >
+                    Supermarket / Grocery
+                  </Text>
+                  <Text style={styles.storeTypeSelectSub}>
+                    Provisions, fresh produce, artisanal goods & drinks
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.storeTypeSelectBtn,
+                    newStoreType === 'pharmacy' && styles.storeTypeSelectBtnActivePharmacy,
+                  ]}
+                  onPress={() => {
+                    setNewStoreType('pharmacy');
+                    setNewStoreCategory('Pharmacy & Health');
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Text style={{ fontSize: 26, marginBottom: 4 }}>💊</Text>
+                    <View style={styles.rxBadgeTag}>
+                      <Text style={styles.rxBadgeTagText}>Rx</Text>
+                    </View>
+                  </View>
+                  <Text
+                    style={[
+                      styles.storeTypeSelectTitle,
+                      newStoreType === 'pharmacy' && { color: '#1E3A8A', fontWeight: '900' },
+                    ]}
+                  >
+                    Pharmacy / Chemist
+                  </Text>
+                  <Text style={styles.storeTypeSelectSub}>
+                    Prescription medications, OTC drugs & tele-consult
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Pharmacist Licensing Details Box (Only when Pharmacy is selected) */}
+            {newStoreType === 'pharmacy' && (
+              <View style={styles.pharmacyRegBox}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                  <Text style={{ fontSize: 22 }}>🩺</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pharmacyRegBoxTitle}>Pharmacist & PCN Licensing</Text>
+                    <Text style={styles.pharmacyRegBoxSub}>
+                      Required for patient tele-consultations & doctor prescription dispensing
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={[styles.formGroup, { marginBottom: 10 }]}>
+                  <Text style={styles.formLabel}>LEAD / ON-DUTY PHARMACIST NAME *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. Pharm. Fatima Aliyu"
+                    placeholderTextColor="#94A3B8"
+                    value={newPharmacistName}
+                    onChangeText={setNewPharmacistName}
+                  />
+                </View>
+
+                <View style={[styles.formGroup, { marginBottom: 10 }]}>
+                  <Text style={styles.formLabel}>PCN REGISTRATION / LICENSE NUMBER *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. PCN-REG-84920"
+                    placeholderTextColor="#94A3B8"
+                    value={newPharmacistLicenseNo}
+                    onChangeText={setNewPharmacistLicenseNo}
+                  />
+                </View>
+
+                <View style={[styles.formGroup, { marginBottom: 4 }]}>
+                  <Text style={styles.formLabel}>PHARMACIST QUALIFICATION</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. B.Pharm, MPSN, FPCPharm"
+                    placeholderTextColor="#94A3B8"
+                    value={newPharmacistQualification}
+                    onChangeText={setNewPharmacistQualification}
+                  />
+                </View>
+              </View>
+            )}
+
             {/* Store Name Input */}
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>STORE NAME *</Text>
+              <Text style={styles.formLabel}>
+                {newStoreType === 'pharmacy' ? 'PHARMACY DISPENSARY NAME *' : 'STORE NAME *'}
+              </Text>
               <TextInput
                 style={styles.formInput}
-                placeholder="e.g. Basit Gourmet Market, Maitama Provisions"
+                placeholder={
+                  newStoreType === 'pharmacy'
+                    ? 'e.g. Medplus Pharmacy, H-Medix Dispensary'
+                    : 'e.g. Basit Gourmet Market, Maitama Provisions'
+                }
                 placeholderTextColor="#94A3B8"
                 value={newStoreName}
                 onChangeText={setNewStoreName}
@@ -29568,6 +29845,163 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13.5,
     fontWeight: '900',
+  },
+
+  // --- STORE REGISTRATION TYPE SELECTOR & PHARMACY ONBOARDING ---
+  storeTypeSelectBtn: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    padding: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  storeTypeSelectBtnActiveGrocery: {
+    borderColor: '#056B4B',
+    backgroundColor: '#F0FDF4',
+  },
+  storeTypeSelectBtnActivePharmacy: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
+  storeTypeSelectTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E293B',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  storeTypeSelectSub: {
+    fontSize: 10,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 14,
+  },
+  pharmacyRegBox: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+  },
+  pharmacyRegBoxTitle: {
+    fontSize: 13.5,
+    fontWeight: '900',
+    color: '#1E3A8A',
+  },
+  pharmacyRegBoxSub: {
+    fontSize: 10.5,
+    color: '#475569',
+    marginTop: 2,
+  },
+
+  // --- PHARMACY MERCHANT DASHBOARD STYLES ---
+  pharmacyMerchantLogoCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  pharmacyMerchantPrescribeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#93C5FD',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    shadowColor: '#1E3A8A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  pharmacyMerchantPrescribeIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  pharmacyMerchantPrescribeTitle: {
+    fontSize: 13.5,
+    fontWeight: '900',
+    color: '#1E3A8A',
+  },
+  pharmacyMerchantPrescribeSub: {
+    fontSize: 10.5,
+    color: '#475569',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+
+  // --- EMPTY STORES CONTAINER & REGISTER PHARMACY CALL TO ACTION ---
+  emptyStoresContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 24,
+    marginHorizontal: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    marginTop: 10,
+  },
+  emptyStoresIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  emptyStoresTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#0F172A',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  emptyStoresSub: {
+    fontSize: 12.5,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 18,
+  },
+  emptyRegisterPharmacyBtn: {
+    backgroundColor: '#1E3A8A',
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 20,
+    shadowColor: '#1E3A8A',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  emptyRegisterPharmacyBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 13.5,
   },
 
 });

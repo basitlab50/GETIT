@@ -994,6 +994,24 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Interactive Prescription Invoice Card rendered in chat stream showing pharmacist credentials, itemized medications, dosages, and total.
      * Patient taps **`[ 💳 Pay & Deliver Now ]`** to confirm payment; automatically generates a tamper-sealed pharmacy delivery order with security handover PIN and dispatches push alerts to merchant and courier.
 
+48. Pharmacy Store Type Registration & Onboarding Suite:
+   - 🗑️ Removed All Mock Pharmacy Stores:
+     * Cleared `INITIAL_PHARMACY_STORES` to `[]` in `mobile/data/pharmacyCatalog.js` and removed hardcoded pharmacies from `mobile/App.js`.
+     * The database and client now exclusively render real user-created pharmacies.
+   - 🏬 Store Type Selector in Store Registration Modal:
+     * Added **`[ 🛒 Supermarket / Grocery ]`** vs **`[ 💊 Community Pharmacy / Chemist (Rx) ]`** selector cards in the registration onboarding modal.
+     * When Pharmacy is chosen:
+       - Displays Pharmacist In-Charge & PCN Licensing form section.
+       - Captures **Lead / On-Duty Pharmacist Name**, **PCN Registration / License Number**, and **Pharmacist Qualification** (e.g. *B.Pharm, MPSN, FPCPharm*).
+       - Automatically pre-loads genuine Nigerian medication catalog (`MASTER_PHARMACY_INVENTORY`) into the new pharmacy's inventory.
+       - Saves metadata safely into Supabase (`storeType: 'pharmacy'`, `category: 'pharmacy'`, and `pharmacist` object).
+   - 🩺 Dedicated Pharmacy Merchant Dashboard:
+     * When a merchant operates a pharmacy branch:
+       - Header displays Navy/Blue Rx theme, `🩺 LICENSED PHARMACY DISPENSARY` badge, and pharmacist credentials.
+       - Quick Action Banner in Orders tab: **`[ 💊 Issue Prescription & Bill Patient ]`** to immediately compose and dispatch official prescription invoices.
+   - 📢 Customer-Side Pharmacy Empty State:
+     * When buyer views the `[ 💊 Pharmacy ]` vertical and no stores exist yet in that district, renders a helpful notice card with a direct button: **`[ + Register Your Pharmacy Branch 🩺 ]`**.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

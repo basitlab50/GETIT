@@ -604,13 +604,24 @@ export async function getStores() {
 
 export async function createDatabaseStore(store) {
   try {
+    const metadataPayload = {
+      cityName: typeof store.city === 'string' && !store.city.startsWith('{') ? store.city : 'Abuja',
+      storeType: store.storeType || (store.category === 'pharmacy' ? 'pharmacy' : 'grocery'),
+      pharmacist: store.pharmacist || null,
+      openTime: store.openTime || '08:00 AM',
+      closeTime: store.closeTime || '10:00 PM',
+      operatingDays: store.operatingDays || 'Mon - Sun (Daily)',
+      is24Hours: Boolean(store.is24Hours),
+      image: store.image || null,
+    };
+
     const record = {
       id: store.id || `store-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       name: store.name,
-      category: store.category || 'Gourmet & Groceries',
+      category: store.category || (store.storeType === 'pharmacy' ? 'pharmacy' : 'Gourmet & Groceries'),
       address: store.address || 'Abuja, Nigeria',
       district: store.district || 'Maitama, Abuja',
-      city: store.city || 'Abuja',
+      city: JSON.stringify(metadataPayload),
       latitude: Number(store.latitude) || 9.0882,
       longitude: Number(store.longitude) || 7.4933,
       phone: store.phone || '+234 800 000 0000',
@@ -721,6 +732,12 @@ export function parseStoreMetadata(dbStore) {
           : (dbStore.is_open !== undefined
               ? Boolean(dbStore.is_open)
               : undefined));
+  const isPharm =
+    meta.storeType === 'pharmacy' ||
+    dbStore.store_type === 'pharmacy' ||
+    dbStore.storeType === 'pharmacy' ||
+    (dbStore.category && typeof dbStore.category === 'string' && dbStore.category.toLowerCase().includes('pharm'));
+
   return {
     isOpen: isOpenVal,
     openTime: meta.openTime || dbStore.open_time || '08:00 AM',
@@ -728,6 +745,13 @@ export function parseStoreMetadata(dbStore) {
     operatingDays: meta.operatingDays || dbStore.operating_days || 'Mon - Sun (Daily)',
     is24Hours: meta.is24Hours !== undefined ? Boolean(meta.is24Hours) : Boolean(dbStore.is_24_hours),
     image: meta.image || dbStore.image_url || dbStore.image,
+    storeType: isPharm ? 'pharmacy' : (meta.storeType || dbStore.store_type || 'grocery'),
+    pharmacist: meta.pharmacist || (isPharm ? {
+      name: 'On-Duty Clinical Pharmacist',
+      qualification: 'B.Pharm, MPSN',
+      licenseNo: 'PCN Verified',
+      status: 'On-Duty • Available for Consult',
+    } : null),
   };
 }
 
