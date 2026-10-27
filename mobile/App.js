@@ -1630,6 +1630,13 @@ export default function App() {
   const [authAddress, setAuthAddress] = useState('Plot 14 Gana Street, Maitama');
   const [authBusinessName, setAuthBusinessName] = useState('');
 
+  // Default merchant selection to 'grocery' whenever Auth modal opens
+  useEffect(() => {
+    if (authModalVisible) {
+      setAuthSellerStoreType('grocery');
+    }
+  }, [authModalVisible]);
+
   // --- CUSTOMER WALLET BALANCE (FOR INSTANT REFUNDS & CHARGES) ---
   const [customerWalletBalance, setCustomerWalletBalance] = useState(25000); // Live testing wallet credit (₦25,000)
 
@@ -2848,10 +2855,12 @@ export default function App() {
                 ? inventory
                 : STORES_AROUND_ME.find((s) => s.id === dbStore.id)?.products || [];
 
+            const meta = parseStoreMetadata(dbStore);
             const isPharmacy =
               meta.storeType === 'pharmacy' ||
               (dbStore.category || '').toLowerCase().includes('pharm') ||
-              (dbStore.store_type || '').toLowerCase().includes('pharm');
+              (dbStore.store_type || '').toLowerCase().includes('pharm') ||
+              (dbStore.name || '').toLowerCase().includes('pharm');
 
             const categoryKey = isPharmacy
               ? 'pharmacy'
@@ -2864,8 +2873,6 @@ export default function App() {
                     : (dbStore.category || '').toLowerCase().includes('herit')
                       ? 'heritage'
                       : 'gourmet';
-
-            const meta = parseStoreMetadata(dbStore);
             const isOpenBool =
               dbStore.isOpen !== undefined
                 ? Boolean(dbStore.isOpen)
@@ -7923,9 +7930,49 @@ Support: help@getit.ng | Abuja, Nigeria`;
     // 3. Routing: Direct directly to Merchant Hub for the chosen store type
     const isTargetPharm = authSellerStoreType === 'pharmacy';
 
-    // Find all stores owned by this merchant (by phone, ownerId, or storeId)
+    // 1. Fetch fresh cloud stores from Supabase to guarantee all branches are present
+    let allAvailableStores = storesList;
+    try {
+      const cloudStores = await getStores();
+      if (cloudStores && cloudStores.length > 0) {
+        const enriched = cloudStores.map((dbStore) => {
+          const meta = parseStoreMetadata(dbStore);
+          const isPharmStore =
+            meta.storeType === 'pharmacy' ||
+            (dbStore.category || '').toLowerCase().includes('pharm') ||
+            (dbStore.store_type || '').toLowerCase().includes('pharm') ||
+            (dbStore.name || '').toLowerCase().includes('pharm');
+          return {
+            ...dbStore,
+            storeType: isPharmStore ? 'pharmacy' : 'grocery',
+            pharmacist: meta.pharmacist || null,
+          };
+        });
+        allAvailableStores = enriched;
+        setStoresList((prev) => {
+          const prevMap = new Map(prev.map((s) => [s.id, s]));
+          enriched.forEach((es) => {
+            const ex = prevMap.get(es.id);
+            prevMap.set(es.id, ex ? { ...ex, ...es } : es);
+          });
+          return Array.from(prevMap.values());
+        });
+      }
+    } catch (e) {
+      console.warn('Could not refresh stores during merchant sign-in:', e);
+    }
+
+    const isStorePharmacy = (st) =>
+      st && (
+        st.storeType === 'pharmacy' ||
+        (st.category || '').toLowerCase().includes('pharm') ||
+        (st.categoryLabel || '').toLowerCase().includes('pharm') ||
+        (st.name || '').toLowerCase().includes('pharm') ||
+        Boolean(st.pharmacist)
+      );
+
     const userPhoneClean = (existingSeller.phone || input || '').replace(/\D/g, '');
-    const userStores = storesList.filter((st) => {
+    const userStores = allAvailableStores.filter((st) => {
       if (existingSeller.storeId && st.id === existingSeller.storeId) return true;
       if (existingSeller.id && st.ownerId === existingSeller.id) return true;
       const stPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
@@ -7935,12 +7982,28 @@ Support: help@getit.ng | Abuja, Nigeria`;
       return false;
     });
 
-    // Pick the store that matches the chosen store type (pharmacy vs grocery)
     let matchedStore = userStores.find((st) =>
-      isTargetPharm ? st.storeType === 'pharmacy' : st.storeType !== 'pharmacy'
+      isTargetPharm ? isStorePharmacy(st) : !isStorePharmacy(st)
     );
 
-    // Fallback: if no store of that specific type is found, pick first available store
+    // If specific store type not found in userStores, search globally in allAvailableStores by phone match
+    if (!matchedStore && isTargetPharm) {
+      matchedStore = allAvailableStores.find((st) => {
+        const stPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
+        const phoneMatch = userPhoneClean.length >= 8 && stPhone.length >= 8 && userPhoneClean.slice(-8) === stPhone.slice(-8);
+        return phoneMatch && isStorePharmacy(st);
+      });
+    }
+
+    // If not found for grocery, search globally in allAvailableStores by phone match
+    if (!matchedStore && !isTargetPharm) {
+      matchedStore = allAvailableStores.find((st) => {
+        const stPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
+        const phoneMatch = userPhoneClean.length >= 8 && stPhone.length >= 8 && userPhoneClean.slice(-8) === stPhone.slice(-8);
+        return phoneMatch && !isStorePharmacy(st);
+      });
+    }
+
     if (!matchedStore && userStores.length > 0) {
       matchedStore = userStores[0];
     }
@@ -7973,7 +8036,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
       }).catch(console.warn);
     }
 
-    setCurrentUser(existingSeller);
+    const updatedSeller = {
+      ...existingSeller,
+      storeId: activeStoreId,
+      businessName: matchedStore ? matchedStore.name : existingSeller.businessName,
+    };
+    setCurrentUser(updatedSeller);
     setMerchantStoreId(activeStoreId);
     setAppMode('merchant');
     setIsLoggedIn(true);

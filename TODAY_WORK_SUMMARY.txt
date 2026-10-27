@@ -1068,6 +1068,18 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - ⚡ Direct Branch Context Routing:
      * In `handleAuthSellerSignIn`, the system queries the user's linked stores and routes directly to the requested store type (`storeType === 'pharmacy'` vs `storeType !== 'pharmacy'`).
 
+53. Pharmacy Merchant Sign-In & Grocery Default Fix:
+   - 🐛 Fixed Cloud Store Hydration TDZ ReferenceError:
+     * In `loadCloudStores()` (line 2851), `meta.storeType` was being accessed before `const meta = parseStoreMetadata(dbStore)` was declared on line 2868, throwing a runtime `ReferenceError: Cannot access 'meta' before initialization`.
+     * This runtime error previously halted cloud store hydration from Supabase, leaving `storesList` without the user's newly registered pharmacy (`Basit Pharm`).
+     * Reordered declarations so `meta` is parsed before usage, allowing all Supabase pharmacy stores to load cleanly.
+   - 🩺 Eager Cloud Fetch & Robust Pharmacy Branch Matching on Sign-In:
+     * In `handleAuthSellerSignIn`, the system now eagerly pulls fresh stores from Supabase upon login.
+     * Evaluates `isStorePharmacy` matching against `storeType === 'pharmacy'`, `category`, `categoryLabel`, store name containing `"pharm"`, and pharmacist licensing.
+     * Synchronizes `currentUser.storeId` and `currentUser.businessName` to `activeStoreId`, ensuring that `currentMerchantStore` always resolves to the selected Pharmacy dispensary instead of falling back to grocery.
+   - 🛒 Default Selection to Grocery:
+     * Added `useEffect` ensuring `authSellerStoreType` defaults to `'grocery'` every time the Auth modal opens.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
