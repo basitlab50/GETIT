@@ -7920,22 +7920,50 @@ Support: help@getit.ng | Abuja, Nigeria`;
       platform: 'GETIT Mobile Expo'
     }, input).catch(() => { });
 
-    // 3. Routing: Direct directly to Merchant Hub
+    // 3. Routing: Direct directly to Merchant Hub for the chosen store type
+    const isTargetPharm = authSellerStoreType === 'pharmacy';
+
+    // Find all stores owned by this merchant (by phone, ownerId, or storeId)
+    const userPhoneClean = (existingSeller.phone || input || '').replace(/\D/g, '');
+    const userStores = storesList.filter((st) => {
+      if (existingSeller.storeId && st.id === existingSeller.storeId) return true;
+      if (existingSeller.id && st.ownerId === existingSeller.id) return true;
+      const stPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
+      if (userPhoneClean.length >= 8 && stPhone.length >= 8) {
+        if (userPhoneClean.slice(-8) === stPhone.slice(-8)) return true;
+      }
+      return false;
+    });
+
+    // Pick the store that matches the chosen store type (pharmacy vs grocery)
+    let matchedStore = userStores.find((st) =>
+      isTargetPharm ? st.storeType === 'pharmacy' : st.storeType !== 'pharmacy'
+    );
+
+    // Fallback: if no store of that specific type is found, pick first available store
+    if (!matchedStore && userStores.length > 0) {
+      matchedStore = userStores[0];
+    }
+
+    let activeStoreId = matchedStore ? matchedStore.id : (existingSeller.storeId || 's1');
+
     if (existingSeller.role === 'buyer' || !existingSeller.storeId) {
       const storeId = existingSeller.storeId || `store-${Date.now()}`;
       const storeName = existingSeller.businessName || `${existingSeller.fullName}'s Store`;
       existingSeller.role = 'seller';
       existingSeller.storeId = storeId;
       existingSeller.businessName = storeName;
+      activeStoreId = storeId;
 
       // Update in Supabase and local database
       registerDatabaseUser(existingSeller).catch(console.warn);
       createDatabaseStore({
         id: storeId,
         name: storeName,
-        category: 'Gourmet & Groceries',
+        category: isTargetPharm ? 'pharmacy' : 'Gourmet & Groceries',
+        storeType: isTargetPharm ? 'pharmacy' : 'grocery',
         address: existingSeller.address || 'Abuja, Nigeria',
-        district: 'Maitama, Abuja',
+        district: 'Abuja',
         city: 'Abuja',
         latitude: 9.0882,
         longitude: 7.4933,
@@ -7945,7 +7973,6 @@ Support: help@getit.ng | Abuja, Nigeria`;
       }).catch(console.warn);
     }
 
-    const activeStoreId = existingSeller.storeId || 's1';
     setCurrentUser(existingSeller);
     setMerchantStoreId(activeStoreId);
     setAppMode('merchant');
@@ -7953,6 +7980,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
     syncOrdersFromCloud();
     setAuthLoginInput(existingSeller.phone || existingSeller.email || input);
     setAuthLoginPassword(pass);
+    setAuthModalVisible(false);
+
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingSeller));
       const savedTiming = await AsyncStorage.getItem(`getit_store_timing_${activeStoreId}`);
@@ -7972,9 +8001,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
         );
       }
     } catch (e) { }
+
     Alert.alert(
-      '🏪 Merchant Hub Live!',
-      `Welcome to your Merchant Hub, ${existingSeller.fullName}! Logged into "${existingSeller.businessName || 'your store'}" from the database.`
+      isTargetPharm ? '🩺 Pharmacy Dispensary Live!' : '🏪 Supermarket Hub Live!',
+      `Welcome to your Merchant Hub, ${existingSeller.fullName}! Logged into "${matchedStore?.name || existingSeller.businessName || 'your store'}" on GETIT.`
     );
   };
 
@@ -9358,15 +9388,80 @@ Support: help@getit.ng | Abuja, Nigeria`;
               isSignIn ? (
                 /* Merchant Sign In */
                 <View style={styles.luxeFormContainer}>
+                  {/* Store Type Selector for Sign In: Supermarket vs Pharmacy */}
+                  <View style={{ marginBottom: 14 }}>
+                    <Text style={styles.authStoreTypeHeading}>LOGGING IN AS *</Text>
+                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+                      <TouchableOpacity
+                        style={[
+                          styles.authStoreTypeBtn,
+                          authSellerStoreType === 'grocery' && styles.authStoreTypeBtnActiveGroc,
+                        ]}
+                        onPress={() => setAuthSellerStoreType('grocery')}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={{ fontSize: 24, marginBottom: 2 }}>🛒</Text>
+                        <Text
+                          style={[
+                            styles.authStoreTypeBtnTitle,
+                            authSellerStoreType === 'grocery' && { color: '#064E3B', fontWeight: '900' },
+                          ]}
+                        >
+                          Supermarket / Grocery
+                        </Text>
+                        <Text style={styles.authStoreTypeBtnSub}>
+                          Provisions, produce & drinks
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.authStoreTypeBtn,
+                          authSellerStoreType === 'pharmacy' && styles.authStoreTypeBtnActivePharm,
+                        ]}
+                        onPress={() => setAuthSellerStoreType('pharmacy')}
+                        activeOpacity={0.85}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <Text style={{ fontSize: 24, marginBottom: 2 }}>💊</Text>
+                          <View style={styles.rxBadgeTag}>
+                            <Text style={styles.rxBadgeTagText}>Rx</Text>
+                          </View>
+                        </View>
+                        <Text
+                          style={[
+                            styles.authStoreTypeBtnTitle,
+                            authSellerStoreType === 'pharmacy' && { color: '#1E3A8A', fontWeight: '900' },
+                          ]}
+                        >
+                          Pharmacy / Chemist
+                        </Text>
+                        <Text style={styles.authStoreTypeBtnSub}>
+                          Prescriptions & dispensary
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
-                      <Text style={styles.luxeInputIcon}>🏪</Text>
+                      <Text style={styles.luxeInputIcon}>
+                        {authSellerStoreType === 'pharmacy' ? '💊' : '🏪'}
+                      </Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>EMAIL OR PHONE</Text>
+                      <Text style={styles.luxeInputLabel}>
+                        {authSellerStoreType === 'pharmacy'
+                          ? 'PHARMACY EMAIL OR PHONE'
+                          : 'STORE EMAIL OR PHONE'}
+                      </Text>
                       <TextInput
                         style={styles.luxeTextInput}
-                        placeholder="e.g. 0803 111 2233 or email"
+                        placeholder={
+                          authSellerStoreType === 'pharmacy'
+                            ? 'e.g. 0803 111 2233 or pharmacy email'
+                            : 'e.g. 0803 111 2233 or store email'
+                        }
                         placeholderTextColor="#A8A29E"
                         value={authLoginInput}
                         onChangeText={setAuthLoginInput}
@@ -9380,7 +9475,11 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       <Text style={styles.luxeInputIcon}>🔒</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>MERCHANT PASSWORD</Text>
+                      <Text style={styles.luxeInputLabel}>
+                        {authSellerStoreType === 'pharmacy'
+                          ? 'PHARMACY PASSWORD'
+                          : 'MERCHANT PASSWORD'}
+                      </Text>
                       <TextInput
                         style={styles.luxeTextInput}
                         placeholder="Enter merchant password"
@@ -9401,12 +9500,26 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   </View>
 
                   <TouchableOpacity
-                    style={[styles.luxePrimaryBtn, { backgroundColor: COLORS.goldPrimary }]}
+                    style={[
+                      styles.luxePrimaryBtn,
+                      authSellerStoreType === 'pharmacy'
+                        ? { backgroundColor: '#1E3A8A' }
+                        : { backgroundColor: COLORS.goldPrimary },
+                    ]}
                     onPress={handleAuthSellerSignIn}
                     activeOpacity={0.85}
                   >
-                    <Text style={[styles.luxePrimaryBtnText, { color: '#000000', fontWeight: '800' }]}>
-                      Log In to Hub ➔
+                    <Text
+                      style={[
+                        styles.luxePrimaryBtnText,
+                        authSellerStoreType === 'pharmacy'
+                          ? { color: '#FFFFFF', fontWeight: '900' }
+                          : { color: '#000000', fontWeight: '800' },
+                      ]}
+                    >
+                      {authSellerStoreType === 'pharmacy'
+                        ? 'Log In to Pharmacy Dispensary 💊 ➔'
+                        : 'Log In to Grocery Hub 🛒 ➔'}
                     </Text>
                   </TouchableOpacity>
                 </View>

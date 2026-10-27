@@ -1054,6 +1054,20 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Connects both the Grocery Store and Pharmacy to the same phone number and owner account.
      * Both stores now appear simultaneously in the top **Branch Switcher Strip** and the **Account Tab Multi-Store Hub**.
 
+52. Dual Store Type Option in Merchant Sign-In (Groceries vs Pharmacy):
+   - 🎯 Unified Sign-In Store Type Selection:
+     * Added **`[ 🛒 Supermarket / Grocery ]`** and **`[ 💊 Pharmacy / Chemist (Rx) ]`** options to the Merchant Sign-In tab (`authModalVisible`).
+     * Merchants can directly indicate which branch type they want to access upon sign-in.
+   - 🎨 Adaptive UI Theming & Labels:
+     * When **Pharmacy** is selected:
+       - Input labels adapt to **`PHARMACY EMAIL OR PHONE`** and **`PHARMACY PASSWORD`**.
+       - Submit button turns into Clinical Navy Blue (`#1E3A8A`): **`[ Log In to Pharmacy Dispensary 💊 ➔ ]`**.
+     * When **Supermarket / Grocery** is selected:
+       - Input labels adapt to **`STORE EMAIL OR PHONE`** and **`MERCHANT PASSWORD`**.
+       - Submit button renders with Gold accent: **`[ Log In to Grocery Hub 🛒 ➔ ]`**.
+   - ⚡ Direct Branch Context Routing:
+     * In `handleAuthSellerSignIn`, the system queries the user's linked stores and routes directly to the requested store type (`storeType === 'pharmacy'` vs `storeType !== 'pharmacy'`).
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
