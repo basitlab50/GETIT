@@ -1026,6 +1026,24 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - 🛒 1-Tap Shopper Toggle:
      * Tapping **`[ 👤 Customer ]`** at the top right of the Merchant header returns the user to Shopper mode instantly.
 
+50. Merchant Sign-Up Modal Store Type & Pharmacist Registration:
+   - 🎯 Unified Store Type Selector in Primary Sign-Up Flow:
+     * Added **`[ 🛒 Supermarket / Grocery ]`** vs **`[ 💊 Pharmacy / Chemist (Rx) ]`** selector cards to the primary Merchant Sign-Up form (`authModalVisible`), which opens when users tap **"🚀 Register as Merchant & Open Store ➔"** in the Account tab.
+     * When **Pharmacy / Chemist** is selected:
+       - Renders dedicated Pharmacist & PCN Licensing form section:
+         * Lead / On-Duty Pharmacist Name
+         * PCN Registration / License Number
+         * Pharmacist Qualification
+       - Form dynamically relabels field to **`PHARMACY NAME`**.
+   - ⚡ Complete Database & Inventory Initialization:
+     * In `handleAuthSellerSignUp`, stores registered as pharmacy automatically receive:
+       - `storeType: 'pharmacy'`
+       - `category: 'pharmacy'`
+       - `categoryLabel: 'Licensed Community Pharmacy'`
+       - Pharmacist credentials record
+       - Auto-populated initial inventory from `MASTER_PHARMACY_INVENTORY` (genuine Nigerian medications ready to dispense)
+       - Synced to Supabase database.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

@@ -1564,6 +1564,12 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [showSignupOptional, setShowSignupOptional] = useState(false);
 
+  // Merchant Signup Store Type & Pharmacist States
+  const [authSellerStoreType, setAuthSellerStoreType] = useState('grocery'); // 'grocery' | 'pharmacy'
+  const [authSellerPharmacistName, setAuthSellerPharmacistName] = useState('');
+  const [authSellerPharmacistLicenseNo, setAuthSellerPharmacistLicenseNo] = useState('');
+  const [authSellerPharmacistQualification, setAuthSellerPharmacistQualification] = useState('');
+
   // Smooth Animations
   const authFadeAnim = useRef(new Animated.Value(1)).current;
   const authSlideAnim = useRef(new Animated.Value(0)).current;
@@ -8019,27 +8025,54 @@ Support: help@getit.ng | Abuja, Nigeria`;
       storeId: storeId,
     });
 
+    const isPharm = authSellerStoreType === 'pharmacy';
+    const pharmacistObj = isPharm
+      ? {
+          name: authSellerPharmacistName.trim() || fullName || 'Pharm. On-Duty Specialist',
+          licenseNo: authSellerPharmacistLicenseNo.trim() || 'PCN-REG-VERIFIED',
+          qualification: authSellerPharmacistQualification.trim() || 'B.Pharm, MPSN',
+          status: 'On-Duty • Available for Consult',
+        }
+      : null;
+
+    const initialMedications = isPharm && Array.isArray(MASTER_PHARMACY_INVENTORY)
+      ? MASTER_PHARMACY_INVENTORY.map((m, idx) => ({
+          ...m,
+          id: `item-${storeId}-rx-${idx + 1}`,
+          storeId: storeId,
+          storeName: businessName,
+        }))
+      : [];
+
     const newStoreObj = {
       id: storeId,
       name: newSeller.businessName,
-      category: 'gourmet',
-      categoryLabel: 'Gourmet Groceries & Provisions',
+      storeType: isPharm ? 'pharmacy' : 'grocery',
+      category: isPharm ? 'pharmacy' : 'gourmet',
+      categoryLabel: isPharm ? 'Licensed Community Pharmacy' : 'Gourmet Groceries & Provisions',
+      pharmacist: pharmacistObj,
+      ownerId: newSeller.id,
+      ownerPhone: newSeller.phone,
       rating: 5.0,
       reviewCount: 'New',
       distance: '0.8 km',
       deliveryTime: '15-25 min',
       deliveryFee: '₦1,200',
       freeDeliveryThreshold: 25000,
-      tag: 'NEW MERCHANT',
-      badgeColor: COLORS.emeraldPrimary,
-      address: newSeller.address || 'Nigeria',
-      district: 'Nigeria',
+      tag: isPharm ? 'VERIFIED PHARMACY' : 'NEW MERCHANT',
+      badgeColor: isPharm ? '#2563EB' : COLORS.emeraldPrimary,
+      address: newSeller.address || 'Abuja, Nigeria',
+      district: 'Abuja',
       latitude: 9.0882,
       longitude: 7.4933,
       phone: newSeller.phone,
-      image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
-      description: `${newSeller.businessName} — partner store live on GETIT Nigeria.`,
-      products: [],
+      image: isPharm
+        ? 'https://images.unsplash.com/photo-1587854692152-cbe660dbde88?auto=format&fit=crop&w=800&q=80'
+        : 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+      description: isPharm
+        ? `${newSeller.businessName} — Licensed community pharmacy with registered pharmacist on GETIT.`
+        : `${newSeller.businessName} — partner store live on GETIT Nigeria.`,
+      products: initialMedications,
       isOpen: true,
       is_open: true,
     };
@@ -8051,6 +8084,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
     setIsLoggedIn(true);
     setAuthLoginInput(phone || email || newSeller.email);
     setAuthLoginPassword(pass);
+    setAuthModalVisible(false);
 
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(newSeller));
@@ -8059,10 +8093,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
     createDatabaseStore({
       id: storeId,
       name: newSeller.businessName,
-      category: 'Gourmet & Groceries',
+      category: isPharm ? 'pharmacy' : 'Gourmet & Groceries',
+      storeType: isPharm ? 'pharmacy' : 'grocery',
+      pharmacist: pharmacistObj,
       address: newSeller.address,
-      district: 'Nigeria',
-      city: 'Nigeria',
+      district: 'Abuja',
+      city: 'Abuja',
       latitude: 9.0882,
       longitude: 7.4933,
       phone: newSeller.phone,
@@ -8070,8 +8106,14 @@ Support: help@getit.ng | Abuja, Nigeria`;
       isOpen: true,
     }).catch(console.warn);
 
+    if (initialMedications.length > 0) {
+      initialMedications.forEach((med) => {
+        addStoreInventoryItem(storeId, med).catch(() => {});
+      });
+    }
+
     Alert.alert(
-      '🎉 Store Registered & Stored on GETIT!',
+      isPharm ? '🩺 Pharmacy Registered & Live on GETIT!' : '🎉 Store Registered & Stored on GETIT!',
       `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" is now stored in the database and live on GETIT across Nigeria.`
     );
   };
@@ -9355,15 +9397,141 @@ Support: help@getit.ng | Abuja, Nigeria`;
               ) : (
                 /* Streamlined Merchant Sign Up */
                 <View style={styles.luxeFormContainer}>
+                  {/* Store Type Selector: Supermarket vs Pharmacy */}
+                  <View style={{ marginBottom: 14 }}>
+                    <Text style={styles.authStoreTypeHeading}>SELECT STORE TYPE *</Text>
+                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+                      <TouchableOpacity
+                        style={[
+                          styles.authStoreTypeBtn,
+                          authSellerStoreType === 'grocery' && styles.authStoreTypeBtnActiveGroc,
+                        ]}
+                        onPress={() => setAuthSellerStoreType('grocery')}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={{ fontSize: 24, marginBottom: 2 }}>🛒</Text>
+                        <Text
+                          style={[
+                            styles.authStoreTypeBtnTitle,
+                            authSellerStoreType === 'grocery' && { color: '#064E3B', fontWeight: '900' },
+                          ]}
+                        >
+                          Supermarket / Grocery
+                        </Text>
+                        <Text style={styles.authStoreTypeBtnSub}>
+                          Provisions, fresh produce & drinks
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.authStoreTypeBtn,
+                          authSellerStoreType === 'pharmacy' && styles.authStoreTypeBtnActivePharm,
+                        ]}
+                        onPress={() => setAuthSellerStoreType('pharmacy')}
+                        activeOpacity={0.85}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <Text style={{ fontSize: 24, marginBottom: 2 }}>💊</Text>
+                          <View style={styles.rxBadgeTag}>
+                            <Text style={styles.rxBadgeTagText}>Rx</Text>
+                          </View>
+                        </View>
+                        <Text
+                          style={[
+                            styles.authStoreTypeBtnTitle,
+                            authSellerStoreType === 'pharmacy' && { color: '#1E3A8A', fontWeight: '900' },
+                          ]}
+                        >
+                          Pharmacy / Chemist
+                        </Text>
+                        <Text style={styles.authStoreTypeBtnSub}>
+                          Prescriptions, OTC drugs & tele-consult
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Pharmacist Licensing Fields (Only when Pharmacy is selected) */}
+                  {authSellerStoreType === 'pharmacy' && (
+                    <View style={styles.authPharmacyDetailsBox}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                        <Text style={{ fontSize: 20 }}>🩺</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.authPharmBoxTitle}>Pharmacist & PCN Licensing</Text>
+                          <Text style={styles.authPharmBoxSub}>
+                            Required for patient tele-consultations & doctor prescription dispensing
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.luxeInputBox}>
+                        <View style={styles.luxeInputIconWrap}>
+                          <Text style={styles.luxeInputIcon}>👨‍⚕️</Text>
+                        </View>
+                        <View style={styles.luxeInputContent}>
+                          <Text style={styles.luxeInputLabel}>LEAD / ON-DUTY PHARMACIST NAME *</Text>
+                          <TextInput
+                            style={styles.luxeTextInput}
+                            placeholder="e.g. Pharm. Basit Aliyu"
+                            placeholderTextColor="#A8A29E"
+                            value={authSellerPharmacistName}
+                            onChangeText={setAuthSellerPharmacistName}
+                          />
+                        </View>
+                      </View>
+
+                      <View style={styles.luxeInputBox}>
+                        <View style={styles.luxeInputIconWrap}>
+                          <Text style={styles.luxeInputIcon}>📜</Text>
+                        </View>
+                        <View style={styles.luxeInputContent}>
+                          <Text style={styles.luxeInputLabel}>PCN REGISTRATION / LICENSE NUMBER *</Text>
+                          <TextInput
+                            style={styles.luxeTextInput}
+                            placeholder="e.g. PCN-REG-84920"
+                            placeholderTextColor="#A8A29E"
+                            value={authSellerPharmacistLicenseNo}
+                            onChangeText={setAuthSellerPharmacistLicenseNo}
+                          />
+                        </View>
+                      </View>
+
+                      <View style={styles.luxeInputBox}>
+                        <View style={styles.luxeInputIconWrap}>
+                          <Text style={styles.luxeInputIcon}>🎓</Text>
+                        </View>
+                        <View style={styles.luxeInputContent}>
+                          <Text style={styles.luxeInputLabel}>PHARMACIST QUALIFICATION</Text>
+                          <TextInput
+                            style={styles.luxeTextInput}
+                            placeholder="e.g. B.Pharm, MPSN, FPCPharm"
+                            placeholderTextColor="#A8A29E"
+                            value={authSellerPharmacistQualification}
+                            onChangeText={setAuthSellerPharmacistQualification}
+                          />
+                        </View>
+                      </View>
+                    </View>
+                  )}
+
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
-                      <Text style={styles.luxeInputIcon}>🏪</Text>
+                      <Text style={styles.luxeInputIcon}>
+                        {authSellerStoreType === 'pharmacy' ? '💊' : '🏪'}
+                      </Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>STORE NAME</Text>
+                      <Text style={styles.luxeInputLabel}>
+                        {authSellerStoreType === 'pharmacy' ? 'PHARMACY NAME' : 'STORE NAME'}
+                      </Text>
                       <TextInput
                         style={styles.luxeTextInput}
-                        placeholder="e.g. Daily Fresh Organics"
+                        placeholder={
+                          authSellerStoreType === 'pharmacy'
+                            ? 'e.g. Basit LifeCare Pharmacy'
+                            : 'e.g. Daily Fresh Organics'
+                        }
                         placeholderTextColor="#A8A29E"
                         value={authSignupBusinessName}
                         onChangeText={setAuthSignupBusinessName}
@@ -30210,6 +30378,80 @@ const styles = StyleSheet.create({
   merchantBranchStripPillTextActive: {
     color: '#FFFFFF',
     fontWeight: '900',
+  },
+
+  // --- AUTH MODAL MERCHANT STORE TYPE SELECTOR ---
+  authStoreTypeHeading: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#78716C',
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  authStoreTypeBtn: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#E7E5E4',
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  authStoreTypeBtnActiveGroc: {
+    borderColor: '#056B4B',
+    backgroundColor: '#F0FDF4',
+  },
+  authStoreTypeBtnActivePharm: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
+  authStoreTypeBtnTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#1C1917',
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  authStoreTypeBtnSub: {
+    fontSize: 10,
+    color: '#78716C',
+    textAlign: 'center',
+    lineHeight: 13,
+  },
+  rxBadgeTag: {
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  rxBadgeTagText: {
+    color: '#FFFFFF',
+    fontSize: 8.5,
+    fontWeight: '900',
+  },
+  authPharmacyDetailsBox: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 14,
+  },
+  authPharmBoxTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#1E3A8A',
+  },
+  authPharmBoxSub: {
+    fontSize: 10,
+    color: '#475569',
+    marginTop: 1,
   },
 
 });
