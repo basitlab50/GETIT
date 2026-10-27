@@ -976,6 +976,24 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Configured iOS `infoPlist` (`UIBackgroundModes: ["remote-notification"]`).
      * Fixed package & bundle identifiers to `ng.getit.mobile`.
 
+47. GETIT Tele-Pharmacy & Digital Health Vertical (Phases 1 & 2):
+   - 💊 Top Dual Vertical Switcher:
+     * Added prominent, luxury side-by-side toggle buttons at the top of the Shopper Home screen: **`[ 🛒 Groceries & Supermarkets ]`** and **`[ 💊 Pharmacy & Health (Rx) ]`**.
+     * Tapping dynamically switches themes, banners, categories, and verified merchant filters.
+   - 🏥 Abuja Community Pharmacies & Curated Drug Inventory (`mobile/data/pharmacyCatalog.js`):
+     * Integrated flagship Abuja dispensaries: H-Medix Pharmacy & Health (Wuse II), Medplus Pharmacy (Maitama), Nett Pharmacy & Clinic (Garki II), HealthPlus Pharmacy (Jabi Lake Mall).
+     * Cataloged 25+ essential Nigerian medications across 9 medical categories: Malaria & Fever (Coartem, Lonart DS, Amatem, Paracetamol), Pain & Headache (Ibuprofen, Diclofenac, Deep Heat), Cough & Allergy (Benylin 4-Flu, Procold, Strepsils), Antibiotics (Augmentin, Ciprotab, Amoxil), Vitamins & Blood Tonics, Digestive & Ulcer, First Aid & Monitoring Devices (Omron BP, Accu-Chek glucose strips), Baby & Child Care.
+   - 📷 Doctor's Prescription Upload & Symptoms Consultation Suite:
+     * Installed `expo-image-picker` with native camera & photo gallery permission flows.
+     * Built dedicated Doctor's Prescription Modal: patients can snap/attach prescription notes or test reports, describe their symptoms, and submit directly to the on-duty pharmacist.
+     * Live Consultation Bar on pharmacy store pages: **`[ 📷 Upload Doctor's Prescription ]`**, **`[ 💬 Chat with Pharmacist ]`**, **`[ 📞 Call Pharmacy ]`**.
+   - 🩺 Pharmacist In-Chat Prescription & Billing Suite:
+     * Added **`[ 💊 Prescribe & Bill ]`** button inside chat modal for pharmacy branch owners/pharmacists.
+     * Pharmacists can search their live inventory, select medications, specify dosage instructions (e.g. *"1 tablet every 12 hours after meals for 5 days"*), adjust quantities, and issue an official prescription invoice.
+   - 💳 Patient 1-Tap In-Chat Checkout & Tamper-Sealed Delivery:
+     * Interactive Prescription Invoice Card rendered in chat stream showing pharmacist credentials, itemized medications, dosages, and total.
+     * Patient taps **`[ 💳 Pay & Deliver Now ]`** to confirm payment; automatically generates a tamper-sealed pharmacy delivery order with security handover PIN and dispatches push alerts to merchant and courier.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

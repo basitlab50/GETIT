@@ -85,6 +85,12 @@ import {
   dispatchCustomerStatusRemotePush,
   dispatchChatRemotePush,
 } from './services/pushNotificationService';
+import * as ImagePicker from 'expo-image-picker';
+import {
+  INITIAL_PHARMACY_STORES,
+  PHARMACY_CATEGORIES,
+  MASTER_PHARMACY_INVENTORY,
+} from './data/pharmacyCatalog';
 import { getProductImageSource, matchCatalogImageByName } from './assets/productImages';
 
 const { width } = Dimensions.get('window');
@@ -625,6 +631,7 @@ const STORES_AROUND_ME = [
   {
     id: 'store-1792192743654',
     name: 'Mega Stores',
+    storeType: 'grocery',
     category: 'gourmet',
     categoryLabel: 'Gourmet Groceries & Provisions',
     rating: 5.0,
@@ -650,6 +657,7 @@ const STORES_AROUND_ME = [
     is_open: true,
     products: [],
   },
+  ...INITIAL_PHARMACY_STORES,
 ];
 
 // --- Financial formatting helper ---
@@ -1220,8 +1228,8 @@ function MerchantStraightLineTracker({ order, currentStore }) {
   const distText = isAtShop
     ? 'Arrived at shop'
     : accurateRemainingKm < 1
-    ? Math.round(accurateRemainingKm * 1000) + 'm away'
-    : accurateRemainingKm.toFixed(1) + ' km away';
+      ? Math.round(accurateRemainingKm * 1000) + 'm away'
+      : accurateRemainingKm.toFixed(1) + ' km away';
 
   // Realistic city transit speed (22 km/h) accounts for turns, traffic, and intersections
   const allocatedMins = Math.max(1, Math.round((accurateRemainingKm / 22) * 60));
@@ -1534,7 +1542,7 @@ export default function App() {
         if (storedMap) {
           setUnreadChatMap(JSON.parse(storedMap));
         }
-      } catch (e) {}
+      } catch (e) { }
     })();
   }, []);
 
@@ -1623,11 +1631,11 @@ export default function App() {
           setCustomerWalletBalance(Number(val));
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   useEffect(() => {
-    AsyncStorage.setItem('getit_customer_wallet', String(customerWalletBalance)).catch(() => {});
+    AsyncStorage.setItem('getit_customer_wallet', String(customerWalletBalance)).catch(() => { });
   }, [customerWalletBalance]);
 
   // --- OUT OF STOCK & SMART PRODUCT SUBSTITUTION STATE ---
@@ -1689,7 +1697,7 @@ export default function App() {
       if (savedLive !== null) {
         setStoreOpenStatus(savedLive === 'true');
       }
-    } catch (e) {}
+    } catch (e) { }
   };
 
   // --- STORE PROFILE & PHOTO MANAGEMENT STATE ---
@@ -1737,6 +1745,21 @@ export default function App() {
 
   // Active Orders
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'orders' | 'profile'
+  const [activeVertical, setActiveVertical] = useState('groceries'); // 'groceries' | 'pharmacy'
+
+  // Doctor's Prescription & Tele-Pharmacy Consultation
+  const [prescriptionModalVisible, setPrescriptionModalVisible] = useState(false);
+  const [targetPrescriptionPharmacy, setTargetPrescriptionPharmacy] = useState(null);
+  const [prescriptionImage, setPrescriptionImage] = useState(null);
+  const [prescriptionSymptomsNote, setPrescriptionSymptomsNote] = useState('');
+  const [prescriptionPatientPhone, setPrescriptionPatientPhone] = useState('');
+
+  // Pharmacist In-Chat Prescription & Billing Modal
+  const [prescribeMedicationModalVisible, setPrescribeMedicationModalVisible] = useState(false);
+  const [prescribeSearchQuery, setPrescribeSearchQuery] = useState('');
+  const [prescribeCategoryFilter, setPrescribeCategoryFilter] = useState('all');
+  const [selectedPrescribeItems, setSelectedPrescribeItems] = useState([]);
+
   const [orders, setOrders] = useState([]);
 
   const [ordersFilterTab, setOrdersFilterTab] = useState('active'); // 'active' | 'all' | 'completed' | 'cancelled'
@@ -1778,7 +1801,7 @@ export default function App() {
         if (savedBank) setMerchantBankInfo(JSON.parse(savedBank));
         const savedPayouts = await AsyncStorage.getItem('getit_merchant_payouts');
         if (savedPayouts) setPayoutHistory(JSON.parse(savedPayouts));
-      } catch (e) {}
+      } catch (e) { }
     })();
   }, []);
 
@@ -1886,7 +1909,7 @@ export default function App() {
       const updated = typeof updater === 'function' ? updater(prev) : updater;
       try {
         AsyncStorage.setItem('getit_orders', JSON.stringify(updated)).catch(console.warn);
-      } catch (e) {}
+      } catch (e) { }
       return updated;
     });
   };
@@ -1901,7 +1924,7 @@ export default function App() {
     if (isManual) setIsRefreshingOrders(true);
     try {
       // 1. Flush any pending offline orders
-      await flushPendingOfflineOrders().catch(() => {});
+      await flushPendingOfflineOrders().catch(() => { });
 
       // 2. Fetch current cloud orders (Single fetch!)
       const cloudOrders = await getDatabaseOrders();
@@ -1926,26 +1949,26 @@ export default function App() {
             co.id,
             existing
               ? {
-                  ...existing,
-                  replacementProposal:
-                    (existing.replacementProposal && existing.replacementProposal.status !== 'pending' && co.replacementProposal?.status === 'pending')
-                      ? existing.replacementProposal
-                      : ((co.replacementProposal !== undefined) ? co.replacementProposal : existing.replacementProposal),
-                  items:
-                    (existing.replacementProposal && existing.replacementProposal.status !== 'pending' && co.replacementProposal?.status === 'pending')
-                      ? existing.items
-                      : ((co.items && co.items.length > 0) ? co.items : existing.items),
-                  subtotal: (co.subtotal !== undefined && co.subtotal > 0) ? co.subtotal : existing.subtotal,
-                  total: (co.total !== undefined && co.total > 0) ? co.total : existing.total,
-                  status: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.status || existing.status),
-                  eta: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.eta || existing.eta),
-                  stops: (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []),
-                  roadRouteCoordinates: (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []),
-                  roadLegs: (co.roadLegs && co.roadLegs.length > 0) ? co.roadLegs : (existing.roadLegs || []),
-                  roadPointIndex: Math.max(co.roadPointIndex || 0, existing.roadPointIndex || 0),
-                  legStartedAt: existing.legStartedAt || co.legStartedAt || Date.now(),
-                  boltCoords: (existing.status === 'On the Way' && existing.boltCoords) ? existing.boltCoords : (co.boltCoords || existing.boltCoords),
-                }
+                ...existing,
+                replacementProposal:
+                  (existing.replacementProposal && existing.replacementProposal.status !== 'pending' && co.replacementProposal?.status === 'pending')
+                    ? existing.replacementProposal
+                    : ((co.replacementProposal !== undefined) ? co.replacementProposal : existing.replacementProposal),
+                items:
+                  (existing.replacementProposal && existing.replacementProposal.status !== 'pending' && co.replacementProposal?.status === 'pending')
+                    ? existing.items
+                    : ((co.items && co.items.length > 0) ? co.items : existing.items),
+                subtotal: (co.subtotal !== undefined && co.subtotal > 0) ? co.subtotal : existing.subtotal,
+                total: (co.total !== undefined && co.total > 0) ? co.total : existing.total,
+                status: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.status || existing.status),
+                eta: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.eta || existing.eta),
+                stops: (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []),
+                roadRouteCoordinates: (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []),
+                roadLegs: (co.roadLegs && co.roadLegs.length > 0) ? co.roadLegs : (existing.roadLegs || []),
+                roadPointIndex: Math.max(co.roadPointIndex || 0, existing.roadPointIndex || 0),
+                legStartedAt: existing.legStartedAt || co.legStartedAt || Date.now(),
+                boltCoords: (existing.status === 'On the Way' && existing.boltCoords) ? existing.boltCoords : (co.boltCoords || existing.boltCoords),
+              }
               : co
           );
         });
@@ -1971,7 +1994,7 @@ export default function App() {
       });
       try {
         AsyncStorage.setItem('getit_stores_list', JSON.stringify(deduped)).catch(console.warn);
-      } catch (e) {}
+      } catch (e) { }
       return deduped;
     });
   };
@@ -2053,9 +2076,9 @@ export default function App() {
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos((nLat1 * Math.PI) / 180) *
-        Math.cos((nLat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
+      Math.cos((nLat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   }
@@ -2374,9 +2397,9 @@ export default function App() {
           riderStart,
           ...(stopsList.length > 0
             ? stopsList.map((s) => ({
-                latitude: Number(s.latitude) || 9.0882,
-                longitude: Number(s.longitude) || 7.4933,
-              }))
+              latitude: Number(s.latitude) || 9.0882,
+              longitude: Number(s.longitude) || 7.4933,
+            }))
             : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
           {
             latitude: Number(dest.latitude) || 9.0882,
@@ -2405,17 +2428,17 @@ export default function App() {
               prev.map((o) =>
                 o.id === ord.id
                   ? {
-                      ...o,
-                      roadRouteCoordinates: result.roadPoints,
-                      roadLegs: result.legs,
-                      snappedWaypoints: result.snappedWaypoints,
-                      stops: updatedStops,
-                      snappedDeliveryLocation: snappedDest
-                        ? { ...o.deliveryLocation, latitude: snappedDest.latitude, longitude: snappedDest.longitude }
-                        : o.deliveryLocation,
-                      roadPointIndex: o.roadPointIndex || 0,
-                      boltCoords: (o.roadPointIndex && result.roadPoints[o.roadPointIndex]) || o.boltCoords || result.roadPoints[0],
-                    }
+                    ...o,
+                    roadRouteCoordinates: result.roadPoints,
+                    roadLegs: result.legs,
+                    snappedWaypoints: result.snappedWaypoints,
+                    stops: updatedStops,
+                    snappedDeliveryLocation: snappedDest
+                      ? { ...o.deliveryLocation, latitude: snappedDest.latitude, longitude: snappedDest.longitude }
+                      : o.deliveryLocation,
+                    roadPointIndex: o.roadPointIndex || 0,
+                    boltCoords: (o.roadPointIndex && result.roadPoints[o.roadPointIndex]) || o.boltCoords || result.roadPoints[0],
+                  }
                   : o
               )
             );
@@ -2470,7 +2493,7 @@ export default function App() {
           boltCoords: destCoord,
           eta: 'Arrived outside gate',
           journeyAlert: arrivedAlert,
-        }).catch(() => {});
+        }).catch(() => { });
       }
       return {
         ...ord,
@@ -2499,9 +2522,9 @@ export default function App() {
         riderStart,
         ...(verifiedStops && verifiedStops.length > 0
           ? verifiedStops.map((s) => ({
-              latitude: Number(s.latitude) || 9.0882,
-              longitude: Number(s.longitude) || 7.4933,
-            }))
+            latitude: Number(s.latitude) || 9.0882,
+            longitude: Number(s.longitude) || 7.4933,
+          }))
           : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
         { latitude: homeLat, longitude: homeLng },
       ];
@@ -2596,7 +2619,7 @@ export default function App() {
         boltCoords: endOfLegCoord,
         journeyAlert: progressAlert,
         status: 'On the Way',
-      }).catch(() => {});
+      }).catch(() => { });
 
       broadcastLiveEvent('ORDER_UPDATE', {
         orderId: ord.id,
@@ -2637,7 +2660,7 @@ export default function App() {
       boltCoords: destCoord,
       courierArrivedOutside: true,
       hasNotifiedArrived: true,
-    }).catch(() => {});
+    }).catch(() => { });
 
     broadcastLiveEvent('ORDER_UPDATE', {
       orderId: ord.id,
@@ -2819,22 +2842,22 @@ export default function App() {
             const categoryKey = (dbStore.category || 'gourmet').toLowerCase().includes('organ')
               ? 'organic'
               : (dbStore.category || '').toLowerCase().includes('bake')
-              ? 'bakery'
-              : (dbStore.category || '').toLowerCase().includes('cell')
-              ? 'cellar'
-              : (dbStore.category || '').toLowerCase().includes('herit')
-              ? 'heritage'
-              : 'gourmet';
+                ? 'bakery'
+                : (dbStore.category || '').toLowerCase().includes('cell')
+                  ? 'cellar'
+                  : (dbStore.category || '').toLowerCase().includes('herit')
+                    ? 'heritage'
+                    : 'gourmet';
 
             const meta = parseStoreMetadata(dbStore);
             const isOpenBool =
               dbStore.isOpen !== undefined
                 ? Boolean(dbStore.isOpen)
                 : (dbStore.is_open !== undefined
-                    ? Boolean(dbStore.is_open)
-                    : (meta.isOpen !== undefined
-                        ? Boolean(meta.isOpen)
-                        : true));
+                  ? Boolean(dbStore.is_open)
+                  : (meta.isOpen !== undefined
+                    ? Boolean(meta.isOpen)
+                    : true));
 
             return {
               id: dbStore.id,
@@ -2911,12 +2934,12 @@ export default function App() {
         const categoryKey = (dbStore.category || 'gourmet').toLowerCase().includes('organ')
           ? 'organic'
           : (dbStore.category || '').toLowerCase().includes('bake')
-          ? 'bakery'
-          : (dbStore.category || '').toLowerCase().includes('cell')
-          ? 'cellar'
-          : (dbStore.category || '').toLowerCase().includes('herit')
-          ? 'heritage'
-          : 'gourmet';
+            ? 'bakery'
+            : (dbStore.category || '').toLowerCase().includes('cell')
+              ? 'cellar'
+              : (dbStore.category || '').toLowerCase().includes('herit')
+                ? 'heritage'
+                : 'gourmet';
 
         const meta = parseStoreMetadata(dbStore);
         const isOpenBool = dbStore.is_open !== undefined ? Boolean(dbStore.is_open) : true;
@@ -2958,7 +2981,7 @@ export default function App() {
               prev.map((s) => (s.id === newStoreObj.id ? { ...s, products: inv } : s))
             );
           }
-        }).catch(() => {});
+        }).catch(() => { });
 
         updateAndPersistStores((prev) => {
           if (prev.some((s) => s.id === newStoreObj.id)) {
@@ -2973,20 +2996,20 @@ export default function App() {
           dbStore.isOpen !== undefined
             ? Boolean(dbStore.isOpen)
             : (dbStore.is_open !== undefined
-                ? Boolean(dbStore.is_open)
-                : (meta.isOpen !== undefined
-                    ? Boolean(meta.isOpen)
-                    : true));
+              ? Boolean(dbStore.is_open)
+              : (meta.isOpen !== undefined
+                ? Boolean(meta.isOpen)
+                : true));
         const is24H = meta.is24Hours !== undefined ? Boolean(meta.is24Hours) : Boolean(dbStore.is_24_hours);
         const categoryKey = (dbStore.category || 'gourmet').toLowerCase().includes('organ')
           ? 'organic'
           : (dbStore.category || '').toLowerCase().includes('bake')
-          ? 'bakery'
-          : (dbStore.category || '').toLowerCase().includes('cell')
-          ? 'cellar'
-          : (dbStore.category || '').toLowerCase().includes('herit')
-          ? 'heritage'
-          : 'gourmet';
+            ? 'bakery'
+            : (dbStore.category || '').toLowerCase().includes('cell')
+              ? 'cellar'
+              : (dbStore.category || '').toLowerCase().includes('herit')
+                ? 'heritage'
+                : 'gourmet';
 
         updateAndPersistStores((prev) =>
           prev.map((s) => {
@@ -3208,7 +3231,7 @@ export default function App() {
                 const updated = { ...prev, [key]: (Number(prev[key]) || 0) + 1 };
                 try {
                   AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
-                } catch (e) {}
+                } catch (e) { }
                 return updated;
               });
 
@@ -3223,7 +3246,7 @@ export default function App() {
 
               try {
                 playAudioBeep(myMode === 'merchant' ? 'merchant_new_order' : 'default');
-              } catch (e) {}
+              } catch (e) { }
 
               try {
                 notifyNewChatMessage({
@@ -3231,7 +3254,7 @@ export default function App() {
                   message,
                   recipientRole: myMode === 'customer' ? 'buyer' : 'merchant',
                 });
-              } catch (nErr) {}
+              } catch (nErr) { }
             }
           }
 
@@ -3282,14 +3305,14 @@ export default function App() {
             alertedReplacementDecisionsRef.current.add(decisionKey);
             try {
               playAudioBeep('merchant_new_order');
-            } catch (aErr) {}
+            } catch (aErr) { }
             try {
               notifyReplacementDecision(
                 { id: ordId, storeId: prop.storeId, storeName: prop.storeName },
                 prop.substituteProduct,
                 isAccepted
               );
-            } catch (nErr) {}
+            } catch (nErr) { }
             Alert.alert(
               isAccepted ? '✅ Customer Approved Substitute!' : '❌ Substitute Declined',
               isAccepted
@@ -3372,7 +3395,7 @@ export default function App() {
                 return true;
               });
             }
-          } catch (e) {}
+          } catch (e) { }
         }
 
         // Hydrate timing, live status, and image for EVERY store in the list
@@ -3394,7 +3417,7 @@ export default function App() {
               if (imgVal) {
                 updated.image = imgVal;
               }
-            } catch (e) {}
+            } catch (e) { }
             return updated;
           })
         );
@@ -3523,7 +3546,7 @@ export default function App() {
                 }
               });
               setOrders(caughtUp);
-            } catch (e) {}
+            } catch (e) { }
           }
         }
 
@@ -3858,7 +3881,7 @@ export default function App() {
     setPinnedLocation(updated);
     setSelectedLocation(updated.name);
     setAcknowledgedDiffLocation(false);
-    AsyncStorage.setItem('getit_buyer_pinned_location', JSON.stringify(updated)).catch(() => {});
+    AsyncStorage.setItem('getit_buyer_pinned_location', JSON.stringify(updated)).catch(() => { });
     closeLocationModal();
     Alert.alert(
       'Location Pinned on Map! 📍',
@@ -3880,7 +3903,7 @@ export default function App() {
         street = rev[0].street || rev[0].name || street;
         district = rev[0].district || rev[0].subregion || rev[0].city || district;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     const updated = {
       name: `${street}, ${district}`,
@@ -3896,7 +3919,7 @@ export default function App() {
     setMapCoords({ latitude, longitude });
     setMapStreetAddress(updated.name);
     setAcknowledgedDiffLocation(true);
-    AsyncStorage.setItem('getit_buyer_pinned_location', JSON.stringify(updated)).catch(() => {});
+    AsyncStorage.setItem('getit_buyer_pinned_location', JSON.stringify(updated)).catch(() => { });
     Alert.alert(
       '🎯 Switched to Current Phone Location!',
       `Delivery pin has been updated to your live GPS location:\n${updated.name}`
@@ -4311,23 +4334,23 @@ export default function App() {
           const edgePadding =
             typeof padding === 'object' && padding !== null
               ? {
-                  top: padding.top ?? 50,
-                  right: padding.right ?? 50,
-                  bottom: padding.bottom ?? 50,
-                  left: padding.left ?? 50,
-                }
+                top: padding.top ?? 50,
+                right: padding.right ?? 50,
+                bottom: padding.bottom ?? 50,
+                left: padding.left ?? 50,
+              }
               : {
-                  top: padding,
-                  right: padding,
-                  bottom: padding,
-                  left: padding,
-                };
+                top: padding,
+                right: padding,
+                bottom: padding,
+                left: padding,
+              };
 
           targetMap.fitToCoordinates(points, {
             edgePadding,
             animated: true,
           });
-        } catch (e) {}
+        } catch (e) { }
       }
     } catch (e) {
       console.log('fitCartMapToAllPins error:', e?.message);
@@ -4368,7 +4391,7 @@ export default function App() {
             const nextZoom = zoomIn ? (cam.zoom ? cam.zoom + 1 : 16) : (cam.zoom ? cam.zoom - 1 : 13);
             targetMap.animateCamera({ altitude: nextAlt, zoom: nextZoom }, { duration: 250 });
           }
-        }).catch(() => {});
+        }).catch(() => { });
       }
     } catch (e) {
       console.log('zoomCartMap error:', e?.message);
@@ -4390,7 +4413,7 @@ export default function App() {
               });
             }
           }
-        } catch (e) {}
+        } catch (e) { }
       })();
 
       if (!cartMapInitialFitDoneRef.current) {
@@ -4452,15 +4475,15 @@ export default function App() {
               prev.map((o) =>
                 o.id === orderId
                   ? {
-                      ...o,
-                      status: 'Cancelled',
-                      cancellationReason: 'Cancelled by customer',
-                      cancelledAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    }
+                    ...o,
+                    status: 'Cancelled',
+                    cancellationReason: 'Cancelled by customer',
+                    cancelledAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  }
                   : o
               )
             );
-            updateDatabaseOrderStatus(orderId, { status: 'Cancelled' }).catch(() => {});
+            updateDatabaseOrderStatus(orderId, { status: 'Cancelled' }).catch(() => { });
             Alert.alert(
               '✅ Order Cancelled',
               `Order ${targetOrder.id} has been cancelled successfully. Your refund of ${formatNaira(targetOrder.total)} has been processed.`
@@ -4512,14 +4535,14 @@ export default function App() {
               prev.map((o) =>
                 o.id === orderId
                   ? {
-                      ...o,
-                      status: 'Delivered',
-                      eta: 'Delivered',
-                      courierArrivedOutside: true,
-                      hasNotifiedArrived: true,
-                      deliveredAt: Date.now(),
-                      journeyAlert: '✅ Order Delivered successfully! Thank you for choosing GETIT.',
-                    }
+                    ...o,
+                    status: 'Delivered',
+                    eta: 'Delivered',
+                    courierArrivedOutside: true,
+                    hasNotifiedArrived: true,
+                    deliveredAt: Date.now(),
+                    journeyAlert: '✅ Order Delivered successfully! Thank you for choosing GETIT.',
+                  }
                   : o
               )
             );
@@ -4534,7 +4557,7 @@ export default function App() {
                 title: '🎉 Order Delivered!',
                 body: `Your provisions order #${orderId} was delivered successfully. Enjoy!`,
                 status: 'Delivered',
-              }).catch(() => {});
+              }).catch(() => { });
             }
 
             // Supabase cloud sync
@@ -4542,7 +4565,7 @@ export default function App() {
               status: 'Delivered',
               eta: 'Delivered',
               journeyAlert: '✅ Order Delivered successfully! Thank you for choosing GETIT.',
-            }).catch(() => {});
+            }).catch(() => { });
 
             // Auto-launch customer review scorecard after handover (buyer only)
             if (appModeRef.current === 'customer' && currentUserRef.current?.role !== 'seller') {
@@ -4994,25 +5017,25 @@ export default function App() {
       };
       newReviewsToPersist.push(revObj);
 
-      submitDatabaseReview(revObj).catch(() => {});
+      submitDatabaseReview(revObj).catch(() => { });
     });
 
     const updatedReviews = [...newReviewsToPersist, ...reviewsList];
     setReviewsList(updatedReviews);
     try {
       await AsyncStorage.setItem('getit_order_reviews', JSON.stringify(updatedReviews));
-    } catch (e) {}
+    } catch (e) { }
 
     const primaryRating = storeRatingsMap[storeKeys[0]]?.rating || 5;
     updateAndPersistOrders((prev) =>
       prev.map((o) =>
         o.id === targetReviewOrder.id
           ? {
-              ...o,
-              isReviewed: true,
-              reviewScore: primaryRating,
-              reviewedAt: Date.now(),
-            }
+            ...o,
+            isReviewed: true,
+            reviewScore: primaryRating,
+            reviewedAt: Date.now(),
+          }
           : o
       )
     );
@@ -5026,7 +5049,7 @@ export default function App() {
           const currentRating = Number(st.rating) || 4.9;
           const newRating = Number(((currentRating * currentCount + matchingRev.storeRating) / newCount).toFixed(1));
           if (matchingRev?.storeId) {
-            updateDatabaseStore(matchingRev.storeId, { rating: newRating }).catch(() => {});
+            updateDatabaseStore(matchingRev.storeId, { rating: newRating }).catch(() => { });
           }
           return {
             ...st,
@@ -5045,7 +5068,7 @@ export default function App() {
     Alert.alert(
       '⭐ Review Submitted!',
       `Thank you, ${clientName}! Your verified rating and feedback have been shared with ${targetReviewOrder.storeName} and courier ${riderName}.` +
-        (courierTipAmount > 0 ? `\n\n₦${courierTipAmount.toLocaleString()} courier tip confirmed.` : '')
+      (courierTipAmount > 0 ? `\n\n₦${courierTipAmount.toLocaleString()} courier tip confirmed.` : '')
     );
   };
 
@@ -5068,7 +5091,7 @@ export default function App() {
           return merged;
         });
       }
-    } catch (e) {}
+    } catch (e) { }
   };
 
   // --- ORDER LIVE CHAT HANDLERS & NOTIFICATION TAPS ---
@@ -5083,8 +5106,8 @@ export default function App() {
             data.senderRole === 'merchant'
               ? 'merchant'
               : data.senderRole === 'courier'
-              ? 'courier'
-              : 'buyer'
+                ? 'courier'
+                : 'buyer'
           );
         }
       }
@@ -5121,8 +5144,8 @@ export default function App() {
         partnerRole === 'merchant'
           ? '🏪 Store Concierge'
           : partnerRole === 'courier'
-          ? '🚴 Dispatch Courier'
-          : '👤 Customer',
+            ? '🚴 Dispatch Courier'
+            : '👤 Customer',
       phone: partnerPhone,
     });
 
@@ -5146,7 +5169,7 @@ export default function App() {
 
     try {
       await AsyncStorage.setItem(`getit_chat_messages_${order.id}`, JSON.stringify(readUpdated));
-    } catch (e) {}
+    } catch (e) { }
 
     updateAndPersistOrders((prev) =>
       prev.map((o) => (o.id === order.id ? { ...o, messages: readUpdated } : o))
@@ -5161,7 +5184,7 @@ export default function App() {
       delete updated[`${order.id}_courier`];
       try {
         AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
-      } catch (e) {}
+      } catch (e) { }
       return updated;
     });
 
@@ -5218,7 +5241,7 @@ export default function App() {
       senderName: senderName,
       text: trimmed,
       orderId: targetChatOrder.id,
-    }).catch(() => {});
+    }).catch(() => { });
 
     // Increment unread count for recipient in unreadChatMap & AsyncStorage
     setUnreadChatMap((prev) => {
@@ -5226,7 +5249,7 @@ export default function App() {
       const updated = { ...prev, [key]: (Number(prev[key]) || 0) + 1 };
       try {
         AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
-      } catch (e) {}
+      } catch (e) { }
       return updated;
     });
 
@@ -5268,9 +5291,352 @@ export default function App() {
         await sendOrderChatMessage(targetChatOrder.id, courierMsg);
         try {
           playAudioBeep('default');
-        } catch (e) {}
+        } catch (e) { }
       }, 1800);
     }
+  };
+
+  // --- TELE-PHARMACY, DOCTOR'S PRESCRIPTION & CONSULTATION SUITE ---
+  const handleOpenPrescriptionModal = (pharmacy = null) => {
+    const target =
+      pharmacy ||
+      (selectedStore?.storeType === 'pharmacy' ? selectedStore : null) ||
+      filteredStores.find((s) => s.storeType === 'pharmacy') ||
+      INITIAL_PHARMACY_STORES[0];
+    setTargetPrescriptionPharmacy(target);
+    setPrescriptionSymptomsNote('');
+    setPrescriptionPatientPhone(currentUser?.phone || '');
+    setPrescriptionModalVisible(true);
+  };
+
+  const handlePickPrescriptionImage = async (useCamera = false) => {
+    try {
+      let result;
+      if (useCamera) {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert(
+            'Camera Access Needed',
+            'Please grant camera permissions to snap a photo of your prescription note.'
+          );
+          return;
+        }
+        result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.85,
+        });
+      } else {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert(
+            'Gallery Access Needed',
+            'Please grant gallery permissions to attach your prescription photo.'
+          );
+          return;
+        }
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.85,
+        });
+      }
+
+      if (!result.canceled && result.assets && result.assets[0]?.uri) {
+        setPrescriptionImage(result.assets[0].uri);
+      }
+    } catch (err) {
+      console.warn('Prescription image picker error:', err?.message);
+    }
+  };
+
+  const handleConsultPharmacist = async (pharmacy, initialText = null, prescriptionImg = null) => {
+    if (!pharmacy) return;
+    const phoneSuffix = (currentUser?.phone || '0000').replace(/\D/g, '').slice(-4) || 'user';
+    const consultId = `RX-${pharmacy.id.replace('pharm-', '')}-${phoneSuffix}`;
+
+    let targetOrd = orders.find((o) => o.id === consultId);
+    if (!targetOrd) {
+      targetOrd = {
+        id: consultId,
+        storeId: pharmacy.id,
+        storeName: pharmacy.name,
+        customerName: currentUser?.name || 'Patient',
+        customerId: currentUser?.id || 'patient-user',
+        customerPhone: currentUser?.phone || '08000000000',
+        status: 'Consultation',
+        storeType: 'pharmacy',
+        total: 0,
+        subtotal: 0,
+        items: [],
+        createdAt: new Date().toISOString(),
+        messages: [],
+      };
+      setOrders((prev) => [targetOrd, ...prev.filter((o) => o.id !== consultId)]);
+    }
+
+    setTargetChatOrder(targetOrd);
+    setTargetChatPartner({
+      id: pharmacy.id,
+      name: pharmacy.pharmacist?.name || pharmacy.name,
+      role: 'merchant',
+      roleLabel: '🩺 Consultant Pharmacist',
+      phone: pharmacy.phone || '',
+    });
+
+    if (initialText || prescriptionImg) {
+      const initMsg = {
+        id: `msg-${Date.now()}`,
+        orderId: consultId,
+        storeId: pharmacy.id,
+        customerId: currentUser?.id,
+        senderRole: 'buyer',
+        senderName: currentUser?.name || 'Patient',
+        text: initialText || '📷 Doctor Prescription Note uploaded for review.',
+        prescriptionImage: prescriptionImg || null,
+        createdAt: new Date().toISOString(),
+        timestamp: Date.now(),
+        read: false,
+      };
+
+      setChatMessages((prev) => [...prev, initMsg]);
+      await sendOrderChatMessage(consultId, initMsg).catch(() => { });
+      dispatchChatRemotePush({
+        recipientRole: 'merchant',
+        recipientId: pharmacy.id,
+        senderName: currentUser?.name || 'Patient',
+        text: initialText || '📷 Doctor Prescription Note uploaded for review.',
+        orderId: consultId,
+      }).catch(() => { });
+    } else {
+      const stored = await getOrderChatMessages(consultId);
+      setChatMessages(stored.length > 0 ? stored : targetOrd.messages || []);
+    }
+
+    setChatModalVisible(true);
+  };
+
+  const handleSubmitPrescriptionToPharmacy = async () => {
+    if (!prescriptionImage && !prescriptionSymptomsNote.trim()) {
+      Alert.alert(
+        'Doctor Note or Symptoms Needed',
+        'Please attach a photo of your doctor prescription or type the symptoms you are experiencing so our on-duty pharmacist can prescribe the right medications for you.'
+      );
+      return;
+    }
+
+    const targetPharm =
+      targetPrescriptionPharmacy ||
+      filteredStores.find((s) => s.storeType === 'pharmacy') ||
+      INITIAL_PHARMACY_STORES[0];
+
+    const noteText = prescriptionSymptomsNote.trim()
+      ? `📋 Patient Consultation & Doctor Note:\n"${prescriptionSymptomsNote.trim()}"`
+      : '📷 Attached Doctor Prescription Note for pharmacist review & dispensing.';
+
+    const attachedImg = prescriptionImage;
+
+    setPrescriptionModalVisible(false);
+    setPrescriptionImage(null);
+    setPrescriptionSymptomsNote('');
+
+    Alert.alert(
+      'Prescription Transmitted 🩺',
+      `Your prescription has been securely transmitted to ${targetPharm.pharmacist?.name || targetPharm.name}. A licensed pharmacist will review and prescribe your medications shortly.`,
+      [
+        {
+          text: 'Open Pharmacist Chat',
+          onPress: () => handleConsultPharmacist(targetPharm, noteText, attachedImg),
+        },
+      ]
+    );
+  };
+
+  const handleOpenPrescribeMedicationModal = () => {
+    setSelectedPrescribeItems([]);
+    setPrescribeSearchQuery('');
+    setPrescribeCategoryFilter('all');
+    setPrescribeMedicationModalVisible(true);
+  };
+
+  const handleTogglePrescribeItem = (item) => {
+    setSelectedPrescribeItems((prev) => {
+      const exists = prev.find((p) => p.id === item.id);
+      if (exists) {
+        return prev.filter((p) => p.id !== item.id);
+      } else {
+        return [
+          ...prev,
+          {
+            ...item,
+            quantity: 1,
+            dosageInstruction: item.dosage || 'Take as instructed by pharmacist',
+          },
+        ];
+      }
+    });
+  };
+
+  const handleUpdatePrescribeItemQty = (itemId, delta) => {
+    setSelectedPrescribeItems((prev) =>
+      prev.map((p) => {
+        if (p.id === itemId) {
+          const newQty = Math.max(1, (p.quantity || 1) + delta);
+          return { ...p, quantity: newQty };
+        }
+        return p;
+      })
+    );
+  };
+
+  const handleUpdatePrescribeItemDosage = (itemId, text) => {
+    setSelectedPrescribeItems((prev) =>
+      prev.map((p) => (p.id === itemId ? { ...p, dosageInstruction: text } : p))
+    );
+  };
+
+  const handleSendPrescriptionBill = async () => {
+    if (selectedPrescribeItems.length === 0) {
+      Alert.alert(
+        'No Medications Selected',
+        'Please select at least one medication from your pharmacy inventory to prescribe.'
+      );
+      return;
+    }
+
+    const subtotal = selectedPrescribeItems.reduce(
+      (sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 1),
+      0
+    );
+    const deliveryFee = 1200;
+    const total = subtotal + deliveryFee;
+
+    const prescriptionBill = {
+      billId: `rx-bill-${Date.now()}`,
+      pharmacistName:
+        currentMerchantStore?.pharmacist?.name ||
+        currentMerchantStore?.name ||
+        'Pharm. Fatima Aliyu (B.Pharm, MPSN)',
+      qualification:
+        currentMerchantStore?.pharmacist?.qualification || 'Consultant Clinical Pharmacist',
+      licenseNo: currentMerchantStore?.pharmacist?.licenseNo || 'PCN-REG-84920',
+      storeName: currentMerchantStore?.name || targetChatPartner?.name || 'Pharmacy',
+      storeId: currentMerchantStore?.id || targetChatOrder?.storeId || 'pharmacy',
+      items: selectedPrescribeItems,
+      subtotal,
+      deliveryFee,
+      total,
+      paid: false,
+      issuedAt: new Date().toISOString(),
+    };
+
+    const newMsg = {
+      id: `rx-bill-msg-${Date.now()}`,
+      orderId: targetChatOrder.id,
+      storeId: targetChatOrder.storeId,
+      customerId: targetChatOrder.customerId,
+      senderRole: 'merchant',
+      senderName: currentMerchantStore?.name || 'Pharmacist',
+      text: `📋 Official Prescription & Medication Invoice (${selectedPrescribeItems.length} items • ₦${total.toLocaleString()})`,
+      prescription: prescriptionBill,
+      createdAt: new Date().toISOString(),
+      timestamp: Date.now(),
+      read: false,
+    };
+
+    setChatMessages((prev) => [...prev, newMsg]);
+    setPrescribeMedicationModalVisible(false);
+
+    await sendOrderChatMessage(targetChatOrder.id, newMsg);
+
+    dispatchChatRemotePush({
+      recipientRole: 'buyer',
+      recipientId: targetChatOrder.customerId,
+      senderName: currentMerchantStore?.name || 'Pharmacist',
+      text: `📋 Pharmacist has issued your prescription invoice (₦${total.toLocaleString()}). Tap to review & pay.`,
+      orderId: targetChatOrder.id,
+    }).catch(() => { });
+  };
+
+  const handlePayPrescriptionBill = (prescription, order) => {
+    Alert.alert(
+      '💳 Confirm Medication Payment & Delivery',
+      `Pay ₦${Number(prescription.total).toLocaleString()} for ${prescription.items.length
+      } prescribed medications from ${prescription.storeName}? Includes express discreet delivery in 15-25 mins.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: `Pay ₦${Number(prescription.total).toLocaleString()}`,
+          style: 'default',
+          onPress: () => {
+            // Update prescription message state to paid
+            setChatMessages((prev) =>
+              prev.map((m) => {
+                if (m.prescription && m.prescription.billId === prescription.billId) {
+                  return {
+                    ...m,
+                    prescription: {
+                      ...m.prescription,
+                      paid: true,
+                      paidAt: new Date().toISOString(),
+                    },
+                  };
+                }
+                return m;
+              })
+            );
+
+            // Create formal delivery order
+            const prescriptionDeliveryOrder = {
+              id: `RX-${Date.now().toString().slice(-6)}`,
+              storeId: prescription.storeId,
+              storeName: prescription.storeName,
+              storeType: 'pharmacy',
+              status: 'Preparing',
+              items: prescription.items.map((it) => ({
+                id: it.id,
+                name: it.name,
+                price: it.price,
+                quantity: it.quantity,
+                dosage: it.dosageInstruction,
+                icon: it.icon || '💊',
+              })),
+              itemsCount: prescription.items.length,
+              subtotal: prescription.subtotal,
+              deliveryFee: prescription.deliveryFee,
+              total: prescription.total,
+              customerName: currentUser?.name || 'Patient',
+              customerId: currentUser?.id || 'patient-user',
+              customerPhone: currentUser?.phone || '08000000000',
+              deliveryAddress: selectedLocation || 'Maitama, Abuja',
+              deliveryPin: Math.floor(1000 + Math.random() * 9000).toString(),
+              createdAt: new Date().toISOString(),
+              journeyAlert:
+                '💊 Pharmacy is preparing and tamper-sealing your prescribed medications.',
+            };
+
+            setOrders((prev) => [prescriptionDeliveryOrder, ...prev]);
+            createDatabaseOrder(prescriptionDeliveryOrder).catch(() => { });
+            dispatchMerchantNewOrderRemotePush(prescriptionDeliveryOrder).catch(() => { });
+
+            Alert.alert(
+              'Payment Confirmed! 🎉',
+              `Your prescription order #${prescriptionDeliveryOrder.id} has been paid and dispatched to ${prescription.storeName}. Tamper-sealed delivery in 15-25 mins.\n\nHandover PIN: ${prescriptionDeliveryOrder.deliveryPin}`,
+              [
+                {
+                  text: 'Track Order',
+                  onPress: () => {
+                    setChatModalVisible(false);
+                    setActiveTab('orders');
+                    setOrdersFilterTab('active');
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
   };
 
   const handleCheckout = () => {
@@ -5455,17 +5821,17 @@ export default function App() {
           prev.map((o) =>
             o.id === masterOrder.id
               ? {
-                  ...o,
-                  roadRouteCoordinates: result.roadPoints,
-                  roadLegs: result.legs,
-                  snappedWaypoints: result.snappedWaypoints,
-                  stops: updatedStops,
-                  snappedDeliveryLocation: snappedDest
-                    ? { ...o.deliveryLocation, latitude: snappedDest.latitude, longitude: snappedDest.longitude }
-                    : o.deliveryLocation,
-                  roadPointIndex: 0,
-                  boltCoords: result.roadPoints[0],
-                }
+                ...o,
+                roadRouteCoordinates: result.roadPoints,
+                roadLegs: result.legs,
+                snappedWaypoints: result.snappedWaypoints,
+                stops: updatedStops,
+                snappedDeliveryLocation: snappedDest
+                  ? { ...o.deliveryLocation, latitude: snappedDest.latitude, longitude: snappedDest.longitude }
+                  : o.deliveryLocation,
+                roadPointIndex: 0,
+                boltCoords: result.roadPoints[0],
+              }
               : o
           )
         );
@@ -5498,9 +5864,9 @@ export default function App() {
       Alert.alert(
         '🎉 Multi-Store Order Confirmed!',
         `Your multi-store order (${masterOrder.id}) with ${stops.length} pickup hubs is confirmed!\n\n` +
-          `• Outermost Hub: ${stops[0].storeName} (Stop 1)\n` +
-          stops.map((s) => `• Stop ${s.stopNumber}: ${s.storeName} (${formatNaira(s.subtotal)})\n   Pickup PIN: ${s.pickupPin}`).join('\n\n') +
-          `\n\nYour order has been sent to the shops. Once packaged, an available courier will be dispatched to pick up your provisions!`,
+        `• Outermost Hub: ${stops[0].storeName} (Stop 1)\n` +
+        stops.map((s) => `• Stop ${s.stopNumber}: ${s.storeName} (${formatNaira(s.subtotal)})\n   Pickup PIN: ${s.pickupPin}`).join('\n\n') +
+        `\n\nYour order has been sent to the shops. Once packaged, an available courier will be dispatched to pick up your provisions!`,
         [
           {
             text: '💬 Message Seller',
@@ -5548,7 +5914,7 @@ export default function App() {
       ...masterOrder,
       storeId: stops[0]?.storeId || masterOrder.storeId,
       storeName: stops[0]?.storeName || masterOrder.storeName,
-    }).catch(() => {});
+    }).catch(() => { });
   };
 
   // Merchant Helper Computations & Actions
@@ -5706,7 +6072,7 @@ export default function App() {
         role === 'merchant'
           ? Number(unreadChatMap[partnerKey]) || 0
           : (Number(unreadChatMap[partnerKey]) || 0) +
-            (Number(unreadChatMap[courierKey]) || 0);
+          (Number(unreadChatMap[courierKey]) || 0);
       return Math.max(count, mapCount);
     },
     [unreadChatMap]
@@ -5824,7 +6190,7 @@ export default function App() {
     setMerchantBankInfo(newInfo);
     try {
       await AsyncStorage.setItem('getit_merchant_bank_info', JSON.stringify(newInfo));
-    } catch (e) {}
+    } catch (e) { }
     setBankEditModalVisible(false);
     Alert.alert('✅ Bank Details Saved', `Settlement destination updated to ${newInfo.bankName} (${newInfo.accountNumber}).`);
   };
@@ -5853,7 +6219,7 @@ export default function App() {
     setPayoutHistory(updated);
     try {
       await AsyncStorage.setItem('getit_merchant_payouts', JSON.stringify(updated));
-    } catch (e) {}
+    } catch (e) { }
     setPayoutModalVisible(false);
     setPayoutAmountInput('');
     playAudioBeep('default');
@@ -5873,8 +6239,8 @@ export default function App() {
       .map((it) => `• ${it.qty || 1}x ${it.name} (${formatNaira((it.price || 0) * (it.qty || 1))})`)
       .join('\n');
 
-    const receiptText = 
-`==============================
+    const receiptText =
+      `==============================
 🧾 GETIT OFFICIAL ORDER RECEIPT
 ==============================
 Order ID: #${ord.id}
@@ -6116,8 +6482,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
           const dynamicAlert = stops.length > 1
             ? (allStopsAccepted
-                ? `🍳 All shops (${stops.length}) have accepted and are preparing your packages!`
-                : `🍳 ${storeAcceptedName} accepted & is preparing! Awaiting other stores.`)
+              ? `🍳 All shops (${stops.length}) have accepted and are preparing your packages!`
+              : `🍳 ${storeAcceptedName} accepted & is preparing! Awaiting other stores.`)
             : `🍳 Store has accepted your order • Preparing your provisions.`;
 
           return {
@@ -6139,15 +6505,15 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
     const alertToSend = updatedStopsList.length > 1
       ? (allStopsAccepted
-          ? `🍳 All shops (${updatedStopsList.length}) have accepted and are preparing your packages!`
-          : `🍳 ${storeAcceptedName} accepted & is preparing! Awaiting other stores.`)
+        ? `🍳 All shops (${updatedStopsList.length}) have accepted and are preparing your packages!`
+        : `🍳 ${storeAcceptedName} accepted & is preparing! Awaiting other stores.`)
       : `🍳 Store has accepted your order • Preparing your provisions.`;
 
     updateDatabaseOrderStatus(orderId, {
       status: 'Preparing',
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
       journeyAlert: alertToSend,
-    }).catch(() => {});
+    }).catch(() => { });
 
     // Remote push to customer device
     const targetOrder = orders.find((o) => o.id === orderId);
@@ -6158,7 +6524,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
         title: '🍳 Order Accepted!',
         body: `${storeAcceptedName} has accepted your order and started preparing.`,
         status: 'Preparing',
-      }).catch(() => {});
+      }).catch(() => { });
     }
   };
 
@@ -6205,8 +6571,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
     const initialStatus = shouldDispatch ? 'Looking for Courier' : 'Preparing';
     const initialAlert = stops.length > 1
       ? (allStopsReady
-          ? `📦 All packages packed & ready! Looking for available nearby courier... 🚴‍♂️`
-          : `📦 ${storeReadyName} has packed your package! Waiting for remaining stores.`)
+        ? `📦 All packages packed & ready! Looking for available nearby courier... 🚴‍♂️`
+        : `📦 ${storeReadyName} has packed your package! Waiting for remaining stores.`)
       : `📦 Package packed & ready at ${storeReadyName}! Looking for available nearby courier... 🚴‍♂️`;
 
     updateAndPersistOrders((prev) =>
@@ -6235,7 +6601,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
       status: initialStatus,
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
       journeyAlert: initialAlert,
-    }).catch(() => {});
+    }).catch(() => { });
 
     // Courier Dispatch Sequence: Look for available courier, match, and notify!
     if (shouldDispatch) {
@@ -6294,7 +6660,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
         notifyCourierDispatched({ id: orderId, storeName: storeReadyName }, assignedRider.name);
 
-        updateDatabaseOrderStatus(orderId, dispatchPayload).catch(() => {});
+        updateDatabaseOrderStatus(orderId, dispatchPayload).catch(() => { });
       }, 3500);
     }
   };
@@ -6384,7 +6750,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
       boltCoords: newBoltCoords,
       journeyAlert: newAlert,
       status: 'On the Way',
-    }).catch(() => {});
+    }).catch(() => { });
 
     broadcastLiveEvent('ORDER_UPDATE', {
       orderId,
@@ -6429,8 +6795,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 const newMasterStatus = allStopsRejected || stops.length <= 1 ? 'Cancelled' : o.status;
                 const journeyAlert = stops.length > 1
                   ? (allStopsRejected
-                      ? `❌ Order Cancelled: All stores were unable to fulfill provisions.`
-                      : `⚠️ ${storeName} could not fulfill their items. Remaining stops will continue.`)
+                    ? `❌ Order Cancelled: All stores were unable to fulfill provisions.`
+                    : `⚠️ ${storeName} could not fulfill their items. Remaining stops will continue.`)
                   : `❌ Order Cancelled: ${storeName} could not fulfill your provisions.`;
 
                 return {
@@ -6446,7 +6812,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
           updateDatabaseOrderStatus(orderId, {
             status: allStopsRejected || updatedStopsList.length <= 1 ? 'Cancelled' : undefined,
             stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
-          }).catch(() => {});
+          }).catch(() => { });
         },
       },
     ]);
@@ -6779,8 +7145,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
     const feedbackMsg = priceDiff < 0
       ? `Replacement approved! ${formatNaira(Math.abs(priceDiff))} price difference was refunded to your wallet.`
       : priceDiff > 0
-      ? `Replacement approved! Paid ${formatNaira(priceDiff)} from wallet.`
-      : `Replacement approved! Store will package ${proposal.substituteProduct.name}.`;
+        ? `Replacement approved! Paid ${formatNaira(priceDiff)} from wallet.`
+        : `Replacement approved! Store will package ${proposal.substituteProduct.name}.`;
 
     Alert.alert('Replacement Accepted ✅', feedbackMsg);
   };
@@ -7110,12 +7476,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
     const categoryKey = newStoreCategory.toLowerCase().includes('organ')
       ? 'organic'
       : newStoreCategory.toLowerCase().includes('bake')
-      ? 'bakery'
-      : newStoreCategory.toLowerCase().includes('cell')
-      ? 'cellar'
-      : newStoreCategory.toLowerCase().includes('herit')
-      ? 'heritage'
-      : 'gourmet';
+        ? 'bakery'
+        : newStoreCategory.toLowerCase().includes('cell')
+          ? 'cellar'
+          : newStoreCategory.toLowerCase().includes('herit')
+            ? 'heritage'
+            : 'gourmet';
 
     const storeRecord = {
       id: storeId,
@@ -7212,7 +7578,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
     orders.forEach((o) => promptedReviewsRef.current.add(o.id));
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(newBuyer));
-    } catch (e) {}
+    } catch (e) { }
     Alert.alert('🎉 Buyer Account Activated!', `Welcome, ${newBuyer.fullName}! You are now set up to order groceries and provisions.`);
   };
 
@@ -7290,7 +7656,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(newSeller));
-    } catch (e) {}
+    } catch (e) { }
 
     createDatabaseStore({
       id: storeId,
@@ -7329,7 +7695,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
     // 1. Strict Database Verification
     const existingUser = await findDatabaseUser(input);
     if (!existingUser) {
-      logDatabaseEvent('AUTH_ACCOUNT_NOT_FOUND', { role: 'buyer', input, platform: 'GETIT Mobile Expo' }, input).catch(() => {});
+      logDatabaseEvent('AUTH_ACCOUNT_NOT_FOUND', { role: 'buyer', input, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
       Alert.alert(
         'Account Not Found',
         `No account matching "${input}" was found in our database.\n\nPlease ensure you entered the exact phone number (e.g. 0803...) or email you registered with, or click "Create Account" above to register.`
@@ -7339,7 +7705,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
     // 2. Password Verification
     if (existingUser.password && pass !== existingUser.password) {
-      logDatabaseEvent('AUTH_INCORRECT_PASSWORD', { role: 'buyer', userId: existingUser.id, name: existingUser.fullName, platform: 'GETIT Mobile Expo' }, input).catch(() => {});
+      logDatabaseEvent('AUTH_INCORRECT_PASSWORD', { role: 'buyer', userId: existingUser.id, name: existingUser.fullName, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
       Alert.alert(
         'Incorrect Password',
         'The password entered does not match our database records. Please verify your password and try again.'
@@ -7355,7 +7721,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
       email: existingUser.email,
       phone: existingUser.phone,
       platform: 'GETIT Mobile Expo'
-    }, input).catch(() => {});
+    }, input).catch(() => { });
 
     // 3. Routing: Sign in directly to Customer Shopping mode
     setCurrentUser(existingUser);
@@ -7367,7 +7733,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
     }
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingUser));
-    } catch (e) {}
+    } catch (e) { }
     Alert.alert('🎉 Welcome Back!', `Signed in successfully as ${existingUser.fullName}. Your account is ready!`);
   };
 
@@ -7421,7 +7787,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
     setAuthLoginPassword(pass);
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(newBuyer));
-    } catch (e) {}
+    } catch (e) { }
     Alert.alert(
       '🎉 Account Created & Stored!',
       `Welcome to GETIT, ${newBuyer.fullName}! Your account has been saved in the database. You can now log in anytime with your phone number (${phone}) or email.`
@@ -7444,7 +7810,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
     // 1. Strict Database Verification
     const existingSeller = await findDatabaseUser(input);
     if (!existingSeller) {
-      logDatabaseEvent('AUTH_ACCOUNT_NOT_FOUND', { role: 'seller', input, platform: 'GETIT Mobile Expo' }, input).catch(() => {});
+      logDatabaseEvent('AUTH_ACCOUNT_NOT_FOUND', { role: 'seller', input, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
       Alert.alert(
         'Merchant Account Not Found',
         `No store owner account matching "${input}" was found in our database.\n\nPlease check your email or phone number, or click "Register Store" above to register.`
@@ -7454,7 +7820,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
     // 2. Password Verification
     if (existingSeller.password && pass !== existingSeller.password) {
-      logDatabaseEvent('AUTH_INCORRECT_PASSWORD', { role: 'seller', userId: existingSeller.id, businessName: existingSeller.businessName, platform: 'GETIT Mobile Expo' }, input).catch(() => {});
+      logDatabaseEvent('AUTH_INCORRECT_PASSWORD', { role: 'seller', userId: existingSeller.id, businessName: existingSeller.businessName, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
       Alert.alert(
         'Incorrect Password',
         'The merchant password entered does not match our database records. Please verify and try again.'
@@ -7471,7 +7837,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
       name: existingSeller.fullName,
       phone: existingSeller.phone,
       platform: 'GETIT Mobile Expo'
-    }, input).catch(() => {});
+    }, input).catch(() => { });
 
     // 3. Routing: Direct directly to Merchant Hub
     if (existingSeller.role === 'buyer' || !existingSeller.storeId) {
@@ -7524,7 +7890,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
           prev.map((s) => (s.id === activeStoreId ? { ...s, isOpen: isOpenBool, is_open: isOpenBool } : s))
         );
       }
-    } catch (e) {}
+    } catch (e) { }
     Alert.alert(
       '🏪 Merchant Hub Live!',
       `Welcome to your Merchant Hub, ${existingSeller.fullName}! Logged into "${existingSeller.businessName || 'your store'}" from the database.`
@@ -7613,7 +7979,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
     try {
       await AsyncStorage.setItem('getit_current_user', JSON.stringify(newSeller));
-    } catch (e) {}
+    } catch (e) { }
 
     createDatabaseStore({
       id: storeId,
@@ -7647,12 +8013,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
         name: currentUser.fullName,
         role: currentUser.role,
         platform: 'GETIT Mobile Expo'
-      }, currentUser.phone || currentUser.email || 'USER').catch(() => {});
+      }, currentUser.phone || currentUser.email || 'USER').catch(() => { });
     }
     try {
       await AsyncStorage.removeItem('getit_current_user');
       await AsyncStorage.removeItem('getit_orders');
-    } catch (e) {}
+    } catch (e) { }
     setCurrentUser(null);
     setOrders([]);
     setLastPlacedOrderId(null);
@@ -7684,7 +8050,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
       if (targetStoreId) {
         await AsyncStorage.setItem(`getit_store_open_status_${targetStoreId}`, String(nextStatus));
       }
-    } catch (e) {}
+    } catch (e) { }
 
     if (targetStoreId) {
       const updatedStoreData = {
@@ -7792,7 +8158,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
     try {
       AsyncStorage.setItem(`getit_store_image_${targetStoreId}`, cleanUri);
-    } catch (e) {}
+    } catch (e) { }
 
     updateDatabaseStore(targetStoreId, { image: cleanUri }).catch(console.warn);
 
@@ -7976,7 +8342,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
         if (finalImage) AsyncStorage.setItem(`getit_store_image_${targetStoreId}`, finalImage);
         AsyncStorage.setItem(`getit_store_lat_${targetStoreId}`, String(finalLat));
         AsyncStorage.setItem(`getit_store_lng_${targetStoreId}`, String(finalLng));
-      } catch (e) {}
+      } catch (e) { }
 
       updateDatabaseStore(targetStoreId, {
         name: updatedObj.name,
@@ -7997,8 +8363,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
     if (!timeStr) return null;
     const clean = String(timeStr).trim().toUpperCase();
     const match = clean.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i) ||
-                  clean.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i) ||
-                  clean.match(/(\d{1,2}):(\d{2})/);
+      clean.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i) ||
+      clean.match(/(\d{1,2}):(\d{2})/);
     if (!match) return null;
 
     let hours = parseInt(match[1], 10);
@@ -8453,8 +8819,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
     const successMsg = updatedPriceCount > 0 && newProductCount > 0
       ? `Updated prices for ${updatedPriceCount} existing items and added ${newProductCount} new items to ${currentMerchantStore?.name || 'your store'}!`
       : updatedPriceCount > 0
-      ? `Successfully updated prices for ${updatedPriceCount} existing items in your catalogue!`
-      : `Successfully published ${newProductCount} new items to your catalogue!`;
+        ? `Successfully updated prices for ${updatedPriceCount} existing items in your catalogue!`
+        : `Successfully published ${newProductCount} new items to your catalogue!`;
 
     Alert.alert('Catalog Updated! 🎉', successMsg);
   };
@@ -8466,16 +8832,31 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
   const filteredStores = useMemo(() => {
     const seenIds = new Set();
-    return storesList
+    const sourceStores =
+      activeVertical === 'pharmacy'
+        ? storesList.some((s) => s.storeType === 'pharmacy' || s.category === 'pharmacy')
+          ? storesList
+          : [...storesList, ...INITIAL_PHARMACY_STORES]
+        : storesList;
+
+    return sourceStores
       .filter((store) => {
         if (!store || !store.id || seenIds.has(store.id)) return false;
         seenIds.add(store.id);
-        const matchesCategory = activeCategory === 'all' || store.category === activeCategory;
+
+        const isPharmacy = store.storeType === 'pharmacy' || store.category === 'pharmacy';
+        if (activeVertical === 'pharmacy' && !isPharmacy) return false;
+        if (activeVertical === 'groceries' && isPharmacy) return false;
+
+        const matchesCategory =
+          activeCategory === 'all' ||
+          store.category === activeCategory ||
+          (activeVertical === 'pharmacy' && isPharmacy);
         const matchesSearch =
           !searchQuery ||
           store.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          store.categoryLabel.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          store.description.toLowerCase().includes(searchQuery.toLowerCase());
+          (store.categoryLabel && store.categoryLabel.toLowerCase().includes(searchQuery.toLowerCase())) ||
+          (store.description && store.description.toLowerCase().includes(searchQuery.toLowerCase()));
         return matchesCategory && matchesSearch;
       })
       .map((store) => {
@@ -8497,36 +8878,43 @@ Support: help@getit.ng | Abuja, Nigeria`;
         };
       })
       .sort((a, b) => (a.distKm || 0) - (b.distKm || 0));
-  }, [storesList, activeCategory, searchQuery, buyerActiveLat, buyerActiveLng]);
+  }, [storesList, activeCategory, activeVertical, searchQuery, buyerActiveLat, buyerActiveLng]);
 
   // Filtered products inside selected store
+  const storeRawProducts = selectedStore
+    ? (Array.isArray(selectedStore.products) && selectedStore.products.length > 0
+      ? selectedStore.products
+      : (selectedStore.storeType === 'pharmacy' ? MASTER_PHARMACY_INVENTORY : []))
+    : [];
+
   const storeUniqueCategories = selectedStore
-    ? ['All', ...new Set(selectedStore.products.map((p) => p.category))]
+    ? ['All', ...new Set(storeRawProducts.map((p) => p.category))]
     : ['All'];
 
   const filteredStoreProducts = selectedStore
-    ? selectedStore.products.filter((p) => {
-        const matchesCat =
-          storeProductCategory === 'All' || p.category === storeProductCategory;
-        const matchesQuery =
-          !storeProductSearch ||
-          p.name.toLowerCase().includes(storeProductSearch.toLowerCase()) ||
-          p.category.toLowerCase().includes(storeProductSearch.toLowerCase());
-        return matchesCat && matchesQuery;
-      })
+    ? storeRawProducts.filter((p) => {
+      const matchesCat =
+        storeProductCategory === 'All' || p.category === storeProductCategory;
+      const matchesQuery =
+        !storeProductSearch ||
+        p.name.toLowerCase().includes(storeProductSearch.toLowerCase()) ||
+        (p.category && p.category.toLowerCase().includes(storeProductSearch.toLowerCase())) ||
+        (p.brand && p.brand.toLowerCase().includes(storeProductSearch.toLowerCase()));
+      return matchesCat && matchesQuery;
+    })
     : [];
 
   // Combined location search results for Map Address Search (Local directory + Live Online Places API)
   const localSearchMatches = mapSearchText.trim().length > 0
     ? SEARCHABLE_LOCATIONS.filter((item) => {
-        const q = mapSearchText.toLowerCase();
-        return (
-          item.name.toLowerCase().includes(q) ||
-          item.district.toLowerCase().includes(q) ||
-          item.city.toLowerCase().includes(q) ||
-          (item.landmark && item.landmark.toLowerCase().includes(q))
-        );
-      })
+      const q = mapSearchText.toLowerCase();
+      return (
+        item.name.toLowerCase().includes(q) ||
+        item.district.toLowerCase().includes(q) ||
+        item.city.toLowerCase().includes(q) ||
+        (item.landmark && item.landmark.toLowerCase().includes(q))
+      );
+    })
     : [];
 
   const combinedMapSearchResults = [
@@ -9696,14 +10084,14 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           {ord.status === 'New Order'
                             ? '⏳ Awaiting Store'
                             : ord.status === 'Preparing'
-                            ? '🍳 Preparing'
-                            : ord.status === 'Looking for Courier'
-                            ? '📡 Finding Courier'
-                            : ord.status === 'Ready for Pickup'
-                            ? '📦 Ready'
-                            : ord.status === 'On the Way'
-                            ? '🚴 On the Way'
-                            : ord.status}
+                              ? '🍳 Preparing'
+                              : ord.status === 'Looking for Courier'
+                                ? '📡 Finding Courier'
+                                : ord.status === 'Ready for Pickup'
+                                  ? '📦 Ready'
+                                  : ord.status === 'On the Way'
+                                    ? '🚴 On the Way'
+                                    : ord.status}
                         </Text>
                       </View>
                       <View style={styles.orderAccordionToggleBadge}>
@@ -9972,8 +10360,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                             isCompleted
                                               ? styles.stopTimelineIconDone
                                               : isCurrentStop
-                                              ? styles.stopTimelineIconCurrent
-                                              : styles.stopTimelineIconQueued,
+                                                ? styles.stopTimelineIconCurrent
+                                                : styles.stopTimelineIconQueued,
                                           ]}
                                         >
                                           <Text style={{ fontSize: 10, fontWeight: '900', color: '#FFFFFF' }}>
@@ -9988,12 +10376,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                           isCompleted
                                             ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
                                             : stop.status === 'Ready for Pickup'
-                                            ? { backgroundColor: '#DCFCE7' }
-                                            : stop.status === 'Preparing'
-                                            ? { backgroundColor: '#DBEAFE' }
-                                            : isCurrentStop
-                                            ? { backgroundColor: '#FEF3C7' }
-                                            : { backgroundColor: '#F3F4F6' },
+                                              ? { backgroundColor: '#DCFCE7' }
+                                              : stop.status === 'Preparing'
+                                                ? { backgroundColor: '#DBEAFE' }
+                                                : isCurrentStop
+                                                  ? { backgroundColor: '#FEF3C7' }
+                                                  : { backgroundColor: '#F3F4F6' },
                                           { flexShrink: 0 },
                                         ]}
                                       >
@@ -10003,26 +10391,26 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                             isCompleted
                                               ? { color: '#056B4B' }
                                               : stop.status === 'Ready for Pickup'
-                                              ? { color: '#047857' }
-                                              : stop.status === 'Preparing'
-                                              ? { color: '#1D4ED8' }
-                                              : isCurrentStop
-                                              ? { color: '#B45309' }
-                                              : { color: '#6B7280' },
+                                                ? { color: '#047857' }
+                                                : stop.status === 'Preparing'
+                                                  ? { color: '#1D4ED8' }
+                                                  : isCurrentStop
+                                                    ? { color: '#B45309' }
+                                                    : { color: '#6B7280' },
                                           ]}
                                           numberOfLines={1}
                                         >
                                           {isCompleted
                                             ? '✅ Picked Up'
                                             : stop.status === 'Ready for Pickup'
-                                            ? '📦 Ready for Courier'
-                                            : stop.status === 'Preparing'
-                                            ? '🍳 Preparing'
-                                            : stop.status === 'Rejected'
-                                            ? '❌ Store Unavailable'
-                                            : isCurrentStop
-                                            ? '🛵 Collecting Now'
-                                            : '⏳ Awaiting Store'}
+                                              ? '📦 Ready for Courier'
+                                              : stop.status === 'Preparing'
+                                                ? '🍳 Preparing'
+                                                : stop.status === 'Rejected'
+                                                  ? '❌ Store Unavailable'
+                                                  : isCurrentStop
+                                                    ? '🛵 Collecting Now'
+                                                    : '⏳ Awaiting Store'}
                                         </Text>
                                       </View>
                                     </View>
@@ -10052,8 +10440,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                         ord.status === 'Delivered'
                                           ? styles.stopTimelineIconDone
                                           : ord.currentStopIndex >= ord.stops.length
-                                          ? styles.stopTimelineIconCurrent
-                                          : styles.stopTimelineIconQueued,
+                                            ? styles.stopTimelineIconCurrent
+                                            : styles.stopTimelineIconQueued,
                                       ]}
                                     >
                                       <Text style={{ fontSize: 10 }}>🏠</Text>
@@ -10066,8 +10454,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                       ord.status === 'Delivered'
                                         ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
                                         : ord.currentStopIndex >= ord.stops.length
-                                        ? { backgroundColor: '#DCFCE7' }
-                                        : { backgroundColor: '#F3F4F6' },
+                                          ? { backgroundColor: '#DCFCE7' }
+                                          : { backgroundColor: '#F3F4F6' },
                                       { flexShrink: 0 },
                                     ]}
                                   >
@@ -10077,16 +10465,16 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                         ord.status === 'Delivered'
                                           ? { color: '#056B4B' }
                                           : ord.currentStopIndex >= ord.stops.length
-                                          ? { color: '#166534' }
-                                          : { color: '#6B7280' },
+                                            ? { color: '#166534' }
+                                            : { color: '#6B7280' },
                                       ]}
                                       numberOfLines={1}
                                     >
                                       {ord.status === 'Delivered'
                                         ? '✅ Delivered'
                                         : ord.currentStopIndex >= ord.stops.length
-                                        ? '🛵 Heading to You'
-                                        : '⏳ Waiting for Shops'}
+                                          ? '🛵 Heading to You'
+                                          : '⏳ Waiting for Shops'}
                                     </Text>
                                   </View>
                                 </View>
@@ -10099,754 +10487,754 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         </View>
                       )}
 
-                  {/* Order Cancelled Notification Banner */}
-                  {ord.status === 'Cancelled' && (
-                    <View style={styles.orderCancelledBanner}>
-                      <Text style={styles.orderCancelledBannerTitle}>❌ Order Cancelled & Refunded</Text>
-                      <Text style={styles.orderCancelledBannerSub}>
-                        {ord.cancellationReason || 'Cancelled by customer'}. Full refund of {formatNaira(ord.total)} has been credited to your balance.
-                      </Text>
-                    </View>
-                  )}
-
-                  {/* Expandable Items Preview Toggle */}
-                  {(() => {
-                    const hasReplacedItems =
-                      (ord.items || []).some((i) => i.replaced || i.status === 'replaced') ||
-                      ord.replacementProposal?.status === 'accepted';
-                    const hasRefundedItems = (ord.items || []).some((i) => i.refunded || i.status === 'refunded');
-
-                    return (
-                      <>
-                        {/* Notice Banner if Item was Swapped & Approved */}
-                        {hasReplacedItems && (
-                          <View
-                            style={{
-                              backgroundColor: '#F0FDF4',
-                              borderWidth: 1.5,
-                              borderColor: '#86EFAC',
-                              borderRadius: 12,
-                              padding: 12,
-                              marginHorizontal: 12,
-                              marginTop: 8,
-                              marginBottom: 6,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                            }}
-                          >
-                            <View style={{ flex: 1, marginRight: 8 }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                <Text style={{ fontSize: 14, marginRight: 6 }}>🔄</Text>
-                                <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#166534' }}>
-                                  Item Swap Approved
-                                </Text>
-                              </View>
-                              <Text style={{ fontSize: 11.5, color: '#15803D', marginTop: 3 }}>
-                                <Text
-                                  style={{
-                                    textDecorationLine: 'line-through',
-                                    textDecorationColor: '#DC2626',
-                                    color: '#991B1B',
-                                    fontWeight: '700',
-                                  }}
-                                >
-                                  {ord.replacementProposal?.originalItemName ||
-                                    (ord.items || []).find((i) => i.replaced || i.status === 'replaced')?.originalName ||
-                                    'Original Product'}
-                                </Text>
-                                {' ➔ '}
-                                <Text style={{ fontWeight: '800', color: '#064E3B' }}>
-                                  {ord.replacementProposal?.substituteProduct?.name ||
-                                    (ord.items || []).find((i) => i.replaced || i.status === 'replaced')?.name ||
-                                    'Replacement'}
-                                </Text>
-                              </Text>
-                            </View>
-                            <View
-                              style={{
-                                backgroundColor: '#DCFCE7',
-                                paddingHorizontal: 8,
-                                paddingVertical: 4,
-                                borderRadius: 6,
-                              }}
-                            >
-                              <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#166534' }}>
-                                ✅ SWAPPED
-                              </Text>
-                            </View>
-                          </View>
-                        )}
-
-                        <TouchableOpacity
-                          style={styles.orderItemsToggleRow}
-                          onPress={() => toggleItemsExpand(ord.id)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.orderItemsToggleText, { flex: 1, marginRight: 6 }]} numberOfLines={1}>
-                            🛒 {ord.itemsCount} Provisions Ordered ({formatNaira(ord.subtotal || ord.total)})
-                            {hasReplacedItems ? ' • 🔄 1 Swapped' : ''}
-                            {hasRefundedItems ? ' • ❌ 1 Refunded' : ''}
+                      {/* Order Cancelled Notification Banner */}
+                      {ord.status === 'Cancelled' && (
+                        <View style={styles.orderCancelledBanner}>
+                          <Text style={styles.orderCancelledBannerTitle}>❌ Order Cancelled & Refunded</Text>
+                          <Text style={styles.orderCancelledBannerSub}>
+                            {ord.cancellationReason || 'Cancelled by customer'}. Full refund of {formatNaira(ord.total)} has been credited to your balance.
                           </Text>
-                          <Text style={[styles.orderItemsToggleChevron, { flexShrink: 0 }]}>
-                            {isItemsOpen ? '▲ Hide Items' : '▼ View Items'}
-                          </Text>
-                        </TouchableOpacity>
-                      </>
-                    );
-                  })()}
+                        </View>
+                      )}
 
-                  {isItemsOpen && (
-                    <View style={styles.orderItemsListExpanded}>
-                      {(ord.items || []).map((itm, idx) => {
-                        const isReplaced = itm.replaced || itm.status === 'replaced';
-                        const isRefunded = itm.refunded || itm.status === 'refunded';
+                      {/* Expandable Items Preview Toggle */}
+                      {(() => {
+                        const hasReplacedItems =
+                          (ord.items || []).some((i) => i.replaced || i.status === 'replaced') ||
+                          ord.replacementProposal?.status === 'accepted';
+                        const hasRefundedItems = (ord.items || []).some((i) => i.refunded || i.status === 'refunded');
 
-                        if (isReplaced) {
-                          const origName =
-                            itm.originalName ||
-                            ord.replacementProposal?.originalItemName ||
-                            'Original Product';
-
-                          return (
-                            <View
-                              key={idx}
-                              style={{
-                                backgroundColor: '#F8FAFC',
-                                borderWidth: 1.5,
-                                borderColor: '#E2E8F0',
-                                borderRadius: 12,
-                                padding: 12,
-                                marginVertical: 6,
-                              }}
-                            >
-                              {/* 1. Original Item Canceled with Clear Red Line */}
+                        return (
+                          <>
+                            {/* Notice Banner if Item was Swapped & Approved */}
+                            {hasReplacedItems && (
                               <View
                                 style={{
+                                  backgroundColor: '#F0FDF4',
+                                  borderWidth: 1.5,
+                                  borderColor: '#86EFAC',
+                                  borderRadius: 12,
+                                  padding: 12,
+                                  marginHorizontal: 12,
+                                  marginTop: 8,
+                                  marginBottom: 6,
                                   flexDirection: 'row',
                                   alignItems: 'center',
                                   justifyContent: 'space-between',
-                                  paddingBottom: 8,
-                                  borderBottomWidth: 1,
-                                  borderBottomColor: '#FEE2E2',
                                 }}
                               >
-                                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-                                  <View
-                                    style={{
-                                      width: 20,
-                                      height: 20,
-                                      borderRadius: 10,
-                                      backgroundColor: '#FEE2E2',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      marginRight: 8,
-                                    }}
-                                  >
-                                    <Text style={{ fontSize: 10, color: '#DC2626', fontWeight: '900' }}>✕</Text>
+                                <View style={{ flex: 1, marginRight: 8 }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <Text style={{ fontSize: 14, marginRight: 6 }}>🔄</Text>
+                                    <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#166534' }}>
+                                      Item Swap Approved
+                                    </Text>
                                   </View>
-                                  <View style={{ flex: 1 }}>
+                                  <Text style={{ fontSize: 11.5, color: '#15803D', marginTop: 3 }}>
                                     <Text
                                       style={{
-                                        fontSize: 13,
-                                        fontWeight: '700',
-                                        color: '#991B1B',
                                         textDecorationLine: 'line-through',
                                         textDecorationColor: '#DC2626',
-                                        textDecorationStyle: 'solid',
+                                        color: '#991B1B',
+                                        fontWeight: '700',
                                       }}
-                                      numberOfLines={1}
                                     >
-                                      {itm.qty}x {origName}
+                                      {ord.replacementProposal?.originalItemName ||
+                                        (ord.items || []).find((i) => i.replaced || i.status === 'replaced')?.originalName ||
+                                        'Original Product'}
                                     </Text>
-                                    <Text style={{ fontSize: 10.5, color: '#DC2626', fontWeight: '600', marginTop: 1 }}>
-                                      Unavailable / Out of Stock
+                                    {' ➔ '}
+                                    <Text style={{ fontWeight: '800', color: '#064E3B' }}>
+                                      {ord.replacementProposal?.substituteProduct?.name ||
+                                        (ord.items || []).find((i) => i.replaced || i.status === 'replaced')?.name ||
+                                        'Replacement'}
                                     </Text>
-                                  </View>
+                                  </Text>
                                 </View>
                                 <View
                                   style={{
-                                    backgroundColor: '#FEE2E2',
-                                    paddingHorizontal: 7,
-                                    paddingVertical: 3,
+                                    backgroundColor: '#DCFCE7',
+                                    paddingHorizontal: 8,
+                                    paddingVertical: 4,
                                     borderRadius: 6,
-                                    borderWidth: 1,
-                                    borderColor: '#FECACA',
                                   }}
                                 >
-                                  <Text style={{ fontSize: 10, fontWeight: '800', color: '#DC2626' }}>
-                                    CANCELLED
+                                  <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#166534' }}>
+                                    ✅ SWAPPED
                                   </Text>
                                 </View>
                               </View>
+                            )}
 
-                              {/* 2. Swapped Item with Emerald Badge & Price */}
-                              <View
-                                style={{
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  backgroundColor: '#F0FDF4',
-                                  borderWidth: 1,
-                                  borderColor: '#BBF7D0',
-                                  borderRadius: 8,
-                                  padding: 10,
-                                  marginTop: 8,
-                                }}
-                              >
-                                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-                                  <Text style={{ fontSize: 15, marginRight: 8 }}>🔄</Text>
-                                  <View style={{ flex: 1 }}>
-                                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B' }} numberOfLines={1}>
-                                      Swapped with: {itm.qty}x {itm.name}
-                                    </Text>
-                                    <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#059669', marginTop: 2 }}>
-                                      ✅ Approved Replacement
+                            <TouchableOpacity
+                              style={styles.orderItemsToggleRow}
+                              onPress={() => toggleItemsExpand(ord.id)}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={[styles.orderItemsToggleText, { flex: 1, marginRight: 6 }]} numberOfLines={1}>
+                                🛒 {ord.itemsCount} Provisions Ordered ({formatNaira(ord.subtotal || ord.total)})
+                                {hasReplacedItems ? ' • 🔄 1 Swapped' : ''}
+                                {hasRefundedItems ? ' • ❌ 1 Refunded' : ''}
+                              </Text>
+                              <Text style={[styles.orderItemsToggleChevron, { flexShrink: 0 }]}>
+                                {isItemsOpen ? '▲ Hide Items' : '▼ View Items'}
+                              </Text>
+                            </TouchableOpacity>
+                          </>
+                        );
+                      })()}
+
+                      {isItemsOpen && (
+                        <View style={styles.orderItemsListExpanded}>
+                          {(ord.items || []).map((itm, idx) => {
+                            const isReplaced = itm.replaced || itm.status === 'replaced';
+                            const isRefunded = itm.refunded || itm.status === 'refunded';
+
+                            if (isReplaced) {
+                              const origName =
+                                itm.originalName ||
+                                ord.replacementProposal?.originalItemName ||
+                                'Original Product';
+
+                              return (
+                                <View
+                                  key={idx}
+                                  style={{
+                                    backgroundColor: '#F8FAFC',
+                                    borderWidth: 1.5,
+                                    borderColor: '#E2E8F0',
+                                    borderRadius: 12,
+                                    padding: 12,
+                                    marginVertical: 6,
+                                  }}
+                                >
+                                  {/* 1. Original Item Canceled with Clear Red Line */}
+                                  <View
+                                    style={{
+                                      flexDirection: 'row',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      paddingBottom: 8,
+                                      borderBottomWidth: 1,
+                                      borderBottomColor: '#FEE2E2',
+                                    }}
+                                  >
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                      <View
+                                        style={{
+                                          width: 20,
+                                          height: 20,
+                                          borderRadius: 10,
+                                          backgroundColor: '#FEE2E2',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          marginRight: 8,
+                                        }}
+                                      >
+                                        <Text style={{ fontSize: 10, color: '#DC2626', fontWeight: '900' }}>✕</Text>
+                                      </View>
+                                      <View style={{ flex: 1 }}>
+                                        <Text
+                                          style={{
+                                            fontSize: 13,
+                                            fontWeight: '700',
+                                            color: '#991B1B',
+                                            textDecorationLine: 'line-through',
+                                            textDecorationColor: '#DC2626',
+                                            textDecorationStyle: 'solid',
+                                          }}
+                                          numberOfLines={1}
+                                        >
+                                          {itm.qty}x {origName}
+                                        </Text>
+                                        <Text style={{ fontSize: 10.5, color: '#DC2626', fontWeight: '600', marginTop: 1 }}>
+                                          Unavailable / Out of Stock
+                                        </Text>
+                                      </View>
+                                    </View>
+                                    <View
+                                      style={{
+                                        backgroundColor: '#FEE2E2',
+                                        paddingHorizontal: 7,
+                                        paddingVertical: 3,
+                                        borderRadius: 6,
+                                        borderWidth: 1,
+                                        borderColor: '#FECACA',
+                                      }}
+                                    >
+                                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#DC2626' }}>
+                                        CANCELLED
+                                      </Text>
+                                    </View>
+                                  </View>
+
+                                  {/* 2. Swapped Item with Emerald Badge & Price */}
+                                  <View
+                                    style={{
+                                      flexDirection: 'row',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      backgroundColor: '#F0FDF4',
+                                      borderWidth: 1,
+                                      borderColor: '#BBF7D0',
+                                      borderRadius: 8,
+                                      padding: 10,
+                                      marginTop: 8,
+                                    }}
+                                  >
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                      <Text style={{ fontSize: 15, marginRight: 8 }}>🔄</Text>
+                                      <View style={{ flex: 1 }}>
+                                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B' }} numberOfLines={1}>
+                                          Swapped with: {itm.qty}x {itm.name}
+                                        </Text>
+                                        <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#059669', marginTop: 2 }}>
+                                          ✅ Approved Replacement
+                                        </Text>
+                                      </View>
+                                    </View>
+                                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B', flexShrink: 0 }}>
+                                      {formatNaira((itm.price || 0) * itm.qty)}
                                     </Text>
                                   </View>
                                 </View>
-                                <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B', flexShrink: 0 }}>
+                              );
+                            }
+
+                            if (isRefunded) {
+                              return (
+                                <View
+                                  key={idx}
+                                  style={{
+                                    backgroundColor: '#FEF2F2',
+                                    borderWidth: 1,
+                                    borderColor: '#FECACA',
+                                    borderRadius: 10,
+                                    padding: 10,
+                                    marginVertical: 4,
+                                  }}
+                                >
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                      <Text style={{ fontSize: 12, marginRight: 6 }}>❌</Text>
+                                      <Text
+                                        style={{
+                                          fontSize: 13,
+                                          color: '#991B1B',
+                                          textDecorationLine: 'line-through',
+                                          textDecorationColor: '#EF4444',
+                                          fontWeight: '600',
+                                        }}
+                                        numberOfLines={1}
+                                      >
+                                        {itm.qty}x {itm.name}
+                                      </Text>
+                                    </View>
+                                    <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#DC2626' }}>
+                                        Refunded
+                                      </Text>
+                                    </View>
+                                  </View>
+                                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#B91C1C', marginTop: 4, marginLeft: 20 }}>
+                                    💳 {formatNaira(itm.refundAmount || ((itm.price || 0) * itm.qty))} refunded to GETIT Wallet
+                                  </Text>
+                                </View>
+                              );
+                            }
+
+                            return (
+                              <View key={idx} style={styles.orderItemExpandedRow}>
+                                <Text style={styles.orderItemExpandedName} numberOfLines={1}>
+                                  {itm.qty}x {itm.name}
+                                </Text>
+                                <Text style={[styles.orderItemExpandedPrice, { flexShrink: 0 }]}>
                                   {formatNaira((itm.price || 0) * itm.qty)}
                                 </Text>
                               </View>
-                            </View>
-                          );
-                        }
+                            );
+                          })}
+                        </View>
+                      )}
 
-                        if (isRefunded) {
-                          return (
-                            <View
-                              key={idx}
-                              style={{
-                                backgroundColor: '#FEF2F2',
-                                borderWidth: 1,
-                                borderColor: '#FECACA',
-                                borderRadius: 10,
-                                padding: 10,
-                                marginVertical: 4,
-                              }}
-                            >
-                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-                                  <Text style={{ fontSize: 12, marginRight: 6 }}>❌</Text>
-                                  <Text
-                                    style={{
-                                      fontSize: 13,
-                                      color: '#991B1B',
-                                      textDecorationLine: 'line-through',
-                                      textDecorationColor: '#EF4444',
-                                      fontWeight: '600',
-                                    }}
-                                    numberOfLines={1}
-                                  >
-                                    {itm.qty}x {itm.name}
-                                  </Text>
+                      {/* Pin verification box (suppressed if order was cancelled) */}
+                      {ord.status !== 'Cancelled' && (
+                        <View style={styles.pinBox}>
+                          <View style={{ flex: 1, marginRight: 10 }}>
+                            <Text style={styles.pinLabel}>DELIVERY SECURITY PIN</Text>
+                            <Text style={styles.pinInstructions} numberOfLines={2}>
+                              {ord.status === 'Delivered'
+                                ? 'Delivery verified and packages handed over.'
+                                : 'Give this 4-digit code to your rider at your door to confirm delivery.'}
+                            </Text>
+                            {ord.deliveryLocation?.notes && (
+                              <Text style={[styles.orderGpsNotes, { marginTop: 4 }]} numberOfLines={1}>
+                                📝 Gate note: "{ord.deliveryLocation.notes}"
+                              </Text>
+                            )}
+                          </View>
+                          <View style={[styles.pinNumberWrap, { flexShrink: 0 }]}>
+                            <Text style={styles.pinNumberText}>{ord.deliveryPin}</Text>
+                          </View>
+                        </View>
+                      )}
+
+                      {/* --- LIVE COURIER ROUTE NAVIGATION MAP (ALWAYS SHOWN FOR ACTIVE ORDERS) --- */}
+                      {ord.status !== 'Cancelled' && (
+                        <View style={styles.boltTrackingSummaryCard}>
+                          {ord.boltRider && ord.boltRider.name ? (
+                            <View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={styles.boltRiderAvatarSmall}>
+                                  <Text style={{ fontSize: 16 }}>🛵</Text>
                                 </View>
-                                <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                                  <Text style={{ fontSize: 10, fontWeight: '800', color: '#DC2626' }}>
-                                    Refunded
+                                <View style={{ flex: 1, marginLeft: 8 }}>
+                                  <Text style={styles.boltRiderNameSmall} numberOfLines={1}>
+                                    {ord.boltRider.name} (Courier)
+                                  </Text>
+                                  <Text style={styles.boltEtaPillTextSmall} numberOfLines={1}>
+                                    ⚡ Arrival: {ord.eta || '12 mins'} • {ord.boltRider.rating || '4.95'}★
                                   </Text>
                                 </View>
                               </View>
-                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#B91C1C', marginTop: 4, marginLeft: 20 }}>
-                                💳 {formatNaira(itm.refundAmount || ((itm.price || 0) * itm.qty))} refunded to GETIT Wallet
-                              </Text>
+                              <View style={styles.boltSummaryActionRow}>
+                                <TouchableOpacity
+                                  style={styles.boltToggleMapBtn}
+                                  onPress={() => toggleBoltMapCollapse(ord.id)}
+                                  activeOpacity={0.7}
+                                >
+                                  <Text style={styles.boltToggleMapBtnText}>
+                                    {isBoltMapOpen ? '▲ Hide Map' : '🗺️ Live Map'}
+                                  </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={[
+                                    styles.boltCallBtnSmall,
+                                    { backgroundColor: '#056B4B', borderColor: '#047857' },
+                                  ]}
+                                  onPress={() => openChatModal(ord, 'courier')}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={[styles.boltCallBtnSmallText, { color: '#FFFFFF' }]}>
+                                    💬 Chat{unreadChatMap[`${ord.id}_courier`] ? ` (${unreadChatMap[`${ord.id}_courier`]})` : ''}
+                                  </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={styles.boltCallBtnSmall}
+                                  onPress={() =>
+                                    Linking.openURL(`tel:${ord.boltRider.phone || '+2348032941194'}`)
+                                  }
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={styles.boltCallBtnSmallText}>📞 Call</Text>
+                                </TouchableOpacity>
+                              </View>
                             </View>
-                          );
-                        }
-
-                        return (
-                          <View key={idx} style={styles.orderItemExpandedRow}>
-                            <Text style={styles.orderItemExpandedName} numberOfLines={1}>
-                              {itm.qty}x {itm.name}
-                            </Text>
-                            <Text style={[styles.orderItemExpandedPrice, { flexShrink: 0 }]}>
-                              {formatNaira((itm.price || 0) * itm.qty)}
-                            </Text>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  )}
-
-                  {/* Pin verification box (suppressed if order was cancelled) */}
-                  {ord.status !== 'Cancelled' && (
-                    <View style={styles.pinBox}>
-                      <View style={{ flex: 1, marginRight: 10 }}>
-                        <Text style={styles.pinLabel}>DELIVERY SECURITY PIN</Text>
-                        <Text style={styles.pinInstructions} numberOfLines={2}>
-                          {ord.status === 'Delivered'
-                            ? 'Delivery verified and packages handed over.'
-                            : 'Give this 4-digit code to your rider at your door to confirm delivery.'}
-                        </Text>
-                        {ord.deliveryLocation?.notes && (
-                          <Text style={[styles.orderGpsNotes, { marginTop: 4 }]} numberOfLines={1}>
-                            📝 Gate note: "{ord.deliveryLocation.notes}"
-                          </Text>
-                        )}
-                      </View>
-                      <View style={[styles.pinNumberWrap, { flexShrink: 0 }]}>
-                        <Text style={styles.pinNumberText}>{ord.deliveryPin}</Text>
-                      </View>
-                    </View>
-                  )}
-
-                  {/* --- LIVE COURIER ROUTE NAVIGATION MAP (ALWAYS SHOWN FOR ACTIVE ORDERS) --- */}
-                  {ord.status !== 'Cancelled' && (
-                    <View style={styles.boltTrackingSummaryCard}>
-                      {ord.boltRider && ord.boltRider.name ? (
-                        <View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <View style={styles.boltRiderAvatarSmall}>
-                              <Text style={{ fontSize: 16 }}>🛵</Text>
+                          ) : ord.status === 'Looking for Courier' ? (
+                            <View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#EDE9FE' }]}>
+                                  <Text style={{ fontSize: 16 }}>📡</Text>
+                                </View>
+                                <View style={{ flex: 1, marginLeft: 8 }}>
+                                  <Text style={[styles.boltRiderNameSmall, { color: '#7C3AED' }]} numberOfLines={1}>
+                                    Looking for Available Courier...
+                                  </Text>
+                                  <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
+                                    📦 Package ready at shop • Scanning nearby fleet
+                                  </Text>
+                                </View>
+                              </View>
+                              <View style={styles.boltSummaryActionRow}>
+                                <TouchableOpacity
+                                  style={styles.boltToggleMapBtn}
+                                  onPress={() => toggleBoltMapCollapse(ord.id)}
+                                  activeOpacity={0.7}
+                                >
+                                  <Text style={styles.boltToggleMapBtnText}>
+                                    {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
                             </View>
-                            <View style={{ flex: 1, marginLeft: 8 }}>
-                              <Text style={styles.boltRiderNameSmall} numberOfLines={1}>
-                                {ord.boltRider.name} (Courier)
-                              </Text>
-                              <Text style={styles.boltEtaPillTextSmall} numberOfLines={1}>
-                                ⚡ Arrival: {ord.eta || '12 mins'} • {ord.boltRider.rating || '4.95'}★
-                              </Text>
+                          ) : ord.status === 'Preparing' ? (
+                            <View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#DBEAFE' }]}>
+                                  <Text style={{ fontSize: 16 }}>🍳</Text>
+                                </View>
+                                <View style={{ flex: 1, marginLeft: 8 }}>
+                                  <Text style={[styles.boltRiderNameSmall, { color: '#1D4ED8' }]} numberOfLines={1}>
+                                    Store Preparing Provisions
+                                  </Text>
+                                  <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
+                                    Provisions being freshly sorted • Courier dispatch when ready
+                                  </Text>
+                                </View>
+                              </View>
+                              <View style={styles.boltSummaryActionRow}>
+                                <TouchableOpacity
+                                  style={styles.boltToggleMapBtn}
+                                  onPress={() => toggleBoltMapCollapse(ord.id)}
+                                  activeOpacity={0.7}
+                                >
+                                  <Text style={styles.boltToggleMapBtnText}>
+                                    {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
                             </View>
-                          </View>
-                          <View style={styles.boltSummaryActionRow}>
-                            <TouchableOpacity
-                              style={styles.boltToggleMapBtn}
-                              onPress={() => toggleBoltMapCollapse(ord.id)}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={styles.boltToggleMapBtnText}>
-                                {isBoltMapOpen ? '▲ Hide Map' : '🗺️ Live Map'}
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={[
-                                styles.boltCallBtnSmall,
-                                { backgroundColor: '#056B4B', borderColor: '#047857' },
-                              ]}
-                              onPress={() => openChatModal(ord, 'courier')}
-                              activeOpacity={0.8}
-                            >
-                              <Text style={[styles.boltCallBtnSmallText, { color: '#FFFFFF' }]}>
-                                💬 Chat{unreadChatMap[`${ord.id}_courier`] ? ` (${unreadChatMap[`${ord.id}_courier`]})` : ''}
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={styles.boltCallBtnSmall}
-                              onPress={() =>
-                                Linking.openURL(`tel:${ord.boltRider.phone || '+2348032941194'}`)
-                              }
-                              activeOpacity={0.8}
-                            >
-                              <Text style={styles.boltCallBtnSmallText}>📞 Call</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      ) : ord.status === 'Looking for Courier' ? (
-                        <View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#EDE9FE' }]}>
-                              <Text style={{ fontSize: 16 }}>📡</Text>
+                          ) : (
+                            <View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#FEF3C7' }]}>
+                                  <Text style={{ fontSize: 16 }}>⏳</Text>
+                                </View>
+                                <View style={{ flex: 1, marginLeft: 8 }}>
+                                  <Text style={[styles.boltRiderNameSmall, { color: '#B45309' }]} numberOfLines={1}>
+                                    Awaiting Store Acceptance
+                                  </Text>
+                                  <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
+                                    Order sent to merchant • Awaiting confirmation
+                                  </Text>
+                                </View>
+                              </View>
+                              <View style={styles.boltSummaryActionRow}>
+                                <TouchableOpacity
+                                  style={styles.boltToggleMapBtn}
+                                  onPress={() => toggleBoltMapCollapse(ord.id)}
+                                  activeOpacity={0.7}
+                                >
+                                  <Text style={styles.boltToggleMapBtnText}>
+                                    {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
                             </View>
-                            <View style={{ flex: 1, marginLeft: 8 }}>
-                              <Text style={[styles.boltRiderNameSmall, { color: '#7C3AED' }]} numberOfLines={1}>
-                                Looking for Available Courier...
-                              </Text>
-                              <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
-                                📦 Package ready at shop • Scanning nearby fleet
-                              </Text>
-                            </View>
-                          </View>
-                          <View style={styles.boltSummaryActionRow}>
-                            <TouchableOpacity
-                              style={styles.boltToggleMapBtn}
-                              onPress={() => toggleBoltMapCollapse(ord.id)}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={styles.boltToggleMapBtnText}>
-                                {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      ) : ord.status === 'Preparing' ? (
-                        <View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#DBEAFE' }]}>
-                              <Text style={{ fontSize: 16 }}>🍳</Text>
-                            </View>
-                            <View style={{ flex: 1, marginLeft: 8 }}>
-                              <Text style={[styles.boltRiderNameSmall, { color: '#1D4ED8' }]} numberOfLines={1}>
-                                Store Preparing Provisions
-                              </Text>
-                              <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
-                                Provisions being freshly sorted • Courier dispatch when ready
-                              </Text>
-                            </View>
-                          </View>
-                          <View style={styles.boltSummaryActionRow}>
-                            <TouchableOpacity
-                              style={styles.boltToggleMapBtn}
-                              onPress={() => toggleBoltMapCollapse(ord.id)}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={styles.boltToggleMapBtnText}>
-                                {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      ) : (
-                        <View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#FEF3C7' }]}>
-                              <Text style={{ fontSize: 16 }}>⏳</Text>
-                            </View>
-                            <View style={{ flex: 1, marginLeft: 8 }}>
-                              <Text style={[styles.boltRiderNameSmall, { color: '#B45309' }]} numberOfLines={1}>
-                                Awaiting Store Acceptance
-                              </Text>
-                              <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
-                                Order sent to merchant • Awaiting confirmation
-                              </Text>
-                            </View>
-                          </View>
-                          <View style={styles.boltSummaryActionRow}>
-                            <TouchableOpacity
-                              style={styles.boltToggleMapBtn}
-                              onPress={() => toggleBoltMapCollapse(ord.id)}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={styles.boltToggleMapBtnText}>
-                                {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      )}
+                          )}
 
-                      {/* On-Demand Interactive Courier Map */}
-                      {isBoltMapOpen && (
-                        <View style={[styles.boltTrackingMapWrap, { marginTop: 10 }]}>
-                          <MapView
-                            style={styles.boltTrackingMap}
-                            initialRegion={getOrderRegion(ord)}
-                            scrollEnabled={true}
-                            zoomEnabled={true}
-                          >
-                            {/* 1. Turn-by-Turn Road Route: Starts from Rider to Shop 1, then Shop 2, then Home */}
-                            {(() => {
-                              const mapStops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
-                              const firstPendingMapIdx = mapStops.findIndex((st) => st.pickupStatus !== 'picked_up');
-                              let currentStopIdx = ord.currentStopIndex || 0;
-                              if (firstPendingMapIdx !== -1 && currentStopIdx < firstPendingMapIdx) {
-                                currentStopIdx = firstPendingMapIdx;
-                              } else if (firstPendingMapIdx === -1 && mapStops.length > 0 && currentStopIdx < mapStops.length) {
-                                currentStopIdx = mapStops.length;
-                              }
-                              const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
-                              const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
-                              const firstStore = (ord.stops && ord.stops[0]) || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
-                              const wps = [
-                                ...(ord.stops && Array.isArray(ord.stops) && ord.stops.length > 0
-                                  ? ord.stops.map((s) => ({
-                                      latitude: Number(s.latitude) || 9.0882,
-                                      longitude: Number(s.longitude) || 7.4933,
-                                    }))
-                                  : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
-                                { latitude: homeLat, longitude: homeLng },
-                              ];
-                              const directFallback = buildDirectLegsBetweenWaypoints(wps);
+                          {/* On-Demand Interactive Courier Map */}
+                          {isBoltMapOpen && (
+                            <View style={[styles.boltTrackingMapWrap, { marginTop: 10 }]}>
+                              <MapView
+                                style={styles.boltTrackingMap}
+                                initialRegion={getOrderRegion(ord)}
+                                scrollEnabled={true}
+                                zoomEnabled={true}
+                              >
+                                {/* 1. Turn-by-Turn Road Route: Starts from Rider to Shop 1, then Shop 2, then Home */}
+                                {(() => {
+                                  const mapStops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
+                                  const firstPendingMapIdx = mapStops.findIndex((st) => st.pickupStatus !== 'picked_up');
+                                  let currentStopIdx = ord.currentStopIndex || 0;
+                                  if (firstPendingMapIdx !== -1 && currentStopIdx < firstPendingMapIdx) {
+                                    currentStopIdx = firstPendingMapIdx;
+                                  } else if (firstPendingMapIdx === -1 && mapStops.length > 0 && currentStopIdx < mapStops.length) {
+                                    currentStopIdx = mapStops.length;
+                                  }
+                                  const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+                                  const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+                                  const firstStore = (ord.stops && ord.stops[0]) || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
+                                  const wps = [
+                                    ...(ord.stops && Array.isArray(ord.stops) && ord.stops.length > 0
+                                      ? ord.stops.map((s) => ({
+                                        latitude: Number(s.latitude) || 9.0882,
+                                        longitude: Number(s.longitude) || 7.4933,
+                                      }))
+                                      : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
+                                    { latitude: homeLat, longitude: homeLng },
+                                  ];
+                                  const directFallback = buildDirectLegsBetweenWaypoints(wps);
 
-                              const fullRoutePoints =
-                                ord.roadRouteCoordinates && ord.roadRouteCoordinates.length > 1
-                                  ? ord.roadRouteCoordinates
-                                  : directFallback.allPoints || [];
+                                  const fullRoutePoints =
+                                    ord.roadRouteCoordinates && ord.roadRouteCoordinates.length > 1
+                                      ? ord.roadRouteCoordinates
+                                      : directFallback.allPoints || [];
 
-                              const activeRoadPoints =
-                                ord.roadLegs &&
-                                ord.roadLegs[currentStopIdx] &&
-                                ord.roadLegs[currentStopIdx].length > 1
-                                  ? ord.roadLegs[currentStopIdx]
-                                  : fullRoutePoints.length > 1
-                                  ? fullRoutePoints
-                                  : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
+                                  const activeRoadPoints =
+                                    ord.roadLegs &&
+                                      ord.roadLegs[currentStopIdx] &&
+                                      ord.roadLegs[currentStopIdx].length > 1
+                                      ? ord.roadLegs[currentStopIdx]
+                                      : fullRoutePoints.length > 1
+                                        ? fullRoutePoints
+                                        : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
 
-                              return (
-                                <>
-                                  {/* Full route path connecting all pickup stores to home */}
-                                  {fullRoutePoints.length > 1 && (
-                                    <Polyline
-                                      coordinates={fullRoutePoints}
-                                      strokeColor="#93C5FD"
-                                      strokeWidth={4}
-                                      lineDashPattern={[6, 6]}
-                                    />
-                                  )}
-                                  {/* Outer high-contrast boundary for active street route */}
-                                  <Polyline
-                                    coordinates={activeRoadPoints}
-                                    strokeColor="#1D4ED8"
-                                    strokeWidth={7}
-                                  />
-                                  {/* Vibrant Google Maps Blue interior road lane */}
-                                  <Polyline
-                                    coordinates={activeRoadPoints}
-                                    strokeColor="#2563EB"
-                                    strokeWidth={4.5}
-                                  />
-                                </>
-                              );
-                            })()}
+                                  return (
+                                    <>
+                                      {/* Full route path connecting all pickup stores to home */}
+                                      {fullRoutePoints.length > 1 && (
+                                        <Polyline
+                                          coordinates={fullRoutePoints}
+                                          strokeColor="#93C5FD"
+                                          strokeWidth={4}
+                                          lineDashPattern={[6, 6]}
+                                        />
+                                      )}
+                                      {/* Outer high-contrast boundary for active street route */}
+                                      <Polyline
+                                        coordinates={activeRoadPoints}
+                                        strokeColor="#1D4ED8"
+                                        strokeWidth={7}
+                                      />
+                                      {/* Vibrant Google Maps Blue interior road lane */}
+                                      <Polyline
+                                        coordinates={activeRoadPoints}
+                                        strokeColor="#2563EB"
+                                        strokeWidth={4.5}
+                                      />
+                                    </>
+                                  );
+                                })()}
 
-                            {/* 2. On-Road Snapped Store Stop Pinpoints (Marked Directly At Actual Store Location) */}
-                            {ord.stops && ord.stops.length > 0 ? (
-                              ord.stops.map((st, sIdx) => {
-                                const isCurrentStop = (ord.currentStopIndex || 0) === st.stopNumber - 1;
-                                const isCompleted = st.pickupStatus === 'picked_up' || (ord.currentStopIndex || 0) >= st.stopNumber;
+                                {/* 2. On-Road Snapped Store Stop Pinpoints (Marked Directly At Actual Store Location) */}
+                                {ord.stops && ord.stops.length > 0 ? (
+                                  ord.stops.map((st, sIdx) => {
+                                    const isCurrentStop = (ord.currentStopIndex || 0) === st.stopNumber - 1;
+                                    const isCompleted = st.pickupStatus === 'picked_up' || (ord.currentStopIndex || 0) >= st.stopNumber;
 
-                                const stMatch = storesList.find((s) => s.id === st.storeId || s.name === st.storeName);
-                                const storeLat = Number(st.latitude) || Number(stMatch?.latitude) || 9.0882;
-                                const storeLng = Number(st.longitude) || Number(stMatch?.longitude) || 7.4933;
+                                    const stMatch = storesList.find((s) => s.id === st.storeId || s.name === st.storeName);
+                                    const storeLat = Number(st.latitude) || Number(stMatch?.latitude) || 9.0882;
+                                    const storeLng = Number(st.longitude) || Number(stMatch?.longitude) || 7.4933;
 
-                                const pinCoord = {
-                                  latitude: st.snappedLatitude || storeLat,
-                                  longitude: st.snappedLongitude || storeLng,
-                                };
+                                    const pinCoord = {
+                                      latitude: st.snappedLatitude || storeLat,
+                                      longitude: st.snappedLongitude || storeLng,
+                                    };
 
-                                return (
-                                  <Marker
-                                    key={`ord-st-${st.stopNumber}`}
-                                    coordinate={pinCoord}
-                                    title={`[${st.stopNumber}] 🏪 ${st.storeName}`}
-                                    description={`Pickup Hub (${st.itemsCount} items • Shop PIN: ${st.pickupPin})`}
-                                    anchor={{ x: 0.5, y: 1.0 }}
-                                  >
-                                    <View style={styles.roadPinContainer}>
-                                      {/* Store Callout Bubble with Shop Number */}
-                                      <View
-                                        style={[
-                                          styles.roadPinCallout,
-                                          isCurrentStop && styles.roadPinCalloutActive,
-                                          isCompleted && styles.roadPinCalloutDone,
-                                        ]}
+                                    return (
+                                      <Marker
+                                        key={`ord-st-${st.stopNumber}`}
+                                        coordinate={pinCoord}
+                                        title={`[${st.stopNumber}] 🏪 ${st.storeName}`}
+                                        description={`Pickup Hub (${st.itemsCount} items • Shop PIN: ${st.pickupPin})`}
+                                        anchor={{ x: 0.5, y: 1.0 }}
                                       >
-                                        <View
-                                          style={[
-                                            styles.roadPinBadgeNum,
-                                            isCurrentStop && { backgroundColor: '#2563EB' },
-                                            isCompleted && { backgroundColor: '#056B4B' },
-                                          ]}
-                                        >
-                                          <Text style={styles.roadPinBadgeNumText}>
-                                            {isCompleted ? '✓' : st.stopNumber}
+                                        <View style={styles.roadPinContainer}>
+                                          {/* Store Callout Bubble with Shop Number */}
+                                          <View
+                                            style={[
+                                              styles.roadPinCallout,
+                                              isCurrentStop && styles.roadPinCalloutActive,
+                                              isCompleted && styles.roadPinCalloutDone,
+                                            ]}
+                                          >
+                                            <View
+                                              style={[
+                                                styles.roadPinBadgeNum,
+                                                isCurrentStop && { backgroundColor: '#2563EB' },
+                                                isCompleted && { backgroundColor: '#056B4B' },
+                                              ]}
+                                            >
+                                              <Text style={styles.roadPinBadgeNumText}>
+                                                {isCompleted ? '✓' : st.stopNumber}
+                                              </Text>
+                                            </View>
+                                            <Text style={{ fontSize: 11, marginRight: 2 }}>🏪</Text>
+                                            <Text style={styles.roadPinCalloutText} numberOfLines={1}>
+                                              {st.storeName}
+                                            </Text>
+                                          </View>
+                                          {/* Needle stem pointing straight into road line */}
+                                          <View
+                                            style={[
+                                              styles.roadPinNeedle,
+                                              isCurrentStop && { backgroundColor: '#2563EB' },
+                                              isCompleted && { backgroundColor: '#056B4B' },
+                                            ]}
+                                          />
+                                          {/* Target bullseye dot anchored directly on the blue road line */}
+                                          <View
+                                            style={[
+                                              styles.roadPinDot,
+                                              isCurrentStop && styles.roadPinDotActive,
+                                              isCompleted && styles.roadPinDotDone,
+                                            ]}
+                                          />
+                                        </View>
+                                      </Marker>
+                                    );
+                                  })
+                                ) : (
+                                  <Marker
+                                    coordinate={{
+                                      latitude: Number(ord.storeLocation?.latitude || ord.storeLatitude || 9.0882),
+                                      longitude: Number(ord.storeLocation?.longitude || ord.storeLongitude || 7.4933),
+                                    }}
+                                    title={ord.storeName || 'Store Hub'}
+                                    description="Store Fulfillment Hub"
+                                    pinColor="#B76E79"
+                                  />
+                                )}
+
+                                {/* 3. Customer Delivery Destination Pin (Marked Directly At Pinned Home) */}
+                                {(() => {
+                                  const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+                                  const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+                                  const homeCoord = {
+                                    latitude: ord.snappedDeliveryLocation?.latitude || homeLat,
+                                    longitude: ord.snappedDeliveryLocation?.longitude || homeLng,
+                                  };
+
+                                  return (
+                                    <Marker
+                                      coordinate={homeCoord}
+                                      title="🏠 Home: Delivery Destination"
+                                      description={ord.customerAddress || pinnedLocation?.name || 'Customer dropoff residence'}
+                                      anchor={{ x: 0.5, y: 1.0 }}
+                                    >
+                                      <View style={styles.roadPinContainer}>
+                                        <View style={[styles.roadPinCallout, { borderColor: '#DC2626' }]}>
+                                          <View style={[styles.roadPinBadgeNum, { backgroundColor: '#DC2626' }]}>
+                                            <Text style={{ fontSize: 9 }}>🏠</Text>
+                                          </View>
+                                          <Text style={[styles.roadPinCalloutText, { color: '#DC2626', fontWeight: '900' }]}>
+                                            HOME
                                           </Text>
                                         </View>
-                                        <Text style={{ fontSize: 11, marginRight: 2 }}>🏪</Text>
-                                        <Text style={styles.roadPinCalloutText} numberOfLines={1}>
-                                          {st.storeName}
-                                        </Text>
+                                        <View style={[styles.roadPinNeedle, { backgroundColor: '#DC2626' }]} />
+                                        <View style={[styles.roadPinDot, { borderColor: '#DC2626' }]} />
                                       </View>
-                                      {/* Needle stem pointing straight into road line */}
-                                      <View
-                                        style={[
-                                          styles.roadPinNeedle,
-                                          isCurrentStop && { backgroundColor: '#2563EB' },
-                                          isCompleted && { backgroundColor: '#056B4B' },
-                                        ]}
-                                      />
-                                      {/* Target bullseye dot anchored directly on the blue road line */}
-                                      <View
-                                        style={[
-                                          styles.roadPinDot,
-                                          isCurrentStop && styles.roadPinDotActive,
-                                          isCompleted && styles.roadPinDotDone,
-                                        ]}
-                                      />
-                                    </View>
-                                  </Marker>
-                                );
-                              })
-                            ) : (
-                              <Marker
-                                coordinate={{
-                                  latitude: Number(ord.storeLocation?.latitude || ord.storeLatitude || 9.0882),
-                                  longitude: Number(ord.storeLocation?.longitude || ord.storeLongitude || 7.4933),
-                                }}
-                                title={ord.storeName || 'Store Hub'}
-                                description="Store Fulfillment Hub"
-                                pinColor="#B76E79"
-                              />
-                            )}
+                                    </Marker>
+                                  );
+                                })()}
 
-                            {/* 3. Customer Delivery Destination Pin (Marked Directly At Pinned Home) */}
-                            {(() => {
-                              const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
-                              const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
-                              const homeCoord = {
-                                latitude: ord.snappedDeliveryLocation?.latitude || homeLat,
-                                longitude: ord.snappedDeliveryLocation?.longitude || homeLng,
-                              };
+                                {/* 4. Real-Time Moving Motorbike Courier Marker (SNAPPED DIRECTLY ONTO THE BLUE ROAD LINE) */}
+                                {(() => {
+                                  const currentStopIdx = ord.currentStopIndex || 0;
+                                  const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
+                                  const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+                                  const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
+                                  const riderStart = ord.riderOrigin || {
+                                    latitude: Number(firstStore.latitude || 9.0882) - 0.0090,
+                                    longitude: Number(firstStore.longitude || 7.4933) - 0.0080,
+                                  };
+                                  const wps = [
+                                    riderStart,
+                                    ...(ord.stops && ord.stops.length > 0
+                                      ? ord.stops.map((s) => ({
+                                        latitude: Number(s.latitude) || 9.0882,
+                                        longitude: Number(s.longitude) || 7.4933,
+                                      }))
+                                      : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
+                                    { latitude: homeLat, longitude: homeLng },
+                                  ];
+                                  const directFallback = buildDirectLegsBetweenWaypoints(wps);
 
-                              return (
-                                <Marker
-                                  coordinate={homeCoord}
-                                  title="🏠 Home: Delivery Destination"
-                                  description={ord.customerAddress || pinnedLocation?.name || 'Customer dropoff residence'}
-                                  anchor={{ x: 0.5, y: 1.0 }}
-                                >
-                                  <View style={styles.roadPinContainer}>
-                                    <View style={[styles.roadPinCallout, { borderColor: '#DC2626' }]}>
-                                      <View style={[styles.roadPinBadgeNum, { backgroundColor: '#DC2626' }]}>
-                                        <Text style={{ fontSize: 9 }}>🏠</Text>
+                                  const activeRoadPts =
+                                    ord.roadLegs &&
+                                      ord.roadLegs[currentStopIdx] &&
+                                      ord.roadLegs[currentStopIdx].length > 1
+                                      ? ord.roadLegs[currentStopIdx]
+                                      : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
+
+                                  const elapsedBuyerMapIdx = ord.legStartedAt
+                                    ? Math.min(activeRoadPts.length - 1, Math.floor((Date.now() - ord.legStartedAt) / 3000))
+                                    : (ord.roadPointIndex || 0);
+                                  const pointIdx = Math.min(Math.max(elapsedBuyerMapIdx, ord.roadPointIndex || 0), Math.max(0, activeRoadPts.length - 1));
+                                  const firstStoreCoord = {
+                                    latitude: Number(firstStore.latitude) || 9.0882,
+                                    longitude: Number(firstStore.longitude) || 7.4933,
+                                  };
+                                  const riderOnBlueLine =
+                                    activeRoadPts[pointIdx] ||
+                                    (ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude) ? ord.boltCoords : firstStoreCoord);
+
+                                  return Boolean(ord.boltRider && ord.boltRider.name) ? (
+                                    <Marker
+                                      coordinate={riderOnBlueLine}
+                                      title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Courier)`}
+                                      description={ord.journeyAlert || 'Live courier tracking'}
+                                      anchor={{ x: 0.5, y: 0.72 }}
+                                    >
+                                      <View style={styles.googleMapsRiderMarkerContainer}>
+                                        {/* Floating Rider Tag above motorbike */}
+                                        <View style={styles.googleMapsRiderBadge}>
+                                          <View style={styles.googleMapsLiveBeaconDot} />
+                                          <Text style={styles.googleMapsRiderBadgeName}>
+                                            {ord.boltRider?.name?.split(' ')[0] || 'Musa'}
+                                          </Text>
+                                        </View>
+
+                                        {/* Symmetrical Motorbike Puck centered exactly on the Blue Line */}
+                                        <View style={styles.googleMapsMotorbikePuckWrap}>
+                                          <View style={styles.googleMapsMotorbikePulseRing} />
+                                          <View style={styles.googleMapsMotorbikeCorePuck}>
+                                            <Text style={{ fontSize: 16 }}>🛵</Text>
+                                          </View>
+                                        </View>
                                       </View>
-                                      <Text style={[styles.roadPinCalloutText, { color: '#DC2626', fontWeight: '900' }]}>
-                                        HOME
-                                      </Text>
-                                    </View>
-                                    <View style={[styles.roadPinNeedle, { backgroundColor: '#DC2626' }]} />
-                                    <View style={[styles.roadPinDot, { borderColor: '#DC2626' }]} />
-                                  </View>
-                                </Marker>
-                              );
-                            })()}
-
-                            {/* 4. Real-Time Moving Motorbike Courier Marker (SNAPPED DIRECTLY ONTO THE BLUE ROAD LINE) */}
-                            {(() => {
-                              const currentStopIdx = ord.currentStopIndex || 0;
-                              const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
-                              const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
-                              const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
-                              const riderStart = ord.riderOrigin || {
-                                latitude: Number(firstStore.latitude || 9.0882) - 0.0090,
-                                longitude: Number(firstStore.longitude || 7.4933) - 0.0080,
-                              };
-                              const wps = [
-                                riderStart,
-                                ...(ord.stops && ord.stops.length > 0
-                                  ? ord.stops.map((s) => ({
-                                      latitude: Number(s.latitude) || 9.0882,
-                                      longitude: Number(s.longitude) || 7.4933,
-                                    }))
-                                  : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
-                                { latitude: homeLat, longitude: homeLng },
-                              ];
-                              const directFallback = buildDirectLegsBetweenWaypoints(wps);
-
-                              const activeRoadPts =
-                                ord.roadLegs &&
-                                ord.roadLegs[currentStopIdx] &&
-                                ord.roadLegs[currentStopIdx].length > 1
-                                  ? ord.roadLegs[currentStopIdx]
-                                  : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
-
-                              const elapsedBuyerMapIdx = ord.legStartedAt
-                                ? Math.min(activeRoadPts.length - 1, Math.floor((Date.now() - ord.legStartedAt) / 3000))
-                                : (ord.roadPointIndex || 0);
-                              const pointIdx = Math.min(Math.max(elapsedBuyerMapIdx, ord.roadPointIndex || 0), Math.max(0, activeRoadPts.length - 1));
-                              const firstStoreCoord = {
-                                latitude: Number(firstStore.latitude) || 9.0882,
-                                longitude: Number(firstStore.longitude) || 7.4933,
-                              };
-                              const riderOnBlueLine =
-                                activeRoadPts[pointIdx] ||
-                                (ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude) ? ord.boltCoords : firstStoreCoord);
-
-                              return Boolean(ord.boltRider && ord.boltRider.name) ? (
-                                <Marker
-                                  coordinate={riderOnBlueLine}
-                                  title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Courier)`}
-                                  description={ord.journeyAlert || 'Live courier tracking'}
-                                  anchor={{ x: 0.5, y: 0.72 }}
-                                >
-                                  <View style={styles.googleMapsRiderMarkerContainer}>
-                                    {/* Floating Rider Tag above motorbike */}
-                                    <View style={styles.googleMapsRiderBadge}>
-                                      <View style={styles.googleMapsLiveBeaconDot} />
-                                      <Text style={styles.googleMapsRiderBadgeName}>
-                                        {ord.boltRider?.name?.split(' ')[0] || 'Musa'}
-                                      </Text>
-                                    </View>
-
-                                    {/* Symmetrical Motorbike Puck centered exactly on the Blue Line */}
-                                    <View style={styles.googleMapsMotorbikePuckWrap}>
-                                      <View style={styles.googleMapsMotorbikePulseRing} />
-                                      <View style={styles.googleMapsMotorbikeCorePuck}>
-                                        <Text style={{ fontSize: 16 }}>🛵</Text>
-                                      </View>
-                                    </View>
-                                  </View>
-                                </Marker>
-                              ) : null;
-                            })()}
-                          </MapView>
+                                    </Marker>
+                                  ) : null;
+                                })()}
+                              </MapView>
+                            </View>
+                          )}
                         </View>
                       )}
-                    </View>
-                  )}
 
-                  {/* Order Footer Row */}
-                  <View style={styles.orderFooterRow}>
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <Text style={styles.orderTotalText} numberOfLines={1}>Total: {formatNaira(ord.total)}</Text>
-                      <Text style={styles.orderEtaText} numberOfLines={1}>
-                        {ord.status === 'Cancelled' ? 'Status: Cancelled' : `Est. Arrival: ${ord.eta || '15-25 min'}`}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.buyerReceiptBtn}
-                      onPress={() => handleOpenReceiptModal(ord)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.buyerReceiptBtnText}>🧾 Receipt</Text>
-                    </TouchableOpacity>
-                    {ord.status !== 'Cancelled' && ord.status !== 'Delivered' && (
-                      <TouchableOpacity
-                        style={[styles.buyerOrderSupportBtn, { flexShrink: 0 }]}
-                        onPress={() => {
-                          Alert.alert(
-                            'GETIT Concierge Support',
-                            `Need assistance with order ${ord.id}?\n\nOur concierge dispatch team is monitoring your order in real-time. For address updates or inquiries, reach out directly:`,
-                            [
-                              {
-                                text: '💬 WhatsApp Support',
-                                onPress: () => Linking.openURL('https://wa.me/2348032941194?text=' + encodeURIComponent(`Hello GETIT Support, I need assistance with my active Order ${ord.id}.`)),
-                              },
-                              {
-                                text: '📞 Call Concierge',
-                                onPress: () => Linking.openURL('tel:+2348032941194'),
-                              },
-                              { text: 'Close', style: 'cancel' },
-                            ]
-                          );
-                        }}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.buyerOrderSupportBtnText}>💬 Need Help?</Text>
-                      </TouchableOpacity>
-                    )}
-                    {ord.status === 'Delivered' && (
-                      ord.isReviewed ? (
-                        <View style={styles.orderReviewedBadge}>
-                          <Text style={styles.orderReviewedBadgeText}>
-                            ✅ Rated {ord.reviewScore ? `★ ${ord.reviewScore}.0` : '★ 5.0'}
+                      {/* Order Footer Row */}
+                      <View style={styles.orderFooterRow}>
+                        <View style={{ flex: 1, marginRight: 8 }}>
+                          <Text style={styles.orderTotalText} numberOfLines={1}>Total: {formatNaira(ord.total)}</Text>
+                          <Text style={styles.orderEtaText} numberOfLines={1}>
+                            {ord.status === 'Cancelled' ? 'Status: Cancelled' : `Est. Arrival: ${ord.eta || '15-25 min'}`}
                           </Text>
                         </View>
-                      ) : (
                         <TouchableOpacity
-                          style={styles.buyerRateOrderBtn}
-                          onPress={() => openReviewModalForOrder(ord)}
+                          style={styles.buyerReceiptBtn}
+                          onPress={() => handleOpenReceiptModal(ord)}
                           activeOpacity={0.8}
                         >
-                          <Text style={styles.buyerRateOrderBtnText}>⭐ Rate Order</Text>
+                          <Text style={styles.buyerReceiptBtnText}>🧾 Receipt</Text>
                         </TouchableOpacity>
-                      )
-                    )}
+                        {ord.status !== 'Cancelled' && ord.status !== 'Delivered' && (
+                          <TouchableOpacity
+                            style={[styles.buyerOrderSupportBtn, { flexShrink: 0 }]}
+                            onPress={() => {
+                              Alert.alert(
+                                'GETIT Concierge Support',
+                                `Need assistance with order ${ord.id}?\n\nOur concierge dispatch team is monitoring your order in real-time. For address updates or inquiries, reach out directly:`,
+                                [
+                                  {
+                                    text: '💬 WhatsApp Support',
+                                    onPress: () => Linking.openURL('https://wa.me/2348032941194?text=' + encodeURIComponent(`Hello GETIT Support, I need assistance with my active Order ${ord.id}.`)),
+                                  },
+                                  {
+                                    text: '📞 Call Concierge',
+                                    onPress: () => Linking.openURL('tel:+2348032941194'),
+                                  },
+                                  { text: 'Close', style: 'cancel' },
+                                ]
+                              );
+                            }}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.buyerOrderSupportBtnText}>💬 Need Help?</Text>
+                          </TouchableOpacity>
+                        )}
+                        {ord.status === 'Delivered' && (
+                          ord.isReviewed ? (
+                            <View style={styles.orderReviewedBadge}>
+                              <Text style={styles.orderReviewedBadgeText}>
+                                ✅ Rated {ord.reviewScore ? `★ ${ord.reviewScore}.0` : '★ 5.0'}
+                              </Text>
+                            </View>
+                          ) : (
+                            <TouchableOpacity
+                              style={styles.buyerRateOrderBtn}
+                              onPress={() => openReviewModalForOrder(ord)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={styles.buyerRateOrderBtnText}>⭐ Rate Order</Text>
+                            </TouchableOpacity>
+                          )
+                        )}
+                      </View>
                     </View>
-                  </View>
-                )}
-              </View>
-            );
+                  )}
+                </View>
+              );
             })
           )}
         </ScrollView>
@@ -11917,8 +12305,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
                             {participatingStores.length > 1
                               ? `Multi-Stop Dispatch (${participatingStores.length} Shops + Dropoff)`
                               : cartDistanceKm !== null
-                              ? `${cartDistanceKm < 1 ? Math.round(cartDistanceKm * 1000) + ' m' : cartDistanceKm.toFixed(1) + ' km'} away from ${activeCartStore?.name || 'Shop'}`
-                              : `Fulfilling from ${activeCartStore?.name || 'Shop'}`}
+                                ? `${cartDistanceKm < 1 ? Math.round(cartDistanceKm * 1000) + ' m' : cartDistanceKm.toFixed(1) + ' km'} away from ${activeCartStore?.name || 'Shop'}`
+                                : `Fulfilling from ${activeCartStore?.name || 'Shop'}`}
                           </Text>
                           <Text style={styles.cartMapDistanceSub} numberOfLines={1}>
                             {participatingStores.length > 1
@@ -11932,8 +12320,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           {participatingStores.length > 1
                             ? `${multiStopTotalDistanceKm.toFixed(1)} km Total`
                             : cartDistanceKm !== null
-                            ? `${cartDistanceKm.toFixed(1)} km`
-                            : 'Near'}
+                              ? `${cartDistanceKm.toFixed(1)} km`
+                              : 'Near'}
                         </Text>
                       </View>
                     </View>
@@ -12502,8 +12890,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         {participatingStores.length > 1
                           ? `${multiStopTotalDistanceKm.toFixed(1)} km Total`
                           : cartDistanceKm !== null
-                          ? `${cartDistanceKm.toFixed(1)} km`
-                          : '~20 mins'}
+                            ? `${cartDistanceKm.toFixed(1)} km`
+                            : '~20 mins'}
                       </Text>
                     </View>
                   </View>
@@ -12693,16 +13081,16 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         <View style={styles.mapSuggestionPinIconWrap}>
                           <Text style={{ fontSize: 13 }}>
                             {place.name.toLowerCase().includes('pharmacy') ||
-                            place.name.toLowerCase().includes('medix')
+                              place.name.toLowerCase().includes('medix')
                               ? '💊'
                               : place.name.toLowerCase().includes('supermarket') ||
                                 place.name.toLowerCase().includes('mart') ||
                                 place.name.toLowerCase().includes('shoprite')
-                              ? '🛒'
-                              : place.name.toLowerCase().includes('hotel') ||
-                                place.name.toLowerCase().includes('hilton')
-                              ? '🏨'
-                              : '📍'}
+                                ? '🛒'
+                                : place.name.toLowerCase().includes('hotel') ||
+                                  place.name.toLowerCase().includes('hilton')
+                                  ? '🏨'
+                                  : '📍'}
                           </Text>
                         </View>
                         <View style={{ flex: 1 }}>
@@ -13407,260 +13795,260 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         {isExpanded && (
                           <View style={{ marginTop: 8 }}>
 
-                        {/* Customer Delivery info */}
-                        <View style={styles.mCustomerInfoBox}>
-                          <Text style={styles.mCustomerAddress}>📍 {ord.customerAddress || 'Maitama, Abuja'}</Text>
-                          <View style={styles.mGpsRow}>
-                            <Text style={styles.mGpsCoordsText}>
-                              GPS: {ord.deliveryLocation?.latitude?.toFixed(4) || '9.0882'}° N, {ord.deliveryLocation?.longitude?.toFixed(4) || '7.4933'}° E
-                            </Text>
-                            <TouchableOpacity
-                              style={styles.mGoogleMapsLink}
-                              onPress={() =>
-                                openExternalGoogleMaps(
-                                  ord.deliveryLocation?.latitude || 9.0882,
-                                  ord.deliveryLocation?.longitude || 7.4933
-                                )
-                              }
-                              activeOpacity={0.8}
-                            >
-                              <Text style={styles.mGoogleMapsLinkText}>🗺️ Google Maps</Text>
-                            </TouchableOpacity>
-                          </View>
-                          {ord.deliveryLocation?.landmark && (
-                            <Text style={styles.mLandmarkText}>
-                              Landmark: <Text style={{ color: COLORS.textDark, fontWeight: '700' }}>{ord.deliveryLocation.landmark}</Text>
-                            </Text>
-                          )}
-                          {(matchingStop?.pickupPin || ord.pickupPin) && (
-                            <Text style={styles.mPickupPinNotice}>
-                              Shop Handover PIN: <Text style={{ fontWeight: '800' }}>{matchingStop?.pickupPin || ord.pickupPin}</Text>
-                            </Text>
-                          )}
-                        </View>
+                            {/* Customer Delivery info */}
+                            <View style={styles.mCustomerInfoBox}>
+                              <Text style={styles.mCustomerAddress}>📍 {ord.customerAddress || 'Maitama, Abuja'}</Text>
+                              <View style={styles.mGpsRow}>
+                                <Text style={styles.mGpsCoordsText}>
+                                  GPS: {ord.deliveryLocation?.latitude?.toFixed(4) || '9.0882'}° N, {ord.deliveryLocation?.longitude?.toFixed(4) || '7.4933'}° E
+                                </Text>
+                                <TouchableOpacity
+                                  style={styles.mGoogleMapsLink}
+                                  onPress={() =>
+                                    openExternalGoogleMaps(
+                                      ord.deliveryLocation?.latitude || 9.0882,
+                                      ord.deliveryLocation?.longitude || 7.4933
+                                    )
+                                  }
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={styles.mGoogleMapsLinkText}>🗺️ Google Maps</Text>
+                                </TouchableOpacity>
+                              </View>
+                              {ord.deliveryLocation?.landmark && (
+                                <Text style={styles.mLandmarkText}>
+                                  Landmark: <Text style={{ color: COLORS.textDark, fontWeight: '700' }}>{ord.deliveryLocation.landmark}</Text>
+                                </Text>
+                              )}
+                              {(matchingStop?.pickupPin || ord.pickupPin) && (
+                                <Text style={styles.mPickupPinNotice}>
+                                  Shop Handover PIN: <Text style={{ fontWeight: '800' }}>{matchingStop?.pickupPin || ord.pickupPin}</Text>
+                                </Text>
+                              )}
+                            </View>
 
-                        {/* Items ordered */}
-                        <View style={styles.mItemsList}>
-                          {((matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items)?.map((it, idx) => {
-                            const isRefunded = it.refunded || it.status === 'refunded';
-                            const isReplaced = it.replaced || it.status === 'replaced';
-                            const isPending =
-                              ord.replacementProposal &&
-                              ord.replacementProposal.status === 'pending' &&
-                              ((it.id && it.id === ord.replacementProposal.originalItemId) || it.name === ord.replacementProposal.originalItemName);
+                            {/* Items ordered */}
+                            <View style={styles.mItemsList}>
+                              {((matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items)?.map((it, idx) => {
+                                const isRefunded = it.refunded || it.status === 'refunded';
+                                const isReplaced = it.replaced || it.status === 'replaced';
+                                const isPending =
+                                  ord.replacementProposal &&
+                                  ord.replacementProposal.status === 'pending' &&
+                                  ((it.id && it.id === ord.replacementProposal.originalItemId) || it.name === ord.replacementProposal.originalItemName);
 
-                            return (
-                              <View
-                                key={idx}
-                                style={[
-                                  styles.mItemRow,
-                                  {
-                                    flexDirection: 'column',
-                                    alignItems: 'stretch',
-                                    paddingVertical: 8,
-                                    borderBottomWidth: idx < (((matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items).length - 1) ? 1 : 0,
-                                    borderBottomColor: '#F1F5F9',
-                                  },
-                                ]}
-                              >
-                                {isReplaced ? (
-                                  <View style={{ gap: 4 }}>
-                                    {/* 1. Struck-through Original Item */}
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', opacity: 0.75 }}>
-                                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-                                        <Text style={{ fontSize: 12, marginRight: 6 }}>❌</Text>
-                                        <Text
-                                          style={[
-                                            styles.mItemName,
-                                            { textDecorationLine: 'line-through', textDecorationColor: '#EF4444', color: '#9CA3AF' },
-                                          ]}
-                                        >
-                                          {it.originalName || ord.replacementProposal?.originalItemName || 'Original Product'} x{it.qty}
-                                        </Text>
-                                      </View>
-                                      <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
-                                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#DC2626' }}>Out of Stock</Text>
-                                      </View>
-                                    </View>
+                                return (
+                                  <View
+                                    key={idx}
+                                    style={[
+                                      styles.mItemRow,
+                                      {
+                                        flexDirection: 'column',
+                                        alignItems: 'stretch',
+                                        paddingVertical: 8,
+                                        borderBottomWidth: idx < (((matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items).length - 1) ? 1 : 0,
+                                        borderBottomColor: '#F1F5F9',
+                                      },
+                                    ]}
+                                  >
+                                    {isReplaced ? (
+                                      <View style={{ gap: 4 }}>
+                                        {/* 1. Struck-through Original Item */}
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', opacity: 0.75 }}>
+                                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                            <Text style={{ fontSize: 12, marginRight: 6 }}>❌</Text>
+                                            <Text
+                                              style={[
+                                                styles.mItemName,
+                                                { textDecorationLine: 'line-through', textDecorationColor: '#EF4444', color: '#9CA3AF' },
+                                              ]}
+                                            >
+                                              {it.originalName || ord.replacementProposal?.originalItemName || 'Original Product'} x{it.qty}
+                                            </Text>
+                                          </View>
+                                          <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                                            <Text style={{ fontSize: 10, fontWeight: '800', color: '#DC2626' }}>Out of Stock</Text>
+                                          </View>
+                                        </View>
 
-                                    {/* 2. New Swapped Replacement Item */}
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#F0FDF4', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#BBF7D0', marginTop: 2 }}>
-                                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-                                        <Text style={{ fontSize: 14, marginRight: 6 }}>🔄</Text>
-                                        <View>
+                                        {/* 2. New Swapped Replacement Item */}
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#F0FDF4', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#BBF7D0', marginTop: 2 }}>
+                                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                            <Text style={{ fontSize: 14, marginRight: 6 }}>🔄</Text>
+                                            <View>
+                                              <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B' }}>
+                                                Swapped with: {it.name} <Text style={{ color: COLORS.emeraldDeep }}>x{it.qty}</Text>
+                                              </Text>
+                                              <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#059669', marginTop: 1 }}>
+                                                {isPrep ? '✅ Approved by Customer • Package Now' : '✅ Replaced & Confirmed'}
+                                              </Text>
+                                            </View>
+                                          </View>
                                           <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B' }}>
-                                            Swapped with: {it.name} <Text style={{ color: COLORS.emeraldDeep }}>x{it.qty}</Text>
-                                          </Text>
-                                          <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#059669', marginTop: 1 }}>
-                                            {isPrep ? '✅ Approved by Customer • Package Now' : '✅ Replaced & Confirmed'}
+                                            {formatNaira(it.price * it.qty)}
                                           </Text>
                                         </View>
                                       </View>
-                                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#064E3B' }}>
-                                        {formatNaira(it.price * it.qty)}
-                                      </Text>
-                                    </View>
-                                  </View>
-                                ) : (
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-                                      <Text style={styles.mItemIcon}>{it.icon || '🛍️'}</Text>
-                                      <Text
-                                        style={[
-                                          styles.mItemName,
-                                          isRefunded && { textDecorationLine: 'line-through', textDecorationColor: '#EF4444', color: '#9CA3AF' },
-                                        ]}
-                                      >
-                                        {it.name}{' '}
-                                        <Text style={{ fontWeight: '800', color: isRefunded ? '#9CA3AF' : COLORS.emeraldDeep }}>
-                                          x{it.qty}
+                                    ) : (
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                          <Text style={styles.mItemIcon}>{it.icon || '🛍️'}</Text>
+                                          <Text
+                                            style={[
+                                              styles.mItemName,
+                                              isRefunded && { textDecorationLine: 'line-through', textDecorationColor: '#EF4444', color: '#9CA3AF' },
+                                            ]}
+                                          >
+                                            {it.name}{' '}
+                                            <Text style={{ fontWeight: '800', color: isRefunded ? '#9CA3AF' : COLORS.emeraldDeep }}>
+                                              x{it.qty}
+                                            </Text>
+                                          </Text>
+                                        </View>
+                                        <Text
+                                          style={[
+                                            styles.mItemPrice,
+                                            isRefunded && { textDecorationLine: 'line-through', textDecorationColor: '#EF4444', color: '#9CA3AF' },
+                                          ]}
+                                        >
+                                          {formatNaira(it.price * it.qty)}
                                         </Text>
-                                      </Text>
-                                    </View>
-                                    <Text
-                                      style={[
-                                        styles.mItemPrice,
-                                        isRefunded && { textDecorationLine: 'line-through', textDecorationColor: '#EF4444', color: '#9CA3AF' },
-                                      ]}
-                                    >
-                                      {formatNaira(it.price * it.qty)}
-                                    </Text>
-                                  </View>
-                                )}
+                                      </View>
+                                    )}
 
-                                {/* Badges */}
-                                {isRefunded && (
-                                  <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
-                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#DC2626', backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                                      ❌ Out of Stock • Refunded to Buyer Wallet
-                                    </Text>
-                                  </View>
-                                )}
+                                    {/* Badges */}
+                                    {isRefunded && (
+                                      <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
+                                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#DC2626', backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                          ❌ Out of Stock • Refunded to Buyer Wallet
+                                        </Text>
+                                      </View>
+                                    )}
 
-                                {isPending && (
-                                  <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
-                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#D97706', backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                                      ⏳ Substitute Offered: {ord.replacementProposal.substituteProduct?.name} (Awaiting Buyer Approval)
-                                    </Text>
-                                  </View>
-                                )}
+                                    {isPending && (
+                                      <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
+                                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#D97706', backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                          ⏳ Substitute Offered: {ord.replacementProposal.substituteProduct?.name} (Awaiting Buyer Approval)
+                                        </Text>
+                                      </View>
+                                    )}
 
-                                {/* Out of Stock / Replace Trigger Button for Store Owner */}
-                                {(isNew || isPreparing) && !isRefunded && !isPending && (
+                                    {/* Out of Stock / Replace Trigger Button for Store Owner */}
+                                    {(isNew || isPreparing) && !isRefunded && !isPending && (
+                                      <TouchableOpacity
+                                        style={{
+                                          marginTop: 6,
+                                          alignSelf: 'flex-start',
+                                          flexDirection: 'row',
+                                          alignItems: 'center',
+                                          gap: 4,
+                                          backgroundColor: '#FEF2F2',
+                                          borderWidth: 1,
+                                          borderColor: '#FECACA',
+                                          paddingHorizontal: 10,
+                                          paddingVertical: 5,
+                                          borderRadius: 6,
+                                        }}
+                                        onPress={() => handleOpenReplaceModal(ord, it, matchingStop)}
+                                        activeOpacity={0.8}
+                                      >
+                                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#B91C1C' }}>
+                                          🔄 Out of Stock / Replace
+                                        </Text>
+                                      </TouchableOpacity>
+                                    )}
+                                  </View>
+                                );
+                              }) || (
+                                  <Text style={styles.mItemRow}>Packaged provisions ({ord.itemsCount} items)</Text>
+                                )}
+                            </View>
+
+                            {/* Order Financials: Strictly Product Money (No Delivery Fee, Customer Total Hidden) */}
+                            <View style={styles.mFinancialsRow}>
+                              <View>
+                                <Text style={styles.mNetPayoutLabel}>YOUR EARNINGS (PRODUCTS VALUE)</Text>
+                                <Text style={styles.mNetPayoutValue}>
+                                  {formatNaira(getMerchantOrderProductAmount(ord))}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Action Buttons depending on status */}
+                            <View style={styles.mActionsRow}>
+                              {isNew && (
+                                <>
                                   <TouchableOpacity
-                                    style={{
-                                      marginTop: 6,
-                                      alignSelf: 'flex-start',
-                                      flexDirection: 'row',
-                                      alignItems: 'center',
-                                      gap: 4,
-                                      backgroundColor: '#FEF2F2',
-                                      borderWidth: 1,
-                                      borderColor: '#FECACA',
-                                      paddingHorizontal: 10,
-                                      paddingVertical: 5,
-                                      borderRadius: 6,
-                                    }}
-                                    onPress={() => handleOpenReplaceModal(ord, it, matchingStop)}
-                                    activeOpacity={0.8}
+                                    style={styles.mRejectBtn}
+                                    onPress={() => rejectMerchantOrder(ord.id)}
                                   >
-                                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#B91C1C' }}>
-                                      🔄 Out of Stock / Replace
+                                    <Text style={styles.mRejectBtnText}>Reject</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={styles.mAcceptBtn}
+                                    onPress={() => acceptMerchantOrder(ord.id)}
+                                  >
+                                    <Text style={styles.mAcceptBtnText}>✓ Accept Order</Text>
+                                  </TouchableOpacity>
+                                </>
+                              )}
+
+                              {isPrep && (
+                                <View style={{ width: '100%' }}>
+                                  <TouchableOpacity
+                                    style={styles.mReadyBtn}
+                                    onPress={() => readyMerchantOrder(ord.id)}
+                                  >
+                                    <Text style={styles.mReadyBtnText}>📦 Mark Ready for Courier</Text>
+                                  </TouchableOpacity>
+
+                                  {ord.deliveryPartner === 'bolt' && !ord.boltRider && (
+                                    <TouchableOpacity
+                                      style={styles.mBoltDispatchBtn}
+                                      onPress={() => dispatchBoltCourier(ord.id)}
+                                    >
+                                      <Text style={styles.mBoltDispatchBtnText}>
+                                        🟢 Dispatch Bolt Motorbike Courier
+                                      </Text>
+                                    </TouchableOpacity>
+                                  )}
+                                </View>
+                              )}
+
+                              {isReady && (
+                                <View style={{ width: '100%' }}>
+                                  {/* 🚴 Zero-Map Straight Line Courier Tracker */}
+                                  <MerchantStraightLineTracker
+                                    order={ord}
+                                    currentStore={currentMerchantStore}
+                                  />
+
+                                  <View style={styles.mAutonomousRiderStatusBox}>
+                                    <Text style={styles.mAutonomousRiderStatusText}>
+                                      🛵 Courier Musa collects and confirms pickup automatically (like Bolt Delivery).
+                                    </Text>
+                                  </View>
+                                  <TouchableOpacity
+                                    style={[styles.mCompleteBtn, { backgroundColor: '#059669', marginTop: 6 }]}
+                                    onPress={() => completeMerchantOrder(ord.id)}
+                                  >
+                                    <Text style={styles.mCompleteBtnText}>
+                                      ⚡ Confirm Handover Now (Instant)
                                     </Text>
                                   </TouchableOpacity>
-                                )}
-                              </View>
-                            );
-                          }) || (
-                            <Text style={styles.mItemRow}>Packaged provisions ({ord.itemsCount} items)</Text>
-                          )}
-                        </View>
+                                </View>
+                              )}
 
-                        {/* Order Financials: Strictly Product Money (No Delivery Fee, Customer Total Hidden) */}
-                        <View style={styles.mFinancialsRow}>
-                          <View>
-                            <Text style={styles.mNetPayoutLabel}>YOUR EARNINGS (PRODUCTS VALUE)</Text>
-                            <Text style={styles.mNetPayoutValue}>
-                              {formatNaira(getMerchantOrderProductAmount(ord))}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {/* Action Buttons depending on status */}
-                        <View style={styles.mActionsRow}>
-                          {isNew && (
-                            <>
-                              <TouchableOpacity
-                                style={styles.mRejectBtn}
-                                onPress={() => rejectMerchantOrder(ord.id)}
-                              >
-                                <Text style={styles.mRejectBtnText}>Reject</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                style={styles.mAcceptBtn}
-                                onPress={() => acceptMerchantOrder(ord.id)}
-                              >
-                                <Text style={styles.mAcceptBtnText}>✓ Accept Order</Text>
-                              </TouchableOpacity>
-                            </>
-                          )}
-
-                          {isPrep && (
-                            <View style={{ width: '100%' }}>
-                              <TouchableOpacity
-                                style={styles.mReadyBtn}
-                                onPress={() => readyMerchantOrder(ord.id)}
-                              >
-                                <Text style={styles.mReadyBtnText}>📦 Mark Ready for Courier</Text>
-                              </TouchableOpacity>
-
-                              {ord.deliveryPartner === 'bolt' && !ord.boltRider && (
-                                <TouchableOpacity
-                                  style={styles.mBoltDispatchBtn}
-                                  onPress={() => dispatchBoltCourier(ord.id)}
-                                >
-                                  <Text style={styles.mBoltDispatchBtnText}>
-                                    🟢 Dispatch Bolt Motorbike Courier
-                                  </Text>
-                                </TouchableOpacity>
+                              {isDone && (
+                                <View style={styles.mCompletedBanner}>
+                                  <Text style={styles.mCompletedBannerText}>✓ Order Settled & Dispatched</Text>
+                                </View>
                               )}
                             </View>
-                          )}
-
-                          {isReady && (
-                            <View style={{ width: '100%' }}>
-                              {/* 🚴 Zero-Map Straight Line Courier Tracker */}
-                              <MerchantStraightLineTracker
-                                order={ord}
-                                currentStore={currentMerchantStore}
-                              />
-
-                              <View style={styles.mAutonomousRiderStatusBox}>
-                                <Text style={styles.mAutonomousRiderStatusText}>
-                                  🛵 Courier Musa collects and confirms pickup automatically (like Bolt Delivery).
-                                </Text>
-                              </View>
-                              <TouchableOpacity
-                                style={[styles.mCompleteBtn, { backgroundColor: '#059669', marginTop: 6 }]}
-                                onPress={() => completeMerchantOrder(ord.id)}
-                              >
-                                <Text style={styles.mCompleteBtnText}>
-                                  ⚡ Confirm Handover Now (Instant)
-                                </Text>
-                              </TouchableOpacity>
-                            </View>
-                          )}
-
-                          {isDone && (
-                            <View style={styles.mCompletedBanner}>
-                              <Text style={styles.mCompletedBannerText}>✓ Order Settled & Dispatched</Text>
-                            </View>
-                          )}
-                        </View>
+                          </View>
+                        )}
                       </View>
-                    )}
-                  </View>
-                );
+                    );
                   })
                 )}
               </ScrollView>
@@ -13786,10 +14174,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     const allProducts = currentMerchantStore?.products || [];
                     const filteredProducts = merchantInventorySearch.trim().length > 0
                       ? allProducts.filter(
-                          (p) =>
-                            p.name.toLowerCase().includes(merchantInventorySearch.toLowerCase()) ||
-                            (p.category && p.category.toLowerCase().includes(merchantInventorySearch.toLowerCase()))
-                        )
+                        (p) =>
+                          p.name.toLowerCase().includes(merchantInventorySearch.toLowerCase()) ||
+                          (p.category && p.category.toLowerCase().includes(merchantInventorySearch.toLowerCase()))
+                      )
                       : allProducts;
 
                     if (filteredProducts.length === 0) {
@@ -14474,8 +14862,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     notif.data.senderRole === 'merchant'
                       ? 'merchant'
                       : notif.data.senderRole === 'courier'
-                      ? 'courier'
-                      : 'buyer'
+                        ? 'courier'
+                        : 'buyer'
                   );
                   return;
                 }
@@ -14493,10 +14881,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 {activeToastNotification.data?.type === 'chat' || activeToastNotification.type === 'chat'
                   ? '💬'
                   : activeToastNotification.type === 'merchant_new_order'
-                  ? '💰'
-                  : activeToastNotification.type === 'arrived'
-                  ? '📍'
-                  : '🔔'}
+                    ? '💰'
+                    : activeToastNotification.type === 'arrived'
+                      ? '📍'
+                      : '🔔'}
               </Text>
             </View>
             <View style={{ flex: 1, marginLeft: 10 }}>
@@ -16118,7 +16506,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
             <View style={styles.timingStoreBanner}>
               <Text style={styles.timingStoreName}>{currentMerchantStore?.name}</Text>
               <Text style={styles.timingStoreSub}>📍 {currentMerchantStore?.address || 'Abuja, Nigeria'}</Text>
-              
+
               <View style={styles.timingLivePillRow}>
                 <TouchableOpacity
                   style={[
@@ -17477,8 +17865,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       {isMoreExpensive
                         ? `✅ Accept Replacement (Pay +${formatNaira(priceDiff)})`
                         : isLessExpensive
-                        ? `✅ Accept (Refund ${formatNaira(Math.abs(priceDiff))} to Wallet)`
-                        : '✅ Accept Replacement'}
+                          ? `✅ Accept (Refund ${formatNaira(Math.abs(priceDiff))} to Wallet)`
+                          : '✅ Accept Replacement'}
                     </Text>
                   </TouchableOpacity>
 
@@ -17973,29 +18361,29 @@ Support: help@getit.ng | Abuja, Nigeria`;
               >
                 {(appMode === 'customer'
                   ? (targetChatPartner?.role === 'courier'
-                      ? [
-                          "I'm at the gate / security post 🚪",
-                          "Please call me when outside 📞",
-                          "Security PIN is ready for you 🔢",
-                          "Ring apartment bell 🔔",
-                          "Please handle packages with care 📦",
-                          "Thank you! Ride safely 🙏",
-                        ]
-                      : [
-                          "Hi! When will order be ready? ⏱️",
-                          "Please ensure items are fresh & sealed 🥬",
-                          "Can you add extra napkins / cutlery? 🍴",
-                          "Is the order packed? 📦",
-                          "Thank you for the quick update! ⭐",
-                        ])
-                  : [
-                      "Preparing your provisions now 👨‍🍳",
-                      "All items packaged and ready for pickup 📦",
-                      "Bolt courier has been assigned 🛵",
-                      "Checking stock on replacement items 🔄",
-                      "Courier is on the way to your door ⚡",
-                      "Thank you for ordering with us! ⭐",
+                    ? [
+                      "I'm at the gate / security post 🚪",
+                      "Please call me when outside 📞",
+                      "Security PIN is ready for you 🔢",
+                      "Ring apartment bell 🔔",
+                      "Please handle packages with care 📦",
+                      "Thank you! Ride safely 🙏",
                     ]
+                    : [
+                      "Hi! When will order be ready? ⏱️",
+                      "Please ensure items are fresh & sealed 🥬",
+                      "Can you add extra napkins / cutlery? 🍴",
+                      "Is the order packed? 📦",
+                      "Thank you for the quick update! ⭐",
+                    ])
+                  : [
+                    "Preparing your provisions now 👨‍🍳",
+                    "All items packaged and ready for pickup 📦",
+                    "Bolt courier has been assigned 🛵",
+                    "Checking stock on replacement items 🔄",
+                    "Courier is on the way to your door ⚡",
+                    "Thank you for ordering with us! ⭐",
+                  ]
                 ).map((chip, cIdx) => (
                   <TouchableOpacity
                     key={cIdx}
@@ -28221,6 +28609,790 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+
+  // --- TOP DUAL VERTICAL SWITCHER (GROCERIES vs PHARMACY) ---
+  topDualSwitcherRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  topDualSwitchBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+    elevation: 2,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  topDualSwitchBtnActiveGroceries: {
+    backgroundColor: '#034E35',
+    borderColor: '#056B4B',
+    shadowOpacity: 0.15,
+  },
+  topDualSwitchBtnActivePharmacy: {
+    backgroundColor: '#1E3A8A',
+    borderColor: '#2563EB',
+    shadowOpacity: 0.15,
+  },
+  topDualSwitchIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  topDualSwitchTitle: {
+    fontSize: 14.5,
+    fontWeight: '900',
+    color: '#1E293B',
+    letterSpacing: -0.2,
+  },
+  topDualSwitchTitleActive: {
+    color: '#FFFFFF',
+  },
+  topDualSwitchTitleActivePharmacy: {
+    color: '#FFFFFF',
+  },
+  topDualSwitchSub: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 1,
+  },
+  topDualActivePillGroceries: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3.5,
+    backgroundColor: '#34D399',
+  },
+  topDualActivePillPharmacy: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3.5,
+    backgroundColor: '#60A5FA',
+  },
+  rxBadgeTag: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  rxBadgeTagText: {
+    fontSize: 9.5,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+
+  // --- TELE-PHARMACY QUICK ACTIONS ---
+  pharmacyQuickActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  pharmacyActionCardPrimary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    borderRadius: 14,
+    padding: 12,
+  },
+  pharmacyActionCardSecondary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    borderColor: '#BBF7D0',
+    borderRadius: 14,
+    padding: 12,
+  },
+  pharmacyActionIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  pharmacyActionTitle: {
+    fontSize: 12.5,
+    fontWeight: '900',
+    color: '#1E3A8A',
+  },
+  pharmacyActionSub: {
+    fontSize: 9.5,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  categoryPillActivePharmacy: {
+    backgroundColor: '#1E3A8A',
+    borderColor: '#2563EB',
+  },
+  categoryLabelActivePharmacy: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+
+  // --- PHARMACY STORE CARD BADGES ---
+  pharmacistCardBadgeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    marginVertical: 4,
+  },
+  pharmacistCardBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#1D4ED8',
+    flex: 1,
+  },
+
+  // --- PHARMACY STOREFRONT HERO CONSULTATION SUITE ---
+  pharmacyStoreHeroBox: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    borderRadius: 16,
+    padding: 14,
+    marginVertical: 12,
+  },
+  pharmacyStoreIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pharmacyOnDutyTag: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#2563EB',
+    letterSpacing: 0.5,
+  },
+  pharmacyLivePulse: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  pharmacyDocName: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginTop: 2,
+  },
+  pharmacyDocSub: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  prescriptionUploadStoreBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#93C5FD',
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 12,
+  },
+  prescriptionUploadStoreIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  prescriptionUploadStoreTitle: {
+    fontSize: 13.5,
+    fontWeight: '900',
+    color: '#1E3A8A',
+  },
+  prescriptionUploadStoreSub: {
+    fontSize: 10.5,
+    color: '#475569',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  pharmacyStoreChatBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#056B4B',
+    borderRadius: 12,
+    paddingVertical: 11,
+  },
+  pharmacyStoreChatBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 12.5,
+  },
+  pharmacyStoreCallBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingVertical: 11,
+  },
+  pharmacyStoreCallBtnText: {
+    color: '#1E293B',
+    fontWeight: '800',
+    fontSize: 12.5,
+  },
+
+  // --- IN-CHAT PRESCRIPTION CARD & PHOTO ---
+  chatPrescriptionImageContainer: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 8,
+    position: 'relative',
+  },
+  chatPrescriptionImage: {
+    width: 220,
+    height: 160,
+    borderRadius: 12,
+  },
+  chatPrescriptionBadge: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  chatPrescriptionCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#93C5FD',
+    padding: 12,
+    marginVertical: 6,
+    width: 260,
+  },
+  chatPrescriptionCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  chatPrescriptionCardTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#1E3A8A',
+    letterSpacing: 0.3,
+  },
+  chatPrescriptionCardPharmacist: {
+    fontSize: 10,
+    color: '#64748B',
+    fontWeight: '700',
+  },
+  chatRxBadge: {
+    backgroundColor: '#F59E0B',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  chatRxBadgeText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 9.5,
+  },
+  chatPrescriptionItemsBox: {
+    paddingVertical: 8,
+    gap: 6,
+  },
+  chatPrescriptionItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  chatPrescriptionItemName: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  chatPrescriptionItemDosage: {
+    fontSize: 10,
+    color: '#475569',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  chatPrescriptionItemPrice: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#1E3A8A',
+  },
+  chatPrescriptionTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    marginTop: 4,
+  },
+  chatPrescriptionTotalLabel: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  chatPrescriptionTotalAmount: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#047857',
+  },
+  chatPrescriptionPayBtn: {
+    backgroundColor: '#056B4B',
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  chatPrescriptionPayBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  chatPrescriptionAwaitingBadge: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    paddingVertical: 7,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  chatPrescriptionAwaitingText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  chatPrescriptionPaidSuccessBadge: {
+    backgroundColor: '#D1FAE5',
+    borderRadius: 8,
+    paddingVertical: 7,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  chatPrescriptionPaidSuccessText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  chatAttachRxBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+  },
+  chatPrescribeToolBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#1E3A8A',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginRight: 6,
+  },
+  chatPrescribeToolBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  // --- DOCTOR'S PRESCRIPTION MODAL ---
+  rxModalTargetBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  rxModalTargetIconCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  rxModalTargetPreTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#2563EB',
+    letterSpacing: 0.5,
+  },
+  rxModalTargetTitle: {
+    fontSize: 15.5,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginTop: 1,
+  },
+  rxModalTargetDoc: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 2,
+  },
+  rxModalSectionTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginBottom: 3,
+  },
+  rxModalSectionSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 12,
+  },
+  rxPhotoPickerRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 10,
+  },
+  rxPhotoPickerBtn: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingVertical: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  rxPhotoPickerBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  rxImagePreviewContainer: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    position: 'relative',
+    borderWidth: 2,
+    borderColor: '#2563EB',
+  },
+  rxImagePreview: {
+    width: '100%',
+    height: 220,
+  },
+  rxRemoveImageBtn: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: '#DC2626',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  rxSymptomsInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    padding: 14,
+    fontSize: 13.5,
+    color: '#0F172A',
+    minHeight: 90,
+  },
+  rxPhoneInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#0F172A',
+  },
+  rxSubmitBtn: {
+    backgroundColor: '#1E3A8A',
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 26,
+    shadowColor: '#1E3A8A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  rxSubmitBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+
+  // --- PHARMACIST INVENTORY & PRESCRIBE MODAL ---
+  prescribeSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  prescribeSearchInput: {
+    flex: 1,
+    fontSize: 13.5,
+    color: '#0F172A',
+    marginLeft: 8,
+  },
+  prescribeCatPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  prescribeCatPillActive: {
+    backgroundColor: '#1E3A8A',
+  },
+  prescribeCatPillText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  prescribeCatPillTextActive: {
+    color: '#FFFFFF',
+  },
+  prescribeListHeader: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#64748B',
+    marginBottom: 8,
+  },
+  prescribeInventoryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    marginBottom: 8,
+  },
+  prescribeInventoryCardSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
+  prescribeItemIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  prescribeItemName: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  prescribeItemBrand: {
+    fontSize: 10.5,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  prescribeItemPrice: {
+    fontSize: 12.5,
+    fontWeight: '900',
+    color: '#047857',
+    marginTop: 2,
+  },
+  prescribeCheckbox: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  prescribeCheckboxActive: {
+    backgroundColor: '#2563EB',
+  },
+  prescribeSelectedTray: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#93C5FD',
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 14,
+  },
+  prescribeSelectedTrayTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#1E3A8A',
+    marginBottom: 10,
+  },
+  prescribeSelectedRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  prescribeSelectedName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  prescribeSelectedUnitPrice: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  prescribeDosageInput: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 12,
+    color: '#0F172A',
+    marginTop: 6,
+  },
+  prescribeQtyControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    padding: 2,
+    marginLeft: 10,
+    marginTop: 4,
+  },
+  prescribeQtyBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  prescribeQtyBtnText: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#1E293B',
+  },
+  prescribeQtyVal: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#0F172A',
+    paddingHorizontal: 8,
+  },
+  prescribeBottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1.5,
+    borderTopColor: '#CBD5E1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  prescribeTotalLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '700',
+  },
+  prescribeTotalAmount: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#047857',
+  },
+  prescribeSendBtn: {
+    backgroundColor: '#1E3A8A',
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  prescribeSendBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '900',
   },
 
 });
