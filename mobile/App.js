@@ -9556,66 +9556,241 @@ Support: help@getit.ng | Abuja, Nigeria`;
           contentContainerStyle={{ paddingBottom: 110 }}
           showsVerticalScrollIndicator={false}
         >
-          {/* Hero Welcome Banner featuring GETIT Brand Emblem */}
-          <View style={styles.heroBanner}>
-            <View style={styles.heroGlowCircle} />
-            <View style={{ flex: 1, zIndex: 1, paddingRight: 10 }}>
-              <View style={styles.heroTagPill}>
-                <Text style={styles.heroTagText}>CURATED EXCELLENCE</Text>
+          {/* TOP DUAL VERTICAL SWITCHER: GROCERIES vs PHARMACY */}
+          <View style={styles.topDualSwitcherRow}>
+            <TouchableOpacity
+              style={[
+                styles.topDualSwitchBtn,
+                activeVertical === 'groceries' && styles.topDualSwitchBtnActiveGroceries,
+              ]}
+              onPress={() => {
+                setActiveVertical('groceries');
+                setActiveCategory('all');
+              }}
+              activeOpacity={0.88}
+            >
+              <View
+                style={[
+                  styles.topDualSwitchIconCircle,
+                  activeVertical === 'groceries' && { backgroundColor: '#056B4B' },
+                ]}
+              >
+                <Text style={{ fontSize: 22 }}>🛒</Text>
               </View>
-              <Text style={styles.heroHeading}>Stores Around You</Text>
-              <Text style={styles.heroSubheading}>
-                Hand-picked gourmet providores, organic farm produce & local artisans.
-              </Text>
-            </View>
-
-            {/* Branded Emblem in Hero */}
-            <View style={styles.heroLogoCard}>
-              <Image
-                source={LOGO_TRANSPARENT}
-                style={styles.heroLogoImage}
-                resizeMode="contain"
-              />
-            </View>
-          </View>
-
-          {/* Category Filter Pills */}
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionHeading}>Browse by Category</Text>
-            <Text style={styles.sectionRoseGoldCount}>{CATEGORIES.length} Categories</Text>
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.categoryScroll}
-            contentContainerStyle={styles.categoryScrollContent}
-          >
-            {CATEGORIES.map((cat) => {
-              const isActive = activeCategory === cat.id;
-              return (
-                <TouchableOpacity
-                  key={cat.id}
+              <View style={{ flex: 1 }}>
+                <Text
                   style={[
-                    styles.categoryPill,
-                    isActive && styles.categoryPillActive,
+                    styles.topDualSwitchTitle,
+                    activeVertical === 'groceries' && styles.topDualSwitchTitleActive,
                   ]}
-                  onPress={() => setActiveCategory(cat.id)}
-                  activeOpacity={0.8}
+                  numberOfLines={1}
                 >
-                  <Text style={styles.categoryIcon}>{cat.icon}</Text>
+                  Groceries
+                </Text>
+                <Text
+                  style={[
+                    styles.topDualSwitchSub,
+                    activeVertical === 'groceries' && { color: '#E2E8F0' },
+                  ]}
+                  numberOfLines={1}
+                >
+                  Provisions & Supermarkets
+                </Text>
+              </View>
+              {activeVertical === 'groceries' && <View style={styles.topDualActivePillGroceries} />}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.topDualSwitchBtn,
+                activeVertical === 'pharmacy' && styles.topDualSwitchBtnActivePharmacy,
+              ]}
+              onPress={() => {
+                setActiveVertical('pharmacy');
+                setActiveCategory('all');
+              }}
+              activeOpacity={0.88}
+            >
+              <View
+                style={[
+                  styles.topDualSwitchIconCircle,
+                  activeVertical === 'pharmacy' && { backgroundColor: '#2563EB' },
+                ]}
+              >
+                <Text style={{ fontSize: 22 }}>💊</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                   <Text
                     style={[
-                      styles.categoryLabel,
-                      isActive && styles.categoryLabelActive,
+                      styles.topDualSwitchTitle,
+                      activeVertical === 'pharmacy' && styles.topDualSwitchTitleActivePharmacy,
                     ]}
+                    numberOfLines={1}
                   >
-                    {cat.name}
+                    Pharmacy
                   </Text>
+                  <View style={styles.rxBadgeTag}>
+                    <Text style={styles.rxBadgeTagText}>Rx</Text>
+                  </View>
+                </View>
+                <Text
+                  style={[
+                    styles.topDualSwitchSub,
+                    activeVertical === 'pharmacy' && { color: '#EFF6FF' },
+                  ]}
+                  numberOfLines={1}
+                >
+                  Drugs & Prescriptions
+                </Text>
+              </View>
+              {activeVertical === 'pharmacy' && <View style={styles.topDualActivePillPharmacy} />}
+            </TouchableOpacity>
+          </View>
+
+          {activeVertical === 'pharmacy' ? (
+            <>
+              {/* Tele-Pharmacy Hero Banner */}
+              <View style={[styles.heroBanner, { backgroundColor: '#1E3A8A' }]}>
+                <View style={[styles.heroGlowCircle, { backgroundColor: 'rgba(59, 130, 246, 0.25)' }]} />
+                <View style={{ flex: 1, zIndex: 1, paddingRight: 10 }}>
+                  <View style={[styles.heroTagPill, { backgroundColor: 'rgba(255, 255, 255, 0.15)' }]}>
+                    <Text style={[styles.heroTagText, { color: '#93C5FD' }]}>24/7 TELE-PHARMACY</Text>
+                  </View>
+                  <Text style={styles.heroHeading}>Abuja Pharmacies</Text>
+                  <Text style={[styles.heroSubheading, { color: '#DBEAFE' }]}>
+                    Licensed community pharmacists, doctor prescription verification & discreet doorstep medication delivery.
+                  </Text>
+                </View>
+                <View style={[styles.heroLogoCard, { backgroundColor: 'rgba(255, 255, 255, 0.12)' }]}>
+                  <Text style={{ fontSize: 32 }}>🩺</Text>
+                </View>
+              </View>
+
+              {/* Quick Actions: Upload Prescription & Consult */}
+              <View style={styles.pharmacyQuickActionsRow}>
+                <TouchableOpacity
+                  style={styles.pharmacyActionCardPrimary}
+                  onPress={() => handleOpenPrescriptionModal()}
+                  activeOpacity={0.88}
+                >
+                  <View style={styles.pharmacyActionIconCircle}>
+                    <Text style={{ fontSize: 20 }}>📷</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pharmacyActionTitle}>Upload Prescription</Text>
+                    <Text style={styles.pharmacyActionSub}>
+                      Snap doctor's note for rapid verification
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 16, color: '#2563EB', fontWeight: '900' }}>➔</Text>
                 </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+
+                <TouchableOpacity
+                  style={styles.pharmacyActionCardSecondary}
+                  onPress={() => {
+                    const topPharm =
+                      filteredStores.find((s) => s.storeType === 'pharmacy') ||
+                      INITIAL_PHARMACY_STORES[0];
+                    handleConsultPharmacist(topPharm);
+                  }}
+                  activeOpacity={0.88}
+                >
+                  <View style={[styles.pharmacyActionIconCircle, { backgroundColor: '#ECFDF5' }]}>
+                    <Text style={{ fontSize: 20 }}>💬</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.pharmacyActionTitle, { color: '#065F46' }]}>Consult Pharmacist</Text>
+                    <Text style={styles.pharmacyActionSub}>
+                      Chat or voice note on-duty pharmacist
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 16, color: '#056B4B', fontWeight: '900' }}>➔</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Pharmacy Category Scroll */}
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionHeading}>Browse Medications</Text>
+                <Text style={styles.sectionRoseGoldCount}>{PHARMACY_CATEGORIES.length} Categories</Text>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.categoryScroll}
+                contentContainerStyle={styles.categoryScrollContent}
+              >
+                {PHARMACY_CATEGORIES.map((cat) => {
+                  const isActive = activeCategory === cat.id;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[styles.categoryPill, isActive && styles.categoryPillActivePharmacy]}
+                      onPress={() => setActiveCategory(cat.id)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.categoryIcon}>{cat.icon}</Text>
+                      <Text style={[styles.categoryLabel, isActive && styles.categoryLabelActivePharmacy]}>
+                        {cat.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </>
+          ) : (
+            <>
+              {/* Existing Grocery Hero Banner */}
+              <View style={styles.heroBanner}>
+                <View style={styles.heroGlowCircle} />
+                <View style={{ flex: 1, zIndex: 1, paddingRight: 10 }}>
+                  <View style={styles.heroTagPill}>
+                    <Text style={styles.heroTagText}>CURATED EXCELLENCE</Text>
+                  </View>
+                  <Text style={styles.heroHeading}>Stores Around You</Text>
+                  <Text style={styles.heroSubheading}>
+                    Hand-picked gourmet providores, organic farm produce & local artisans.
+                  </Text>
+                </View>
+                <View style={styles.heroLogoCard}>
+                  <Image
+                    source={LOGO_TRANSPARENT}
+                    style={styles.heroLogoImage}
+                    resizeMode="contain"
+                  />
+                </View>
+              </View>
+
+              {/* Category Filter Pills */}
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionHeading}>Browse by Category</Text>
+                <Text style={styles.sectionRoseGoldCount}>{CATEGORIES.length} Categories</Text>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.categoryScroll}
+                contentContainerStyle={styles.categoryScrollContent}
+              >
+                {CATEGORIES.map((cat) => {
+                  const isActive = activeCategory === cat.id;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[styles.categoryPill, isActive && styles.categoryPillActive]}
+                      onPress={() => setActiveCategory(cat.id)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.categoryIcon}>{cat.icon}</Text>
+                      <Text style={[styles.categoryLabel, isActive && styles.categoryLabelActive]}>
+                        {cat.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </>
+          )}
 
           {/* Section: Available Stores Around Me */}
           <View style={styles.sectionHeaderRow}>
