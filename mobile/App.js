@@ -5247,6 +5247,8 @@ export default function App() {
     setChatModalVisible(true);
   };
 
+  const handleOpenChatModal = openChatModal;
+
   const handleSendChatMessage = async (textToSend) => {
     const text = (textToSend || chatInputText).trim();
     if (!text || !targetChatOrder) return;
@@ -15535,15 +15537,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           <TouchableOpacity
                             key={c.id}
                             style={styles.patientConsultCard}
-                            onPress={() => {
-                              handleOpenChatModal(
-                                c,
-                                'buyer',
-                                c.customerName || 'Patient',
-                                c.customerPhone || '',
-                                c.customerId || 'patient-user'
-                              );
-                            }}
+                            onPress={() => openChatModal(c, 'buyer')}
                             activeOpacity={0.85}
                           >
                             <View style={styles.patientConsultAvatarCircle}>

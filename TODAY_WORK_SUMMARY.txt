@@ -1145,6 +1145,12 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Added `📷` camera/library button directly in the chat composer bar.
      * Patients and pharmacists can tap `📷` to choose `📷 Take Photo` or `🖼️ Choose from Gallery` to snap or upload a doctor prescription note on the fly without leaving the conversation.
 
+58. Fix Patient Conversation Card Open Chat Error:
+   - 🐛 Fixed `ReferenceError: Property 'handleOpenChatModal' doesn't exist`:
+     * Root Cause: When tapping on a patient conversation card in `merchantTab === 'messages'`, it was invoking `handleOpenChatModal`, but the underlying handler was named `openChatModal`.
+     * Fix: Declared `const handleOpenChatModal = openChatModal;` and updated the card's `onPress` to call `openChatModal(c, 'buyer')`.
+     * Tapping on any patient consultation row now smoothly opens the chat modal with the full consultation history, prescription notes, and patient details without error.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
