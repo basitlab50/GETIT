@@ -9667,74 +9667,25 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         }}
                       >
                         {isDeliveredOrPast ? (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <TouchableOpacity
-                              style={{
-                                flex: 1.2,
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 5,
-                                backgroundColor: '#056B4B',
-                                paddingVertical: 8,
-                                paddingHorizontal: 10,
-                                borderRadius: 8,
-                              }}
-                              onPress={() => handleOpenReceiptModal(ord)}
-                              activeOpacity={0.8}
-                            >
-                              <Text style={{ fontSize: 13 }}>👁️</Text>
-                              <Text style={{ fontSize: 11.5, fontWeight: '800', color: '#FFFFFF' }}>
-                                View Receipt
-                              </Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                              style={{
-                                flex: 1,
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 4,
-                                backgroundColor: '#FFFFFF',
-                                borderWidth: 1,
-                                borderColor: '#CBD5E1',
-                                paddingVertical: 8,
-                                paddingHorizontal: 8,
-                                borderRadius: 8,
-                              }}
-                              onPress={() => handleShareOrderReceipt(ord, 'buyer')}
-                              activeOpacity={0.8}
-                            >
-                              <Text style={{ fontSize: 12 }}>📤</Text>
-                              <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#334155' }}>
-                                Share
-                              </Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                              style={{
-                                flex: 1.1,
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 4,
-                                backgroundColor: '#F0FDF4',
-                                borderWidth: 1,
-                                borderColor: '#86EFAC',
-                                paddingVertical: 8,
-                                paddingHorizontal: 8,
-                                borderRadius: 8,
-                              }}
-                              onPress={() => handleDownloadOrderReceipt(ord)}
-                              activeOpacity={0.8}
-                            >
-                              <Text style={{ fontSize: 12 }}>💾</Text>
-                              <Text style={{ fontSize: 11.5, fontWeight: '800', color: '#166534' }}>
-                                Download
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 6,
+                              backgroundColor: '#056B4B',
+                              paddingVertical: 9,
+                              paddingHorizontal: 16,
+                              borderRadius: 8,
+                            }}
+                            onPress={() => handleOpenReceiptModal(ord)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={{ fontSize: 13 }}>🧾</Text>
+                            <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' }}>
+                              View Receipt
+                            </Text>
+                          </TouchableOpacity>
                         ) : (
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                             <TouchableOpacity

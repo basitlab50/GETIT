@@ -950,6 +950,11 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - 💾 Added Download / Print Action Inside Receipt Modal:
      * Added **`[ 💾 Download / Print PDF Receipt ]`** button directly into the Classy Digital Receipt Modal actions.
 
+44. Streamlined Buyer Receipt Access to Single "View Receipt" Action:
+   - 🎯 Single Unified "View Receipt" Button:
+     * Streamlined the buyer order card UI on `All` and `Delivered` tabs so instead of showing three fragmented buttons (`View Receipt`, `Share`, `Download`), customers now see one clean, prominent button: **`[ 🧾 View Receipt ]`**.
+     * When tapped, it presents the complete Classy GETIT Visual Digital Receipt Modal where customers can both share to WhatsApp/SMS and download the official PDF receipt in one tap.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
