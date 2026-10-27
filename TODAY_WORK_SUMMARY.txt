@@ -1044,6 +1044,16 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        - Auto-populated initial inventory from `MASTER_PHARMACY_INVENTORY` (genuine Nigerian medications ready to dispense)
        - Synced to Supabase database.
 
+51. Multi-Store Registration on Same Account / Phone Number:
+   - 🔓 Removed Single-Store Restriction:
+     * Previously, if a user with an existing grocery store tried to register their Pharmacy using the same phone number/details, the sign-up handler showed an error alert: *"Store Already Exists. A store is already registered for this account... Please sign in"*.
+     * Removed this artificial blocker. The system now recognizes that the merchant is adding a new store branch (e.g. Pharmacy) to their existing profile.
+   - 🆔 Unique Store ID & Multi-Branch Linking:
+     * Automatically assigns a fresh, unique `storeId` (`store-${Date.now()}`) instead of overwriting the previous store's ID.
+     * Verifies that the new branch has a distinct name (prevents accidental identical duplicates).
+     * Connects both the Grocery Store and Pharmacy to the same phone number and owner account.
+     * Both stores now appear simultaneously in the top **Branch Switcher Strip** and the **Account Tab Multi-Store Hub**.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

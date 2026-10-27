@@ -7999,27 +7999,39 @@ Support: help@getit.ng | Abuja, Nigeria`;
       return;
     }
 
-    // 1. Check if store already exists for this phone or email
+    // 1. Check if an account already exists for this phone or email
     const existing = (await findDatabaseUser(phone)) || (email ? await findDatabaseUser(email) : null);
-    if (existing && existing.role === 'seller' && existing.storeId) {
+
+    // If existing account has a password, verify password matches
+    if (existing && existing.password && pass !== existing.password) {
       Alert.alert(
-        'Store Already Exists',
-        `A store is already registered for this account under "${existing.businessName || 'your store'}".\n\nPlease sign in with your password to access your Merchant Hub.`
+        'Account Password Required',
+        `An account already exists for ${phone}.\n\nPlease enter your account password to register and link your new "${businessName}" branch.`
       );
-      setAuthScreenMode('signin');
-      setAuthLoginInput(phone || email);
       return;
     }
 
-    // 2. Generate Store & Register / Upgrade User in Database
-    const storeId = (existing && existing.storeId) ? existing.storeId : `store-${Date.now()}`;
+    // Check if a store with the exact same name already exists
+    const duplicateStore = storesList.find(
+      (s) => s.name && s.name.trim().toLowerCase() === businessName.toLowerCase()
+    );
+    if (duplicateStore) {
+      Alert.alert(
+        'Store Name Already Taken',
+        `A store named "${businessName}" already exists on GETIT. Please choose a distinct name for this new branch or dispensary (e.g. "${businessName} Pharmacy").`
+      );
+      return;
+    }
+
+    // 2. Generate a fresh, unique Store ID for this new branch/store
+    const storeId = `store-${Date.now()}`;
     const newSeller = await registerDatabaseUser({
       id: existing ? existing.id : undefined,
       role: 'seller',
-      fullName: fullName,
+      fullName: fullName || existing?.fullName,
       phone: phone,
       email: email || existing?.email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@merchant.getit.ng`,
-      password: pass,
+      password: pass || existing?.password,
       address: address || existing?.address || 'Nigeria',
       businessName: businessName,
       storeId: storeId,
@@ -8113,8 +8125,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
     }
 
     Alert.alert(
-      isPharm ? '🩺 Pharmacy Registered & Live on GETIT!' : '🎉 Store Registered & Stored on GETIT!',
-      `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" is now stored in the database and live on GETIT across Nigeria.`
+      existing && existing.role === 'seller'
+        ? (isPharm ? '🩺 Pharmacy Branch Linked to Account!' : '🎉 New Branch Linked to Account!')
+        : (isPharm ? '🩺 Pharmacy Registered & Live on GETIT!' : '🎉 Store Registered & Stored on GETIT!'),
+      existing && existing.role === 'seller'
+        ? `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" has been registered as an active branch under your account.\n\nYou can switch between your stores anytime from the switcher bar at the top of your Merchant Hub!`
+        : `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" is now stored in the database and live on GETIT across Nigeria.`
     );
   };
 
