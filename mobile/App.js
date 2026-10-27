@@ -5277,15 +5277,20 @@ export default function App() {
     setChatMessages((prev) => [...prev, newMsg]);
 
     // Update local state orders immediately
-    updateAndPersistOrders((prev) =>
-      prev.map((o) => {
-        if (o.id === targetChatOrder.id) {
-          const existing = o.messages || [];
-          return { ...o, messages: [...existing, newMsg] };
-        }
-        return o;
-      })
-    );
+    updateAndPersistOrders((prev) => {
+      const exists = prev.some((o) => o.id === targetChatOrder.id);
+      if (exists) {
+        return prev.map((o) => {
+          if (o.id === targetChatOrder.id) {
+            const existing = o.messages || [];
+            return { ...o, messages: [...existing, newMsg] };
+          }
+          return o;
+        });
+      } else {
+        return [{ ...targetChatOrder, messages: [newMsg] }, ...prev];
+      }
+    });
 
     // Send through supabase & WebSocket broadcast
     await sendOrderChatMessage(targetChatOrder.id, newMsg);
@@ -5301,7 +5306,8 @@ export default function App() {
 
     // Increment unread count for recipient in unreadChatMap & AsyncStorage
     setUnreadChatMap((prev) => {
-      const key = `${targetChatOrder.id}_${myRole}`;
+      const recipientRole = targetChatPartner.role;
+      const key = `${targetChatOrder.id}_${recipientRole}`;
       const updated = { ...prev, [key]: (Number(prev[key]) || 0) + 1 };
       try {
         AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
@@ -5550,6 +5556,100 @@ export default function App() {
     }
   };
 
+  const handleSendChatPhoto = async (useCamera = false) => {
+    try {
+      if (!targetChatOrder) return;
+      let result;
+      if (useCamera) {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Camera Access Needed', 'Please allow camera access to take a photo of your prescription.');
+          return;
+        }
+        result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.85,
+        });
+      } else {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Gallery Access Needed', 'Please allow photo gallery access to select your prescription.');
+          return;
+        }
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.85,
+        });
+      }
+
+      if (!result.canceled && result.assets && result.assets[0]?.uri) {
+        const photoUri = result.assets[0].uri;
+        const myRole = appMode === 'merchant' ? 'merchant' : 'buyer';
+        const myName =
+          appMode === 'merchant'
+            ? (currentMerchantStore?.name || 'Store')
+            : (currentUser?.fullName || currentUser?.name || 'Customer');
+
+        const newPhotoMsg = {
+          id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+          orderId: targetChatOrder.id,
+          storeId: targetChatOrder.storeId || currentMerchantStore?.id,
+          customerId: targetChatOrder.customerId || currentUser?.id,
+          senderId: currentUser?.id || myRole,
+          senderName: myName,
+          senderRole: myRole,
+          recipientRole: targetChatPartner.role,
+          text: '📷 Attached Doctor Prescription Note',
+          prescriptionImage: photoUri,
+          createdAt: new Date().toISOString(),
+          read: false,
+          readByMerchant: myRole === 'merchant',
+          readByBuyer: myRole === 'buyer',
+        };
+
+        setChatMessages((prev) => [...prev, newPhotoMsg]);
+
+        updateAndPersistOrders((prev) => {
+          const exists = prev.some((o) => o.id === targetChatOrder.id);
+          if (exists) {
+            return prev.map((o) => {
+              if (o.id === targetChatOrder.id) {
+                const existing = o.messages || [];
+                return { ...o, prescriptionImage: photoUri, messages: [...existing, newPhotoMsg] };
+              }
+              return o;
+            });
+          } else {
+            return [{ ...targetChatOrder, prescriptionImage: photoUri, messages: [newPhotoMsg] }, ...prev];
+          }
+        });
+
+        await sendOrderChatMessage(targetChatOrder.id, newPhotoMsg).catch(() => {});
+
+        dispatchChatRemotePush({
+          recipientRole: targetChatPartner.role,
+          recipientId: targetChatPartner.id,
+          senderName: myName,
+          text: '📷 Attached Doctor Prescription Note',
+          orderId: targetChatOrder.id,
+        }).catch(() => {});
+
+        setUnreadChatMap((prev) => {
+          const recipientKey = `${targetChatOrder.id}_${targetChatPartner.role}`;
+          const updated = { ...prev, [recipientKey]: (Number(prev[recipientKey]) || 0) + 1 };
+          try {
+            AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
+          } catch (e) {}
+          return updated;
+        });
+      }
+    } catch (err) {
+      console.warn('Error attaching chat photo:', err?.message);
+    }
+  };
+
   const handleConsultPharmacist = async (pharmacy, initialText = null, prescriptionImg = null) => {
     if (!pharmacy) return;
     const phoneSuffix = (currentUser?.phone || '0000').replace(/\D/g, '').slice(-4) || 'user';
@@ -5561,7 +5661,7 @@ export default function App() {
         id: consultId,
         storeId: pharmacy.id,
         storeName: pharmacy.name,
-        customerName: currentUser?.name || 'Patient',
+        customerName: currentUser?.fullName || currentUser?.name || 'Patient',
         customerId: currentUser?.id || 'patient-user',
         customerPhone: currentUser?.phone || '08000000000',
         status: 'Consultation',
@@ -5571,9 +5671,10 @@ export default function App() {
         items: [],
         storePhone: pharmacy.phone || pharmacy.ownerPhone || '0545802140',
         createdAt: new Date().toISOString(),
+        prescriptionImage: prescriptionImg || null,
         messages: [],
       };
-      setOrders((prev) => [targetOrd, ...prev.filter((o) => o.id !== consultId)]);
+      updateAndPersistOrders((prev) => [targetOrd, ...prev.filter((o) => o.id !== consultId)]);
     }
 
     setTargetChatOrder(targetOrd);
@@ -5585,6 +5686,9 @@ export default function App() {
       phone: pharmacy.phone || pharmacy.ownerPhone || '0545802140',
     });
 
+    const stored = await getOrderChatMessages(consultId);
+    let msgsToDisplay = stored.length > 0 ? stored : targetOrd.messages || [];
+
     if (initialText || prescriptionImg) {
       const initMsg = {
         id: `msg-${Date.now()}`,
@@ -5592,26 +5696,50 @@ export default function App() {
         storeId: pharmacy.id,
         customerId: currentUser?.id,
         senderRole: 'buyer',
-        senderName: currentUser?.name || 'Patient',
-        text: initialText || '📷 Doctor Prescription Note uploaded for review.',
+        senderName: currentUser?.fullName || currentUser?.name || 'Patient',
+        text: initialText || '📷 Attached Doctor Prescription Note for pharmacist review.',
         prescriptionImage: prescriptionImg || null,
         createdAt: new Date().toISOString(),
         timestamp: Date.now(),
         read: false,
+        readByMerchant: false,
+        readByBuyer: true,
       };
 
-      setChatMessages((prev) => [...prev, initMsg]);
-      await sendOrderChatMessage(consultId, initMsg).catch(() => { });
+      msgsToDisplay = [...msgsToDisplay, initMsg];
+      setChatMessages(msgsToDisplay);
+
+      updateAndPersistOrders((prev) =>
+        prev.map((o) =>
+          o.id === consultId
+            ? {
+                ...o,
+                prescriptionImage: prescriptionImg || o.prescriptionImage,
+                messages: [...(o.messages || []), initMsg],
+              }
+            : o
+        )
+      );
+
+      await sendOrderChatMessage(consultId, initMsg).catch(() => {});
       dispatchChatRemotePush({
         recipientRole: 'merchant',
         recipientId: pharmacy.id,
-        senderName: currentUser?.name || 'Patient',
-        text: initialText || '📷 Doctor Prescription Note uploaded for review.',
+        senderName: currentUser?.fullName || currentUser?.name || 'Patient',
+        text: initialText || '📷 Attached Doctor Prescription Note for review.',
         orderId: consultId,
-      }).catch(() => { });
+      }).catch(() => {});
+
+      setUnreadChatMap((prev) => {
+        const key = `${consultId}_merchant`;
+        const updated = { ...prev, [key]: (Number(prev[key]) || 0) + 1 };
+        try {
+          AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
     } else {
-      const stored = await getOrderChatMessages(consultId);
-      setChatMessages(stored.length > 0 ? stored : targetOrd.messages || []);
+      setChatMessages(msgsToDisplay);
     }
 
     setChatModalVisible(true);
@@ -6253,9 +6381,16 @@ export default function App() {
   const pharmacyConsultations = useMemo(() => {
     return orders.filter((o) => {
       const isMyStore =
-        (currentMerchantStore && (o.storeId === currentMerchantStore.id || o.storeName === currentMerchantStore.name)) ||
-        o.storeType === 'pharmacy';
-      const hasChat = (o.messages && o.messages.length > 0) || o.status === 'Consultation';
+        (currentMerchantStore &&
+          (o.storeId === currentMerchantStore.id ||
+            (o.storeName && currentMerchantStore.name && o.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) ||
+        o.storeType === 'pharmacy' ||
+        (o.id && String(o.id).startsWith('RX-'));
+      const hasChat =
+        (o.messages && o.messages.length > 0) ||
+        o.status === 'Consultation' ||
+        o.isPrescriptionOrder ||
+        Boolean(o.prescriptionImage);
       return isMyStore && hasChat;
     });
   }, [orders, currentMerchantStore]);
@@ -15401,15 +15536,13 @@ Support: help@getit.ng | Abuja, Nigeria`;
                             key={c.id}
                             style={styles.patientConsultCard}
                             onPress={() => {
-                              setTargetChatOrder(c);
-                              setTargetChatPartner({
-                                id: c.customerId,
-                                name: c.customerName || 'Patient',
-                                role: 'buyer',
-                                roleLabel: '👤 Patient',
-                                phone: c.customerPhone || '',
-                              });
-                              setChatModalVisible(true);
+                              handleOpenChatModal(
+                                c,
+                                'buyer',
+                                c.customerName || 'Patient',
+                                c.customerPhone || '',
+                                c.customerId || 'patient-user'
+                              );
                             }}
                             activeOpacity={0.85}
                           >
@@ -19935,9 +20068,25 @@ Support: help@getit.ng | Abuja, Nigeria`;
                             </View>
                           </View>
                         ) : (
-                          <Text style={[styles.chatBubbleText, isMine ? styles.chatBubbleTextMine : styles.chatBubbleTextTheirs]}>
-                            {msg.text}
-                          </Text>
+                          <View>
+                            {(msg.prescriptionImage || msg.imageUri) ? (
+                              <View style={styles.chatPrescriptionImageContainer}>
+                                <Image
+                                  source={{ uri: msg.prescriptionImage || msg.imageUri }}
+                                  style={styles.chatPrescriptionImagePreview}
+                                  resizeMode="cover"
+                                />
+                                <View style={styles.chatPrescriptionBadge}>
+                                  <Text style={styles.chatPrescriptionBadgeText}>📷 Doctor Prescription</Text>
+                                </View>
+                              </View>
+                            ) : null}
+                            {msg.text ? (
+                              <Text style={[styles.chatBubbleText, isMine ? styles.chatBubbleTextMine : styles.chatBubbleTextTheirs]}>
+                                {msg.text}
+                              </Text>
+                            ) : null}
+                          </View>
                         )}
                         <View style={styles.chatMetaRow}>
                           <Text style={[styles.chatTimestampText, isMine && { color: 'rgba(255, 255, 255, 0.7)' }]}>
@@ -20009,6 +20158,23 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   onSubmitEditing={() => handleSendChatMessage()}
                   returnKeyType="send"
                 />
+                <TouchableOpacity
+                  style={styles.chatPhotoBtn}
+                  onPress={() => {
+                    Alert.alert(
+                      'Attach Doctor Prescription',
+                      'Take a photo or choose from library:',
+                      [
+                        { text: '📷 Take Photo', onPress: () => handleSendChatPhoto(true) },
+                        { text: '🖼️ Choose from Gallery', onPress: () => handleSendChatPhoto(false) },
+                        { text: 'Cancel', style: 'cancel' },
+                      ]
+                    );
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ fontSize: 18 }}>📷</Text>
+                </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.chatMicBtn}
                   onPress={handleStartVoiceRecording}
@@ -21326,6 +21492,43 @@ const styles = StyleSheet.create({
     borderColor: '#BFDBFE',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  chatPhotoBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatPrescriptionImageContainer: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 6,
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  chatPrescriptionImagePreview: {
+    width: 220,
+    height: 160,
+    borderRadius: 10,
+  },
+  chatPrescriptionBadge: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  chatPrescriptionBadgeText: {
+    fontSize: 10.5,
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   voiceRecordingComposerRow: {
     flexDirection: 'row',

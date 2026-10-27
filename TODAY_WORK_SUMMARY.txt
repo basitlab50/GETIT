@@ -1130,6 +1130,21 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Tapping it processes payment, flags the prescription as paid, and automatically creates an official `New Order` in the database and local state.
      * The order immediately lands under the pharmacy merchant's `🟢 Active Orders` (`New Order`) tab with audio chime, seamlessly continuing through order preparation, courier dispatch, and doorstep delivery!
 
+57. Real-Time Pharmacy Message Sync, In-Chat Doctor Prescription Photo Rendering & Camera Studio:
+   - 💬 Real-Time Pharmacy Message Visibility & State Synchronization:
+     * Root Cause: `handleConsultPharmacist` was using `setOrders` instead of `updateAndPersistOrders`, so consultation orders were transient in memory on the shopper side and not persisted in `AsyncStorage` (`getit_user_orders`) when switching to merchant mode.
+     * `handleSendChatMessage` dropped new messages if the order wasn't in state previously, and wrote unread badges with `${orderId}_${myRole}` (e.g. `_buyer`) rather than `${orderId}_${targetChatPartner.role}` (`_merchant`).
+     * In `merchantTab === 'messages'`, tapping a patient card was manually setting state without calling `handleOpenChatModal`, omitting `getOrderChatMessages(c.id)` message loading.
+     * Fixed: Consultations and incoming messages now save to persistent storage with `updateAndPersistOrders` for both customer and pharmacy merchant views.
+     * Tapping any patient conversation card in `merchantTab === 'messages'` invokes `handleOpenChatModal(c, 'buyer', ...)`, properly loading all chat history, updating read state, and clearing unread indicators.
+     * `pharmacyConsultations` filter now captures all `RX-` consultations, pharmacy store orders, and prescription notes.
+   - 📷 Doctor Prescription Note Photo Rendering in Chat Bubbles:
+     * Root Cause: Chat bubbles previously only rendered `msg.text` or `msg.prescription`, so when an image was attached (`msg.prescriptionImage`), only the fallback text string showed up without the actual picture.
+     * Added full image rendering with `<Image source={{ uri: msg.prescriptionImage }} />` and an official `📷 Doctor Prescription` overlay badge inside chat bubbles for both shopper and pharmacist.
+   - 📸 In-Chat Direct Camera / Gallery Upload Studio:
+     * Added `📷` camera/library button directly in the chat composer bar.
+     * Patients and pharmacists can tap `📷` to choose `📷 Take Photo` or `🖼️ Choose from Gallery` to snap or upload a doctor prescription note on the fly without leaving the conversation.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
