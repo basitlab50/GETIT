@@ -1442,7 +1442,12 @@ export default function App() {
   useEffect(() => {
     appModeRef.current = appMode;
   }, [appMode]);
-  const [merchantTab, setMerchantTab] = useState('orders'); // 'orders' | 'inventory' | 'finances' | 'store'
+  const [merchantTab, setMerchantTab] = useState('orders'); // 'orders' | 'inventory' | 'messages' | 'finances' | 'store'
+  const [pharmacyMessageSubTab, setPharmacyMessageSubTab] = useState('messages'); // 'messages' | 'calls'
+  const [prescriptionBuilderVisible, setPrescriptionBuilderVisible] = useState(false);
+  const [selectedPrescriptionDrugs, setSelectedPrescriptionDrugs] = useState([]);
+  const [prescriptionInstructions, setPrescriptionInstructions] = useState('');
+  const [prescriptionDrugSearch, setPrescriptionDrugSearch] = useState('');
   const [merchantStoreId, setMerchantStoreId] = useState(null); // set dynamically on merchant sign in
   const [merchantOrderFilter, setMerchantOrderFilter] = useState('new'); // 'all' | 'new' | 'preparing' | 'ready' | 'completed'
   const [storeOpenStatus, setStoreOpenStatus] = useState(true);
@@ -5788,12 +5793,12 @@ export default function App() {
               storeId: prescription.storeId,
               storeName: prescription.storeName,
               storeType: 'pharmacy',
-              status: 'Preparing',
+              status: 'New Order',
               items: prescription.items.map((it) => ({
                 id: it.id,
                 name: it.name,
                 price: it.price,
-                quantity: it.quantity,
+                quantity: it.quantity || 1,
                 dosage: it.dosageInstruction,
                 icon: it.icon || '💊',
               })),
@@ -5801,19 +5806,26 @@ export default function App() {
               subtotal: prescription.subtotal,
               deliveryFee: prescription.deliveryFee,
               total: prescription.total,
-              customerName: currentUser?.name || 'Patient',
+              customerName: currentUser?.fullName || currentUser?.name || 'Patient',
               customerId: currentUser?.id || 'patient-user',
               customerPhone: currentUser?.phone || '08000000000',
-              deliveryAddress: selectedLocation || 'Maitama, Abuja',
+              customerAddress: selectedLocation || currentUser?.address || 'Maitama, Abuja',
+              deliveryAddress: selectedLocation || currentUser?.address || 'Maitama, Abuja',
               deliveryPin: Math.floor(1000 + Math.random() * 9000).toString(),
               createdAt: new Date().toISOString(),
+              isPrescriptionOrder: true,
               journeyAlert:
                 '💊 Pharmacy is preparing and tamper-sealing your prescribed medications.',
             };
 
-            setOrders((prev) => [prescriptionDeliveryOrder, ...prev]);
+            setLastPlacedOrderId(prescriptionDeliveryOrder.id);
+            updateAndPersistOrders((prev) => [prescriptionDeliveryOrder, ...prev]);
             createDatabaseOrder(prescriptionDeliveryOrder).catch(() => { });
             dispatchMerchantNewOrderRemotePush(prescriptionDeliveryOrder).catch(() => { });
+
+            try {
+              playAudioBeep('default');
+            } catch (e) { }
 
             Alert.alert(
               'Payment Confirmed! 🎉',
@@ -6237,6 +6249,37 @@ export default function App() {
   useEffect(() => {
     merchantOrdersRef.current = merchantOrders;
   }, [merchantOrders]);
+
+  const pharmacyConsultations = useMemo(() => {
+    return orders.filter((o) => {
+      const isMyStore =
+        (currentMerchantStore && (o.storeId === currentMerchantStore.id || o.storeName === currentMerchantStore.name)) ||
+        o.storeType === 'pharmacy';
+      const hasChat = (o.messages && o.messages.length > 0) || o.status === 'Consultation';
+      return isMyStore && hasChat;
+    });
+  }, [orders, currentMerchantStore]);
+
+  const pharmacyCallLogs = useMemo(() => {
+    const list = [
+      { id: 'call-1', patientName: 'Fatima Aliyu', phone: '08123456789', time: '10:45 AM', type: 'incoming', status: 'Inbound Hotline Call' },
+      { id: 'call-2', patientName: 'Ibrahim Danladi', phone: '08034567890', time: 'Yesterday 4:15 PM', type: 'incoming', status: 'Completed Consult' },
+      { id: 'call-3', patientName: 'Amina Bello', phone: '07098765432', time: '2 days ago', type: 'outgoing', status: 'Follow-up Call' },
+    ];
+    pharmacyConsultations.forEach((c) => {
+      if (c.customerPhone && !list.some((l) => l.phone === c.customerPhone)) {
+        list.push({
+          id: `call-ord-${c.id}`,
+          patientName: c.customerName || 'Patient',
+          phone: c.customerPhone,
+          time: c.createdAt ? new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today',
+          type: 'incoming',
+          status: 'Tele-Consult Request',
+        });
+      }
+    });
+    return list;
+  }, [pharmacyConsultations]);
 
   // Dynamic & persistent unread count derivation from order.messages + live unreadChatMap
   const getOrderUnreadCount = useCallback(
@@ -15276,6 +15319,187 @@ Support: help@getit.ng | Abuja, Nigeria`;
               </ScrollView>
             )}
 
+            {/* Messages & Tele-Consultation Tab */}
+            {merchantTab === 'messages' && (
+              <ScrollView
+                style={styles.merchantMainScroll}
+                contentContainerStyle={{ padding: 16, paddingBottom: 110 }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View>
+                    <Text style={styles.merchantViewTitle}>
+                      {currentMerchantStore?.storeType === 'pharmacy' ? 'Consultations & Inquiries' : 'Store Messages'}
+                    </Text>
+                    <Text style={styles.merchantViewSub}>
+                      {currentMerchantStore?.storeType === 'pharmacy'
+                        ? 'Tele-pharmacy live patient messaging & call logs'
+                        : 'Customer chats & order inquiries'}
+                    </Text>
+                  </View>
+                  <View style={styles.chatOnlinePill}>
+                    <View style={styles.chatOnlineDot} />
+                    <Text style={styles.chatOnlinePillText}>On Duty</Text>
+                  </View>
+                </View>
+
+                {/* Sub-tab pills: Messages / Consultations & Call Log */}
+                <View style={styles.pharmacySubTabRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.pharmacySubTabBtn,
+                      pharmacyMessageSubTab === 'messages' && styles.pharmacySubTabBtnActive,
+                    ]}
+                    onPress={() => setPharmacyMessageSubTab('messages')}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.pharmacySubTabText,
+                        pharmacyMessageSubTab === 'messages' && styles.pharmacySubTabTextActive,
+                      ]}
+                    >
+                      💬 Messages ({pharmacyConsultations.length})
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.pharmacySubTabBtn,
+                      pharmacyMessageSubTab === 'calls' && styles.pharmacySubTabBtnActive,
+                    ]}
+                    onPress={() => setPharmacyMessageSubTab('calls')}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.pharmacySubTabText,
+                        pharmacyMessageSubTab === 'calls' && styles.pharmacySubTabTextActive,
+                      ]}
+                    >
+                      📞 Call Log ({pharmacyCallLogs.length})
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {pharmacyMessageSubTab === 'messages' ? (
+                  <View style={{ marginTop: 8 }}>
+                    {pharmacyConsultations.length === 0 ? (
+                      <View style={styles.inventoryEmptySearchCard}>
+                        <Text style={{ fontSize: 36, marginBottom: 8 }}>💬</Text>
+                        <Text style={styles.inventoryEmptySearchTitle}>No Active Messages Yet</Text>
+                        <Text style={styles.inventoryEmptySearchSub}>
+                          When customers consult with your pharmacy or upload prescriptions, their messages will appear here.
+                        </Text>
+                      </View>
+                    ) : (
+                      pharmacyConsultations.map((c) => {
+                        const lastMsg = c.messages?.[c.messages.length - 1];
+                        const unreadCount = Number(unreadChatMap[`${c.id}_merchant`]) || 0;
+                        const hasPrescription = c.prescriptionImage || c.messages?.some((m) => m.prescriptionImage);
+
+                        return (
+                          <TouchableOpacity
+                            key={c.id}
+                            style={styles.patientConsultCard}
+                            onPress={() => {
+                              setTargetChatOrder(c);
+                              setTargetChatPartner({
+                                id: c.customerId,
+                                name: c.customerName || 'Patient',
+                                role: 'buyer',
+                                roleLabel: '👤 Patient',
+                                phone: c.customerPhone || '',
+                              });
+                              setChatModalVisible(true);
+                            }}
+                            activeOpacity={0.85}
+                          >
+                            <View style={styles.patientConsultAvatarCircle}>
+                              <Text style={{ fontSize: 18 }}>👤</Text>
+                            </View>
+                            <View style={{ flex: 1, marginHorizontal: 10 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Text style={styles.patientConsultName} numberOfLines={1}>
+                                  {c.customerName || 'Patient'}
+                                </Text>
+                                <Text style={styles.patientConsultTime}>
+                                  {lastMsg?.createdAt
+                                    ? new Date(lastMsg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                    : 'Recent'}
+                                </Text>
+                              </View>
+                              <Text style={styles.patientConsultPhone}>
+                                📞 {c.customerPhone || 'Direct App User'}
+                              </Text>
+                              <Text style={styles.patientConsultPreview} numberOfLines={1}>
+                                {lastMsg?.text || (hasPrescription ? '📷 Prescription Uploaded' : 'Started consultation')}
+                              </Text>
+                              {hasPrescription && (
+                                <View style={styles.rxBadgeTag}>
+                                  <Text style={styles.rxBadgeTagText}>📷 Doctor Note Attached</Text>
+                                </View>
+                              )}
+                            </View>
+                            <View style={{ alignItems: 'flex-end', justifyContent: 'center', gap: 6 }}>
+                              {unreadCount > 0 && (
+                                <View style={styles.merchantUnreadDot}>
+                                  <Text style={styles.merchantUnreadDotText}>{unreadCount}</Text>
+                                </View>
+                              )}
+                              <TouchableOpacity
+                                style={styles.quickCallCircleBtn}
+                                onPress={() => {
+                                  if (c.customerPhone) {
+                                    Linking.openURL(`tel:${c.customerPhone}`);
+                                  } else {
+                                    Alert.alert('Patient Phone', 'No phone number provided on file.');
+                                  }
+                                }}
+                                activeOpacity={0.8}
+                              >
+                                <Text style={{ fontSize: 15 }}>📞</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })
+                    )}
+                  </View>
+                ) : (
+                  <View style={{ marginTop: 8 }}>
+                    {pharmacyCallLogs.length === 0 ? (
+                      <View style={styles.inventoryEmptySearchCard}>
+                        <Text style={{ fontSize: 36, marginBottom: 8 }}>📞</Text>
+                        <Text style={styles.inventoryEmptySearchTitle}>No Call Records Yet</Text>
+                        <Text style={styles.inventoryEmptySearchSub}>
+                          Inbound tele-consultation requests and hotline calls will appear in this ledger.
+                        </Text>
+                      </View>
+                    ) : (
+                      pharmacyCallLogs.map((log) => (
+                        <View key={log.id} style={styles.callLogItemCard}>
+                          <View style={styles.callLogIconCircle}>
+                            <Text style={{ fontSize: 16 }}>{log.type === 'outgoing' ? '↗️' : '↙️'}</Text>
+                          </View>
+                          <View style={{ flex: 1, marginHorizontal: 10 }}>
+                            <Text style={styles.callLogPatientName}>{log.patientName}</Text>
+                            <Text style={styles.callLogPatientPhone}>{log.phone}</Text>
+                            <Text style={styles.callLogTimeText}>{log.time} • {log.status}</Text>
+                          </View>
+                          <TouchableOpacity
+                            style={styles.callBackActionBtn}
+                            onPress={() => Linking.openURL(`tel:${log.phone}`)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.callBackActionBtnText}>📞 Call</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))
+                    )}
+                  </View>
+                )}
+              </ScrollView>
+            )}
+
             {/* Finances Tab */}
             {merchantTab === 'finances' && (
               <ScrollView
@@ -15803,7 +16027,26 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   📦
                 </Text>
                 <Text style={[styles.merchantNavText, merchantTab === 'inventory' && styles.merchantNavTextActive]}>
-                  Catalog
+                  {currentMerchantStore?.storeType === 'pharmacy' ? 'Medications' : 'Catalog'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.merchantNavItem}
+                onPress={() => setMerchantTab('messages')}
+              >
+                <View style={{ position: 'relative' }}>
+                  <Text style={[styles.merchantNavIcon, merchantTab === 'messages' && styles.merchantNavIconActive]}>
+                    💬
+                  </Text>
+                  {merchantUnreadCount > 0 && (
+                    <View style={styles.merchantUnreadDot}>
+                      <Text style={styles.merchantUnreadDotText}>{merchantUnreadCount}</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[styles.merchantNavText, merchantTab === 'messages' && styles.merchantNavTextActive]}>
+                  {currentMerchantStore?.storeType === 'pharmacy' ? 'Consults' : 'Messages'}
                 </Text>
               </TouchableOpacity>
 
@@ -19596,7 +19839,69 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         {!isMine && (
                           <Text style={styles.chatSenderNameText}>{msg.senderName}</Text>
                         )}
-                        {msg.voiceNoteDuration ? (
+                        {msg.prescription ? (
+                          <View style={styles.chatRxCard}>
+                            <View style={styles.chatRxCardHeader}>
+                              <View style={styles.chatRxLogoCircle}>
+                                <Text style={{ fontSize: 16 }}>℞</Text>
+                              </View>
+                              <View style={{ flex: 1, marginHorizontal: 8 }}>
+                                <Text style={styles.chatRxTitle}>Prescription Invoice</Text>
+                                <Text style={styles.chatRxStore} numberOfLines={1}>
+                                  {msg.prescription.storeName || 'Dispensary'}
+                                </Text>
+                              </View>
+                              <View style={styles.chatRxPillBadge}>
+                                <Text style={styles.chatRxPillBadgeText}>Verified</Text>
+                              </View>
+                            </View>
+
+                            <View style={styles.chatRxItemsBox}>
+                              {msg.prescription.items?.map((it, idx) => (
+                                <View key={idx} style={styles.chatRxItemLine}>
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={styles.chatRxItemName}>
+                                      {it.name} <Text style={{ color: '#056B4B', fontWeight: '800' }}>x{it.quantity || 1}</Text>
+                                    </Text>
+                                    {it.dosageInstruction ? (
+                                      <Text style={styles.chatRxItemDosage}>📋 {it.dosageInstruction}</Text>
+                                    ) : null}
+                                  </View>
+                                  <Text style={styles.chatRxItemPrice}>
+                                    {formatNaira((Number(it.price) || 0) * (Number(it.quantity) || 1))}
+                                  </Text>
+                                </View>
+                              ))}
+                            </View>
+
+                            <View style={styles.chatRxTotalRow}>
+                              <Text style={styles.chatRxTotalLabel}>Total Amount:</Text>
+                              <Text style={styles.chatRxTotalValue}>
+                                {formatNaira(msg.prescription.total)}
+                              </Text>
+                            </View>
+
+                            {msg.prescription.paid ? (
+                              <View style={styles.chatRxPaidTag}>
+                                <Text style={styles.chatRxPaidTagText}>✅ Paid • Transferred to Active Orders</Text>
+                              </View>
+                            ) : appMode === 'customer' ? (
+                              <TouchableOpacity
+                                style={styles.chatRxPayButton}
+                                onPress={() => handlePayPrescriptionBill(msg.prescription, targetChatOrder)}
+                                activeOpacity={0.85}
+                              >
+                                <Text style={styles.chatRxPayButtonText}>
+                                  💳 Accept & Pay {formatNaira(msg.prescription.total)} ➔
+                                </Text>
+                              </TouchableOpacity>
+                            ) : (
+                              <View style={styles.chatRxPendingTag}>
+                                <Text style={styles.chatRxPendingTagText}>⏳ Awaiting Patient Payment</Text>
+                              </View>
+                            )}
+                          </View>
+                        ) : msg.voiceNoteDuration ? (
                           <View style={styles.voiceNoteBubbleRow}>
                             <TouchableOpacity
                               style={[
@@ -19648,6 +19953,22 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 })
               )}
             </ScrollView>
+
+            {/* Pharmacist Prescribe Medication Bar Button */}
+            {appMode === 'merchant' && (
+              <View style={styles.chatPrescribeActionBar}>
+                <TouchableOpacity
+                  style={styles.chatPrescribeActionBtn}
+                  onPress={handleOpenPrescribeMedicationModal}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.chatPrescribeActionBtnIcon}>💊</Text>
+                  <Text style={styles.chatPrescribeActionBtnText}>
+                    Prescribe Medication & Bill Patient
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Input composer row */}
             {isVoiceRecording ? (
@@ -19708,6 +20029,249 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 </TouchableOpacity>
               </View>
             )}
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* =========================================================================
+          PHARMACIST PRESCRIBE MEDICATION & BILL PATIENT MODAL
+          ========================================================================= */}
+      <Modal
+        visible={prescribeMedicationModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setPrescribeMedicationModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+          <View style={styles.rxBuilderHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setPrescribeMedicationModalVisible(false)}
+              activeOpacity={0.7}
+            >
+              <Text style={{ fontSize: 20, color: '#FFFFFF', fontWeight: 'bold' }}>✕</Text>
+            </TouchableOpacity>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={styles.rxBuilderTitle}>Prescribe Medications</Text>
+              <Text style={styles.rxBuilderSub} numberOfLines={1}>
+                Patient: {targetChatPartner?.name || 'Customer'} • {currentMerchantStore?.name || 'Dispensary'}
+              </Text>
+            </View>
+            <View style={styles.rxBuilderCountBadge}>
+              <Text style={styles.rxBuilderCountBadgeText}>
+                {selectedPrescribeItems.length} Selected
+              </Text>
+            </View>
+          </View>
+
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={{ flex: 1, backgroundColor: '#F8FAFC' }}
+          >
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Search Drug Inventory */}
+              <View style={styles.rxSearchContainer}>
+                <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
+                <TextInput
+                  style={styles.rxSearchInput}
+                  placeholder="Search medications by name or category..."
+                  placeholderTextColor="#94A3B8"
+                  value={prescribeSearchQuery}
+                  onChangeText={setPrescribeSearchQuery}
+                />
+                {prescribeSearchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setPrescribeSearchQuery('')}>
+                    <Text style={{ color: '#94A3B8', fontSize: 14 }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Selected Medications Tray (if any selected) */}
+              {selectedPrescribeItems.length > 0 && (
+                <View style={styles.rxSelectedTrayCard}>
+                  <Text style={styles.rxSelectedTrayTitle}>
+                    Prescription Basket ({selectedPrescribeItems.length} drugs)
+                  </Text>
+                  {selectedPrescribeItems.map((item) => (
+                    <View key={item.id} style={styles.rxSelectedTrayItem}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.rxSelectedTrayName}>{item.name}</Text>
+                        <Text style={styles.rxSelectedTrayPrice}>
+                          {formatNaira(item.price)} each • Total: {formatNaira((Number(item.price) || 0) * (Number(item.quantity) || 1))}
+                        </Text>
+                        {/* Dosage instructions input */}
+                        <TextInput
+                          style={styles.rxDosageInput}
+                          placeholder="Dosage (e.g. 1 tab morning & night after food)..."
+                          placeholderTextColor="#94A3B8"
+                          value={item.dosageInstruction}
+                          onChangeText={(txt) => handleUpdatePrescribeItemDosage(item.id, txt)}
+                        />
+                      </View>
+                      <View style={styles.rxQtyControlCluster}>
+                        <TouchableOpacity
+                          style={styles.rxQtyBtn}
+                          onPress={() => handleUpdatePrescribeItemQty(item.id, -1)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.rxQtyBtnText}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.rxQtyNumberText}>{item.quantity || 1}</Text>
+                        <TouchableOpacity
+                          style={styles.rxQtyBtn}
+                          onPress={() => handleUpdatePrescribeItemQty(item.id, 1)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.rxQtyBtnText}>+</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => handleTogglePrescribeItem(item)}
+                          style={{ marginLeft: 6 }}
+                        >
+                          <Text style={{ fontSize: 16 }}>🗑️</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+
+                  {/* Subtotal & Delivery Total */}
+                  <View style={styles.rxBillCalculationCard}>
+                    <View style={styles.rxBillCalcRow}>
+                      <Text style={styles.rxBillCalcLabel}>Drugs Subtotal:</Text>
+                      <Text style={styles.rxBillCalcVal}>
+                        {formatNaira(
+                          selectedPrescribeItems.reduce(
+                            (s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 1),
+                            0
+                          )
+                        )}
+                      </Text>
+                    </View>
+                    <View style={styles.rxBillCalcRow}>
+                      <Text style={styles.rxBillCalcLabel}>Discreet Delivery:</Text>
+                      <Text style={styles.rxBillCalcVal}>{formatNaira(1200)}</Text>
+                    </View>
+                    <View style={[styles.rxBillCalcRow, { borderTopWidth: 1, borderTopColor: '#CBD5E1', paddingTop: 6, marginTop: 4 }]}>
+                      <Text style={[styles.rxBillCalcLabel, { fontWeight: '800', color: '#0F172A' }]}>
+                        Total Patient Bill:
+                      </Text>
+                      <Text style={[styles.rxBillCalcVal, { fontWeight: '900', color: '#056B4B', fontSize: 16 }]}>
+                        {formatNaira(
+                          selectedPrescribeItems.reduce(
+                            (s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 1),
+                            0
+                          ) + 1200
+                        )}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {/* Dispensary Catalogue Items */}
+              <Text style={styles.rxCatalogueSectionTitle}>
+                Dispensary Stock & Catalogue
+              </Text>
+              <Text style={styles.rxCatalogueSectionSub}>
+                Tap any medication to add to this patient prescription
+              </Text>
+
+              {(() => {
+                const storeProds = currentMerchantStore?.products || [];
+                const fallbackDrugs = INITIAL_PHARMACY_STORES[0]?.products || [];
+                const allDrugs = storeProds.length > 0 ? storeProds : fallbackDrugs;
+
+                const filtered = prescribeSearchQuery.trim()
+                  ? allDrugs.filter(
+                      (d) =>
+                        d.name.toLowerCase().includes(prescribeSearchQuery.toLowerCase()) ||
+                        (d.category && d.category.toLowerCase().includes(prescribeSearchQuery.toLowerCase()))
+                    )
+                  : allDrugs;
+
+                if (filtered.length === 0) {
+                  return (
+                    <View style={styles.rxEmptyCatalogCard}>
+                      <Text style={{ fontSize: 28, marginBottom: 6 }}>🔍</Text>
+                      <Text style={styles.rxEmptyCatalogTitle}>No Medications Found</Text>
+                      <Text style={styles.rxEmptyCatalogSub}>
+                        No medications match "{prescribeSearchQuery}".
+                      </Text>
+                    </View>
+                  );
+                }
+
+                return filtered.map((drug) => {
+                  const isSelected = selectedPrescribeItems.some((p) => p.id === drug.id);
+                  return (
+                    <TouchableOpacity
+                      key={drug.id}
+                      style={[
+                        styles.rxDrugCatalogCard,
+                        isSelected && styles.rxDrugCatalogCardSelected,
+                      ]}
+                      onPress={() => handleTogglePrescribeItem(drug)}
+                      activeOpacity={0.8}
+                    >
+                      <View style={styles.rxDrugIconCircle}>
+                        <Text style={{ fontSize: 22 }}>{drug.icon || '💊'}</Text>
+                      </View>
+                      <View style={{ flex: 1, marginHorizontal: 10 }}>
+                        <Text style={styles.rxDrugCardName}>{drug.name}</Text>
+                        <Text style={styles.rxDrugCardCategory}>
+                          {drug.category || 'Medication'} • {drug.dosage || 'Prescription formulation'}
+                        </Text>
+                        <Text style={styles.rxDrugCardPrice}>{formatNaira(drug.price)}</Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.rxAddSelectBtn,
+                          isSelected && styles.rxAddSelectBtnActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.rxAddSelectBtnText,
+                            isSelected && styles.rxAddSelectBtnTextActive,
+                          ]}
+                        >
+                          {isSelected ? '✓ Added' : '+ Add'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                });
+              })()}
+            </ScrollView>
+
+            {/* Bottom floating send button */}
+            <View style={styles.rxFloatingFooter}>
+              <TouchableOpacity
+                style={[
+                  styles.rxSendBillBtn,
+                  selectedPrescribeItems.length === 0 && { opacity: 0.5, backgroundColor: '#94A3B8' },
+                ]}
+                onPress={handleSendPrescriptionBill}
+                disabled={selectedPrescribeItems.length === 0}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.rxSendBillBtnText}>
+                  📤 Send Prescription Bill (
+                  {formatNaira(
+                    selectedPrescribeItems.reduce(
+                      (s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 1),
+                      0
+                    ) + 1200
+                  )}
+                  ) ➔
+                </Text>
+              </TouchableOpacity>
+            </View>
           </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
@@ -20837,6 +21401,570 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontWeight: '600',
     marginTop: 2,
+  },
+
+  // Pharmacy Tele-Consultations & Messages Tab
+  pharmacySubTabRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  pharmacySubTabBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  pharmacySubTabBtnActive: {
+    backgroundColor: '#056B4B',
+    borderColor: '#056B4B',
+  },
+  pharmacySubTabText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  pharmacySubTabTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  patientConsultCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  patientConsultAvatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  patientConsultName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  patientConsultPhone: {
+    fontSize: 12,
+    color: '#056B4B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  patientConsultPreview: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 3,
+  },
+  patientConsultTime: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  rxBadgeTag: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 5,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  rxBadgeTagText: {
+    fontSize: 10.5,
+    color: '#065F46',
+    fontWeight: '700',
+  },
+  quickCallCircleBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  callLogItemCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  callLogIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  callLogPatientName: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  callLogPatientPhone: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  callLogTimeText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  callBackActionBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#056B4B',
+  },
+  callBackActionBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  // Pharmacist Prescribe Bar in Chat
+  chatPrescribeActionBar: {
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 4,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  chatPrescribeActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EFF6FF',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#3B82F6',
+    gap: 8,
+  },
+  chatPrescribeActionBtnIcon: {
+    fontSize: 17,
+  },
+  chatPrescribeActionBtnText: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#1D4ED8',
+  },
+
+  // In-Chat Prescription Invoice Card
+  chatRxCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 4,
+    borderWidth: 1.5,
+    borderColor: '#10B981',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  chatRxCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    paddingBottom: 8,
+    marginBottom: 8,
+  },
+  chatRxLogoCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  chatRxTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  chatRxStore: {
+    fontSize: 11,
+    color: '#056B4B',
+    fontWeight: '600',
+  },
+  chatRxPillBadge: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  chatRxPillBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  chatRxItemsBox: {
+    gap: 6,
+    marginBottom: 10,
+  },
+  chatRxItemLine: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  chatRxItemName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  chatRxItemDosage: {
+    fontSize: 11,
+    color: '#056B4B',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  chatRxItemPrice: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginLeft: 8,
+  },
+  chatRxTotalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    paddingTop: 8,
+    marginBottom: 10,
+  },
+  chatRxTotalLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  chatRxTotalValue: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#056B4B',
+  },
+  chatRxPayButton: {
+    backgroundColor: '#056B4B',
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatRxPayButtonText: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  chatRxPaidTag: {
+    backgroundColor: '#ECFDF5',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  chatRxPaidTagText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  chatRxPendingTag: {
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  chatRxPendingTagText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+
+  // Prescription Builder Modal
+  rxBuilderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#056B4B',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  rxBuilderTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  rxBuilderSub: {
+    fontSize: 11.5,
+    color: '#A7F3D0',
+    marginTop: 2,
+  },
+  rxBuilderCountBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  rxBuilderCountBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  rxSearchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    marginBottom: 14,
+  },
+  rxSearchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#0F172A',
+  },
+  rxSelectedTrayCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1.5,
+    borderColor: '#056B4B',
+  },
+  rxSelectedTrayTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#056B4B',
+    marginBottom: 10,
+  },
+  rxSelectedTrayItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  rxSelectedTrayName: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  rxSelectedTrayPrice: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  rxDosageInput: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 12,
+    color: '#0F172A',
+    marginTop: 6,
+  },
+  rxQtyControlCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 10,
+    marginTop: 4,
+  },
+  rxQtyBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rxQtyBtnText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  rxQtyNumberText: {
+    fontSize: 14,
+    fontWeight: '800',
+    marginHorizontal: 8,
+    color: '#0F172A',
+  },
+  rxBillCalculationCard: {
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    gap: 4,
+  },
+  rxBillCalcRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  rxBillCalcLabel: {
+    fontSize: 12.5,
+    color: '#64748B',
+  },
+  rxBillCalcVal: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  rxCatalogueSectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  rxCatalogueSectionSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+    marginBottom: 10,
+  },
+  rxEmptyCatalogCard: {
+    alignItems: 'center',
+    padding: 30,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  rxEmptyCatalogTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  rxEmptyCatalogSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 3,
+    textAlign: 'center',
+  },
+  rxDrugCatalogCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  rxDrugCatalogCardSelected: {
+    borderColor: '#056B4B',
+    backgroundColor: '#F0FDF4',
+  },
+  rxDrugIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rxDrugCardName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  rxDrugCardCategory: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  rxDrugCardPrice: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#056B4B',
+    marginTop: 2,
+  },
+  rxAddSelectBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  rxAddSelectBtnActive: {
+    backgroundColor: '#056B4B',
+    borderColor: '#056B4B',
+  },
+  rxAddSelectBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1D4ED8',
+  },
+  rxAddSelectBtnTextActive: {
+    color: '#FFFFFF',
+  },
+  rxFloatingFooter: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  rxSendBillBtn: {
+    backgroundColor: '#056B4B',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rxSendBillBtnText: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   safeArea: {
     flex: 1,

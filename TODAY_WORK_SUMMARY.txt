@@ -1112,6 +1112,24 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - 💊 Clinical Pharmaceutical Chat Suggestion Chips:
      * When consulting a pharmacist, quick chips provide context-aware prompts: "Do you have this in stock? 💊", "What is the recommended dosage? 🩺", "Are there any side effects? ⚠️", "Can I take this with food? 🍲", "Is syrup version available? 🥄", "Please prepare for doorstep delivery 🛵".
 
+56. Pharmacy Messages & Tele-Consultation Hub, In-Chat Prescribe Medication Studio & 1-Tap Active Order Pipeline:
+   - 💬 Merchant Bottom Navigation "Messages / Consults" Tab:
+     * Added dedicated `💬 Consults / Messages` tab right after Catalog in the merchant bottom navigation bar with real-time unread badge.
+     * Top segmented controls: `💬 Messages ({count})` and `📞 Call Log ({count})`.
+     * Patient conversation cards feature avatar, patient name, contact number, latest message / voice note preview, timestamp, prescription uploaded indicator, unread count badge, and a quick `📞` call button.
+     * Tapping any patient conversation directly opens the live consultation chat.
+     * Call Log sub-tab displays inbound and outbound consultation calls with a direct `[ 📞 Call ]` dialer action.
+   - 💊 Pharmacist In-Chat "Prescribe Medication & Bill Patient" Studio:
+     * Added prominent `💊 Prescribe Medication & Bill Patient` action bar right above the chat composer for pharmacists.
+     * Interactive Prescription Builder modal displaying all drugs from the dispensary catalogue with formulation, pricing, and live search.
+     * Pharmacists can increment/decrement drug quantities, enter tailored clinical dosage instructions (e.g. "Take 1 tablet every 8 hours after food"), and preview the itemized bill calculation.
+     * `[ 📤 Send Prescription Bill ]` transmits an official digital prescription quote into the patient's chat thread.
+   - 🧾 Interactive Prescription Card & 1-Tap Active Order Conversion:
+     * Chat renders an official ℞ verified prescription card with drug list, quantities, dosages, and full bill amount.
+     * Patient has a prominent `[ 💳 Accept & Pay ₦X,XXX ]` button.
+     * Tapping it processes payment, flags the prescription as paid, and automatically creates an official `New Order` in the database and local state.
+     * The order immediately lands under the pharmacy merchant's `🟢 Active Orders` (`New Order`) tab with audio chime, seamlessly continuing through order preparation, courier dispatch, and doorstep delivery!
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
