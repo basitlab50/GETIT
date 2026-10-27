@@ -235,27 +235,31 @@ export async function dispatchChatRemotePush({
   text,
   orderId,
 }) {
-  let tokens = [];
+  try {
+    let tokens = [];
 
-  if (recipientRole === 'merchant') {
-    tokens = await getStorePushTokens(recipientId);
-  } else {
-    tokens = await getCustomerPushTokens(recipientId);
-  }
+    if (recipientRole === 'merchant') {
+      tokens = await getStorePushTokens(recipientId);
+    } else {
+      tokens = await getCustomerPushTokens(recipientId);
+    }
 
-  if (tokens.length > 0) {
-    await sendExpoPushNotification({
-      to: tokens,
-      title: `💬 New Message from ${senderName || 'Store'}`,
-      body: `"${text}"`,
-      data: {
-        orderId,
-        type: 'chat',
-        senderRole: recipientRole === 'merchant' ? 'buyer' : 'merchant',
-      },
-      channelId: 'chat_messages',
-      sound: 'default',
-      priority: 'high',
-    });
+    if (tokens.length > 0) {
+      await sendExpoPushNotification({
+        to: tokens,
+        title: `💬 New Message from ${senderName || 'Store'}`,
+        body: `"${text || ''}"`,
+        data: {
+          orderId,
+          type: 'chat',
+          senderRole: recipientRole === 'merchant' ? 'buyer' : 'merchant',
+        },
+        channelId: 'chat_messages',
+        sound: 'default',
+        priority: 'high',
+      });
+    }
+  } catch (err) {
+    console.warn('dispatchChatRemotePush suppressed error:', err?.message);
   }
 }
