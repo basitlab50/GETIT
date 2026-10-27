@@ -1095,6 +1095,23 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Includes doctor's note / symptoms textarea and patient contact number.
      * Securely transmits to the selected pharmacy dispensary and automatically opens the consultation chat with the attached prescription note.
 
+55. Pharmacist Consultation Messaging, Voice Note Studio & Call Integration:
+   - 🐛 Fixed `ReferenceError: Property 'senderName' doesn't exist`:
+     * Resolved crash in `handleSendChatMessage` by mapping `senderName: myName` and `text: text` to defined scoped variables.
+     * Messages to pharmacists, merchants, and couriers now dispatch instantly without unhandled promise rejections.
+   - 🎙️ Full In-Chat Voice Note Studio (`expo-audio`):
+     * Added microphone button (`🎙️`) to the chat composer row.
+     * Interactive recording banner with pulsing red dot and live elapsed timer (`Recording voice note... 0:04`).
+     * `[ ✕ Cancel ]` and `[ ➤ Send ]` controls.
+     * Records audio via `expo-audio` high-quality preset and packages duration + URI into the message payload.
+     * Message bubble renders a custom waveform audio player with `▶` Play / `⏸` Pause button, visual equalizer bars, and duration counter.
+   - 📞 Universal Direct Pharmacist Call Hotline:
+     * In the chat header, the phone button (`📞`) is now universally enabled.
+     * Resolves the pharmacy phone number (`pharmacy.phone`, `pharmacy.ownerPhone`, or dispensary hotline `0545802140`).
+     * Tapping directly opens the device dialer to speak with the on-duty pharmacist immediately.
+   - 💊 Clinical Pharmaceutical Chat Suggestion Chips:
+     * When consulting a pharmacist, quick chips provide context-aware prompts: "Do you have this in stock? 💊", "What is the recommended dosage? 🩺", "Are there any side effects? ⚠️", "Can I take this with food? 🍲", "Is syrup version available? 🥄", "Please prepare for doorstep delivery 🛵".
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

@@ -30,6 +30,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Notifications from 'expo-notifications';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, AudioModule } from 'expo-audio';
 import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
 import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
 import { REAL_ROAD_LEGS, REAL_ROAD_POINTS, REAL_ROAD_WAYPOINTS } from './realRoadRouteData';
@@ -1536,6 +1537,14 @@ export default function App() {
   const [chatInputText, setChatInputText] = useState('');
   const [unreadChatMap, setUnreadChatMap] = useState({});
   const chatScrollRef = useRef(null);
+
+  // Voice Note Recording & Playback States
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+  const [voiceRecordSeconds, setVoiceRecordSeconds] = useState(0);
+  const [activePlayingVoiceId, setActivePlayingVoiceId] = useState(null);
+  const voiceTimerRef = useRef(null);
+  const currentAudioPlayerRef = useRef(null);
 
   // Load persistent unread badge map on app mount
   useEffect(() => {
@@ -5280,8 +5289,8 @@ export default function App() {
     dispatchChatRemotePush({
       recipientRole: targetChatPartner.role,
       recipientId: targetChatPartner.id,
-      senderName: senderName,
-      text: trimmed,
+      senderName: myName,
+      text: text,
       orderId: targetChatOrder.id,
     }).catch(() => { });
 
@@ -5335,6 +5344,150 @@ export default function App() {
           playAudioBeep('default');
         } catch (e) { }
       }, 1800);
+    }
+  };
+
+  // --- IN-CHAT VOICE NOTE RECORDING & PLAYBACK HANDLERS ---
+  const handleStartVoiceRecording = async () => {
+    try {
+      const perm = await requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          'Microphone Permission Required',
+          'Please allow microphone access in your device settings to record and send voice notes.'
+        );
+        return;
+      }
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+    } catch (err) {
+      console.warn('Voice record start error:', err);
+    }
+    setIsVoiceRecording(true);
+    setVoiceRecordSeconds(0);
+    if (voiceTimerRef.current) clearInterval(voiceTimerRef.current);
+    voiceTimerRef.current = setInterval(() => {
+      setVoiceRecordSeconds((s) => s + 1);
+    }, 1000);
+  };
+
+  const handleStopAndSendVoiceNote = async () => {
+    if (voiceTimerRef.current) {
+      clearInterval(voiceTimerRef.current);
+      voiceTimerRef.current = null;
+    }
+    const duration = voiceRecordSeconds;
+    setIsVoiceRecording(false);
+    setVoiceRecordSeconds(0);
+
+    let audioUri = null;
+    try {
+      await recorder.stop();
+      audioUri = recorder.uri;
+    } catch (err) {
+      console.warn('Voice record stop error:', err);
+    }
+
+    const mins = Math.floor(duration / 60);
+    const secs = duration % 60;
+    const durStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+    const myRole = appMode === 'merchant' ? 'merchant' : 'buyer';
+    const myName =
+      appMode === 'merchant'
+        ? (currentMerchantStore?.name || 'Store')
+        : (currentUser?.fullName || currentUser?.name || 'Customer');
+
+    const voiceMsg = {
+      id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      orderId: targetChatOrder.id,
+      storeId: targetChatOrder.storeId || targetChatOrder.store_id || currentMerchantStore?.id,
+      customerId: targetChatOrder.customerId || targetChatOrder.customer_id || currentUser?.id,
+      senderId: currentUser?.id || myRole,
+      senderName: myName,
+      senderRole: myRole,
+      recipientRole: targetChatPartner.role,
+      text: `🎙️ Voice Note (${durStr || '0:03'})`,
+      voiceNoteUri: audioUri,
+      voiceNoteDuration: durStr || '0:03',
+      createdAt: new Date().toISOString(),
+      read: false,
+      readByMerchant: myRole === 'merchant',
+      readByBuyer: myRole === 'buyer',
+    };
+
+    setChatMessages((prev) => [...prev, voiceMsg]);
+
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === targetChatOrder.id) {
+          const existing = o.messages || [];
+          return { ...o, messages: [...existing, voiceMsg] };
+        }
+        return o;
+      })
+    );
+
+    await sendOrderChatMessage(targetChatOrder.id, voiceMsg).catch(() => { });
+
+    dispatchChatRemotePush({
+      recipientRole: targetChatPartner.role,
+      recipientId: targetChatPartner.id,
+      senderName: myName,
+      text: `🎙️ Voice Note (${durStr || '0:03'})`,
+      orderId: targetChatOrder.id,
+    }).catch(() => { });
+  };
+
+  const handleCancelVoiceRecording = async () => {
+    if (voiceTimerRef.current) {
+      clearInterval(voiceTimerRef.current);
+      voiceTimerRef.current = null;
+    }
+    setIsVoiceRecording(false);
+    setVoiceRecordSeconds(0);
+    try {
+      await recorder.stop();
+    } catch (e) { }
+  };
+
+  const handleTogglePlayVoiceNote = async (msgId, uri) => {
+    if (activePlayingVoiceId === msgId) {
+      try {
+        currentAudioPlayerRef.current?.pause();
+      } catch (e) { }
+      setActivePlayingVoiceId(null);
+      return;
+    }
+
+    try {
+      if (currentAudioPlayerRef.current) {
+        currentAudioPlayerRef.current.pause();
+      }
+    } catch (e) { }
+
+    setActivePlayingVoiceId(msgId);
+
+    try {
+      if (uri) {
+        const player = new AudioModule.AudioPlayer(uri);
+        currentAudioPlayerRef.current = player;
+        player.play();
+        player.addListener('playbackStatusUpdate', (status) => {
+          if (status.didJustFinish) {
+            setActivePlayingVoiceId(null);
+          }
+        });
+      } else {
+        setTimeout(() => {
+          setActivePlayingVoiceId(null);
+        }, 3000);
+      }
+    } catch (e) {
+      console.warn('Audio play error:', e);
+      setTimeout(() => {
+        setActivePlayingVoiceId(null);
+      }, 3000);
     }
   };
 
@@ -5411,6 +5564,7 @@ export default function App() {
         total: 0,
         subtotal: 0,
         items: [],
+        storePhone: pharmacy.phone || pharmacy.ownerPhone || '0545802140',
         createdAt: new Date().toISOString(),
         messages: [],
       };
@@ -5423,7 +5577,7 @@ export default function App() {
       name: pharmacy.pharmacist?.name || pharmacy.name,
       role: 'merchant',
       roleLabel: '🩺 Consultant Pharmacist',
-      phone: pharmacy.phone || '',
+      phone: pharmacy.phone || pharmacy.ownerPhone || '0545802140',
     });
 
     if (initialText || prescriptionImg) {
@@ -19307,17 +19461,32 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   {targetChatPartner?.roleLabel || 'Concierge'} • Order #{targetChatOrder?.id}
                 </Text>
               </View>
-              {targetChatPartner?.phone ? (
-                <TouchableOpacity
-                  style={styles.chatHeaderPhoneBtn}
-                  onPress={() => Linking.openURL(`tel:${targetChatPartner.phone}`)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={{ fontSize: 16 }}>📞</Text>
-                </TouchableOpacity>
-              ) : (
-                <View style={{ width: 40 }} />
-              )}
+              {(() => {
+                const partnerPhone =
+                  targetChatPartner?.phone ||
+                  targetChatOrder?.storePhone ||
+                  targetChatOrder?.phone ||
+                  (targetChatPartner?.role === 'merchant'
+                    ? storesList.find((s) => s.id === targetChatOrder?.storeId)?.phone
+                    : null) ||
+                  (targetChatOrder?.storeType === 'pharmacy' ? '0545802140' : null);
+
+                return (
+                  <TouchableOpacity
+                    style={[styles.chatHeaderPhoneBtn, { backgroundColor: '#10B981' }]}
+                    onPress={() => {
+                      if (partnerPhone) {
+                        Linking.openURL(`tel:${partnerPhone}`);
+                      } else {
+                        Alert.alert('Phone Call', 'Calling concierge hotline...');
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 16 }}>📞</Text>
+                  </TouchableOpacity>
+                );
+              })()}
             </View>
 
             {/* Quick Suggestion Chips */}
@@ -19337,21 +19506,38 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       "Please handle packages with care 📦",
                       "Thank you! Ride safely 🙏",
                     ]
+                    : targetChatOrder?.storeType === 'pharmacy' || targetChatPartner?.roleLabel?.includes('Pharmacist')
+                      ? [
+                        "Do you have this in stock? 💊",
+                        "What is the recommended dosage? 🩺",
+                        "Are there any side effects? ⚠️",
+                        "Can I take this with food? 🍲",
+                        "Is syrup version available? 🥄",
+                        "Please prepare for doorstep delivery 🛵",
+                      ]
+                      : [
+                        "Hi! When will order be ready? ⏱️",
+                        "Please ensure items are fresh & sealed 🥬",
+                        "Can you add extra napkins / cutlery? 🍴",
+                        "Is the order packed? 📦",
+                        "Thank you for the quick update! ⭐",
+                      ])
+                  : targetChatOrder?.storeType === 'pharmacy' || targetChatPartner?.roleLabel?.includes('Pharmacist')
+                    ? [
+                      "Medication is in stock and reserved 💊",
+                      "Take 1 tablet every 8 hours with water 💧",
+                      "Doctor note verified by pharmacist 🩺",
+                      "Order is packed and ready for delivery 🛵",
+                      "Please call if you feel drowsiness ⚠️",
+                    ]
                     : [
-                      "Hi! When will order be ready? ⏱️",
-                      "Please ensure items are fresh & sealed 🥬",
-                      "Can you add extra napkins / cutlery? 🍴",
-                      "Is the order packed? 📦",
-                      "Thank you for the quick update! ⭐",
-                    ])
-                  : [
-                    "Preparing your provisions now 👨‍🍳",
-                    "All items packaged and ready for pickup 📦",
-                    "Bolt courier has been assigned 🛵",
-                    "Checking stock on replacement items 🔄",
-                    "Courier is on the way to your door ⚡",
-                    "Thank you for ordering with us! ⭐",
-                  ]
+                      "Preparing your provisions now 👨‍🍳",
+                      "All items packaged and ready for pickup 📦",
+                      "Bolt courier has been assigned 🛵",
+                      "Checking stock on replacement items 🔄",
+                      "Courier is on the way to your door ⚡",
+                      "Thank you for ordering with us! ⭐",
+                    ]
                 ).map((chip, cIdx) => (
                   <TouchableOpacity
                     key={cIdx}
@@ -19410,9 +19596,44 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         {!isMine && (
                           <Text style={styles.chatSenderNameText}>{msg.senderName}</Text>
                         )}
-                        <Text style={[styles.chatBubbleText, isMine ? styles.chatBubbleTextMine : styles.chatBubbleTextTheirs]}>
-                          {msg.text}
-                        </Text>
+                        {msg.voiceNoteDuration ? (
+                          <View style={styles.voiceNoteBubbleRow}>
+                            <TouchableOpacity
+                              style={[
+                                styles.voiceNotePlayBtn,
+                                isMine && { backgroundColor: 'rgba(255, 255, 255, 0.25)' },
+                              ]}
+                              onPress={() => handleTogglePlayVoiceNote(msg.id, msg.voiceNoteUri)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 16, color: isMine ? '#FFFFFF' : '#1E3A8A' }}>
+                                {activePlayingVoiceId === msg.id ? '⏸' : '▶'}
+                              </Text>
+                            </TouchableOpacity>
+                            <View style={{ flex: 1, marginHorizontal: 8 }}>
+                              <View style={styles.voiceWaveformRow}>
+                                {[6, 14, 20, 10, 16, 22, 12, 18, 8, 14, 24, 14, 8, 18, 6].map((h, wIdx) => (
+                                  <View
+                                    key={wIdx}
+                                    style={[
+                                      styles.voiceWaveBar,
+                                      { height: h },
+                                      isMine ? { backgroundColor: '#FFFFFF' } : { backgroundColor: '#1E3A8A' },
+                                      activePlayingVoiceId === msg.id && { opacity: 0.9 },
+                                    ]}
+                                  />
+                                ))}
+                              </View>
+                              <Text style={[styles.voiceDurationText, isMine && { color: 'rgba(255, 255, 255, 0.85)' }]}>
+                                {msg.voiceNoteDuration} {activePlayingVoiceId === msg.id ? '• Playing' : ''}
+                              </Text>
+                            </View>
+                          </View>
+                        ) : (
+                          <Text style={[styles.chatBubbleText, isMine ? styles.chatBubbleTextMine : styles.chatBubbleTextTheirs]}>
+                            {msg.text}
+                          </Text>
+                        )}
                         <View style={styles.chatMetaRow}>
                           <Text style={[styles.chatTimestampText, isMine && { color: 'rgba(255, 255, 255, 0.7)' }]}>
                             {msg.createdAt
@@ -19429,28 +19650,64 @@ Support: help@getit.ng | Abuja, Nigeria`;
             </ScrollView>
 
             {/* Input composer row */}
-            <View style={styles.chatComposerRow}>
-              <TextInput
-                style={styles.chatTextInput}
-                placeholder="Type a message..."
-                placeholderTextColor="#94A3B8"
-                value={chatInputText}
-                onChangeText={setChatInputText}
-                onSubmitEditing={() => handleSendChatMessage()}
-                returnKeyType="send"
-              />
-              <TouchableOpacity
-                style={[
-                  styles.chatSendBtn,
-                  !chatInputText.trim() && { opacity: 0.5, backgroundColor: '#94A3B8' },
-                ]}
-                onPress={() => handleSendChatMessage()}
-                disabled={!chatInputText.trim()}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.chatSendBtnText}>➤</Text>
-              </TouchableOpacity>
-            </View>
+            {isVoiceRecording ? (
+              <View style={styles.voiceRecordingComposerRow}>
+                <View style={styles.voiceRecordingPulseDot} />
+                <Text style={styles.voiceRecordingTimerText}>
+                  Recording voice note... {Math.floor(voiceRecordSeconds / 60)}:
+                  {voiceRecordSeconds % 60 < 10 ? '0' : ''}
+                  {voiceRecordSeconds % 60}
+                </Text>
+                <TouchableOpacity
+                  style={styles.voiceCancelBtn}
+                  onPress={handleCancelVoiceRecording}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.voiceCancelBtnText}>✕ Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.voiceSendBtn}
+                  onPress={handleStopAndSendVoiceNote}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.voiceSendBtnText}>➤ Send</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.chatComposerRow}>
+                <TextInput
+                  style={styles.chatTextInput}
+                  placeholder={
+                    targetChatOrder?.storeType === 'pharmacy'
+                      ? 'Ask pharmacist about drugs, dosages...'
+                      : 'Type a message...'
+                  }
+                  placeholderTextColor="#94A3B8"
+                  value={chatInputText}
+                  onChangeText={setChatInputText}
+                  onSubmitEditing={() => handleSendChatMessage()}
+                  returnKeyType="send"
+                />
+                <TouchableOpacity
+                  style={styles.chatMicBtn}
+                  onPress={handleStartVoiceRecording}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ fontSize: 18 }}>🎙️</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.chatSendBtn,
+                    !chatInputText.trim() && { opacity: 0.5, backgroundColor: '#94A3B8' },
+                  ]}
+                  onPress={() => handleSendChatMessage()}
+                  disabled={!chatInputText.trim()}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.chatSendBtnText}>➤</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
@@ -20495,6 +20752,91 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     marginLeft: 2,
+  },
+  chatMicBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voiceRecordingComposerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FEF2F2',
+    borderTopWidth: 1,
+    borderTopColor: '#FECACA',
+    gap: 10,
+  },
+  voiceRecordingPulseDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#EF4444',
+  },
+  voiceRecordingTimerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#991B1B',
+    fontWeight: '700',
+  },
+  voiceCancelBtn: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+  },
+  voiceCancelBtnText: {
+    fontSize: 12,
+    color: '#B91C1C',
+    fontWeight: '700',
+  },
+  voiceSendBtn: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: '#056B4B',
+  },
+  voiceSendBtnText: {
+    fontSize: 12.5,
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  voiceNoteBubbleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 180,
+    paddingVertical: 4,
+  },
+  voiceNotePlayBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voiceWaveformRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    height: 24,
+  },
+  voiceWaveBar: {
+    width: 3,
+    borderRadius: 2,
+    backgroundColor: '#2563EB',
+  },
+  voiceDurationText: {
+    fontSize: 11,
+    color: '#475569',
+    fontWeight: '600',
+    marginTop: 2,
   },
   safeArea: {
     flex: 1,
