@@ -1080,6 +1080,21 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - 🛒 Default Selection to Grocery:
      * Added `useEffect` ensuring `authSellerStoreType` defaults to `'grocery'` every time the Auth modal opens.
 
+54. In-Store Prescription Upload & Pharmacist Consultation Architecture:
+   - 🧹 Cleaned Top Feed:
+     * Removed the global `pharmacyQuickActionsRow` banner from the top header of the Pharmacy vertical feed.
+   - 🏪 Placed Inside Each Individual Pharmacy Store:
+     * Moved both actions directly into the store detail view (`selectedStore`) for all pharmacy stores.
+     * When a shopper taps into any pharmacy (e.g., `Basit Pharm`), they now see:
+       - The On-Duty Pharmacist profile card (Name, PCN License, Clinical Credentials, and Live Status).
+       - **`[ 📷 Upload Prescription ]`**: "Send doctor's note to check stock & order" — directly bound to that specific store.
+       - **`[ 💬 Consult Pharmacist ]`**: "Chat live with on-duty pharmacist" — opens a direct consultation thread with that store's pharmacist.
+   - 📱 Complete Interactive Prescription Upload Modal:
+     * Built the full `<Modal visible={prescriptionModalVisible}>` with dispensary destination header.
+     * Supports camera snapshots and gallery image selection with preview and retake options.
+     * Includes doctor's note / symptoms textarea and patient contact number.
+     * Securely transmits to the selected pharmacy dispensary and automatically opens the consultation chat with the attached prescription note.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

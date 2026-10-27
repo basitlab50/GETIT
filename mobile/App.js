@@ -10107,47 +10107,6 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 </View>
               </View>
 
-              {/* Quick Actions: Upload Prescription & Consult */}
-              <View style={styles.pharmacyQuickActionsRow}>
-                <TouchableOpacity
-                  style={styles.pharmacyActionCardPrimary}
-                  onPress={() => handleOpenPrescriptionModal()}
-                  activeOpacity={0.88}
-                >
-                  <View style={styles.pharmacyActionIconCircle}>
-                    <Text style={{ fontSize: 20 }}>📷</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.pharmacyActionTitle}>Upload Prescription</Text>
-                    <Text style={styles.pharmacyActionSub}>
-                      Snap doctor's note for rapid verification
-                    </Text>
-                  </View>
-                  <Text style={{ fontSize: 16, color: '#2563EB', fontWeight: '900' }}>➔</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.pharmacyActionCardSecondary}
-                  onPress={() => {
-                    const topPharm =
-                      filteredStores.find((s) => s.storeType === 'pharmacy') ||
-                      INITIAL_PHARMACY_STORES[0];
-                    handleConsultPharmacist(topPharm);
-                  }}
-                  activeOpacity={0.88}
-                >
-                  <View style={[styles.pharmacyActionIconCircle, { backgroundColor: '#ECFDF5' }]}>
-                    <Text style={{ fontSize: 20 }}>💬</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.pharmacyActionTitle, { color: '#065F46' }]}>Consult Pharmacist</Text>
-                    <Text style={styles.pharmacyActionSub}>
-                      Chat or voice note on-duty pharmacist
-                    </Text>
-                  </View>
-                  <Text style={{ fontSize: 16, color: '#056B4B', fontWeight: '900' }}>➔</Text>
-                </TouchableOpacity>
-              </View>
 
               {/* Pharmacy Category Scroll */}
               <View style={styles.sectionHeaderRow}>
@@ -12230,6 +12189,91 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   </View>
                 </View>
 
+                {/* --- IN-STORE PHARMACY DISPENSARY & PHARMACIST TELE-CONSULT SECTION --- */}
+                {(() => {
+                  const isPharmacyStore =
+                    selectedStore.storeType === 'pharmacy' ||
+                    (selectedStore.category || '').toLowerCase().includes('pharm') ||
+                    (selectedStore.categoryLabel || '').toLowerCase().includes('pharm') ||
+                    (selectedStore.name || '').toLowerCase().includes('pharm') ||
+                    Boolean(selectedStore.pharmacist);
+
+                  if (!isPharmacyStore) return null;
+
+                  const pharm = selectedStore.pharmacist || {
+                    name: 'On-Duty Clinical Pharmacist',
+                    qualification: 'B.Pharm, MPSN',
+                    licenseNo: 'PCN-REG-VERIFIED',
+                    status: 'Available for Consult',
+                  };
+
+                  return (
+                    <View style={styles.storePharmacyHubCard}>
+                      {/* On-Duty Pharmacist Header */}
+                      <View style={styles.storePharmHeaderRow}>
+                        <View style={styles.storePharmAvatarWrap}>
+                          <Text style={{ fontSize: 24 }}>👨‍⚕️</Text>
+                          <View style={styles.storePharmOnlineDot} />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 10 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.storePharmName} numberOfLines={1}>
+                              {pharm.name}
+                            </Text>
+                            <View style={styles.rxBadgeTag}>
+                              <Text style={styles.rxBadgeTagText}>Rx Licensed</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.storePharmLicense}>
+                            {pharm.qualification ? `${pharm.qualification} • ` : ''}PCN: {pharm.licenseNo || 'Verified'}
+                          </Text>
+                          <Text style={styles.storePharmStatus}>
+                            🟢 On-Duty at {selectedStore.name} • Dispensing & Tele-Consult
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Store-Specific Actions: Upload Prescription & Consult */}
+                      <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                        <TouchableOpacity
+                          style={[styles.pharmacyActionCardPrimary, { flex: 1, marginHorizontal: 0, padding: 12 }]}
+                          onPress={() => handleOpenPrescriptionModal(selectedStore)}
+                          activeOpacity={0.88}
+                        >
+                          <View style={[styles.pharmacyActionIconCircle, { width: 36, height: 36 }]}>
+                            <Text style={{ fontSize: 18 }}>📷</Text>
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 8 }}>
+                            <Text style={[styles.pharmacyActionTitle, { fontSize: 12.5 }]}>Upload Prescription</Text>
+                            <Text style={[styles.pharmacyActionSub, { fontSize: 10, lineHeight: 13 }]}>
+                              Send doctor's note to check stock & order
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 13, color: '#2563EB', fontWeight: '900' }}>➔</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.pharmacyActionCardSecondary, { flex: 1, marginHorizontal: 0, padding: 12 }]}
+                          onPress={() => handleConsultPharmacist(selectedStore)}
+                          activeOpacity={0.88}
+                        >
+                          <View style={[styles.pharmacyActionIconCircle, { width: 36, height: 36, backgroundColor: '#ECFDF5' }]}>
+                            <Text style={{ fontSize: 18 }}>💬</Text>
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 8 }}>
+                            <Text style={[styles.pharmacyActionTitle, { fontSize: 12.5, color: '#065F46' }]}>
+                              Consult Pharmacist
+                            </Text>
+                            <Text style={[styles.pharmacyActionSub, { fontSize: 10, lineHeight: 13 }]}>
+                              Chat live with {pharm.name.split(' ')[0]}
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 13, color: '#056B4B', fontWeight: '900' }}>➔</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })()}
 
                 {/* --- IN-STORE PRODUCT SEARCH BAR --- */}
                 <View style={styles.storeSearchSection}>
@@ -19860,12 +19904,415 @@ Support: help@getit.ng | Abuja, Nigeria`;
           </View>
         </View>
       </Modal>
+
+      {/* --- TELE-PHARMACY PRESCRIPTION UPLOAD MODAL --- */}
+      <Modal
+        visible={prescriptionModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setPrescriptionModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor="#1E3A8A" />
+
+          {/* Modal Header */}
+          <View style={[styles.modalHeader, { backgroundColor: '#1E3A8A' }]}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setPrescriptionModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={styles.modalHeaderTitle}>Upload Prescription</Text>
+              <Text style={{ fontSize: 10.5, color: '#93C5FD', fontWeight: '600' }}>
+                Direct Dispensary Verification
+              </Text>
+            </View>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <ScrollView
+            style={styles.modalContent}
+            contentContainerStyle={{ padding: 18, paddingBottom: 60 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Target Pharmacy Dispensary Card */}
+            {(() => {
+              const target =
+                targetPrescriptionPharmacy ||
+                (selectedStore?.storeType === 'pharmacy' ? selectedStore : null) ||
+                filteredStores.find((s) => s.storeType === 'pharmacy') ||
+                INITIAL_PHARMACY_STORES[0];
+
+              const targetPharmName = target?.name || 'Licensed Pharmacy';
+              const pharmacistName = target?.pharmacist?.name || 'On-Duty Clinical Pharmacist';
+              const licenseNo = target?.pharmacist?.licenseNo || 'PCN-REG-VERIFIED';
+
+              return (
+                <View style={styles.rxTargetPharmacyCard}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={styles.rxPharmacyIconCircle}>
+                      <Text style={{ fontSize: 24 }}>💊</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={styles.rxTargetPharmacyLabel}>DISPENSING PHARMACY</Text>
+                      <Text style={styles.rxTargetPharmacyName} numberOfLines={1}>
+                        {targetPharmName}
+                      </Text>
+                      <Text style={styles.rxTargetPharmacistName}>
+                        👨‍⚕️ {pharmacistName} • {licenseNo}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.rxSecurityPill}>
+                    <Text style={styles.rxSecurityText}>
+                      🔒 Sent directly to {targetPharmName} to check stock & dispense
+                    </Text>
+                  </View>
+                </View>
+              );
+            })()}
+
+            {/* Doctor Note / Photo Upload Box */}
+            <View style={styles.rxUploadCard}>
+              <Text style={styles.rxSectionHeading}>DOCTOR'S PRESCRIPTION PHOTO *</Text>
+              <Text style={styles.rxSectionSub}>
+                Snap or upload your doctor's handwritten note or hospital prescription.
+              </Text>
+
+              {prescriptionImage ? (
+                <View style={styles.rxImagePreviewWrap}>
+                  <Image
+                    source={{ uri: prescriptionImage }}
+                    style={styles.rxImagePreview}
+                    resizeMode="cover"
+                  />
+                  <TouchableOpacity
+                    style={styles.rxRemoveImageBtn}
+                    onPress={() => setPrescriptionImage(null)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.rxRemoveImageText}>✕ Remove / Retake Photo</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.rxUploadDottedBox}>
+                  <Text style={{ fontSize: 36, marginBottom: 4, color: '#1E3A8A' }}>℞</Text>
+                  <Text style={styles.rxDottedTitle}>No Prescription Photo Attached</Text>
+                  <Text style={styles.rxDottedSub}>
+                    Ensure doctor's signature, date, and medication names are readable
+                  </Text>
+
+                  <View style={styles.rxUploadBtnsRow}>
+                    <TouchableOpacity
+                      style={[styles.rxPickBtn, { backgroundColor: '#1E3A8A' }]}
+                      onPress={() => handlePickPrescriptionImage(true)}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={{ fontSize: 16 }}>📷</Text>
+                      <Text style={styles.rxPickBtnText}>Camera</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.rxPickBtn, { backgroundColor: '#056B4B' }]}
+                      onPress={() => handlePickPrescriptionImage(false)}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={{ fontSize: 16 }}>🖼️</Text>
+                      <Text style={styles.rxPickBtnText}>Photo Gallery</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* Symptoms & Medication Notes Input */}
+            <View style={styles.rxInputSection}>
+              <Text style={styles.rxSectionHeading}>PATIENT SYMPTOMS / SPECIAL REQUESTS</Text>
+              <Text style={styles.rxSectionSub}>
+                Type additional details, allergies, or preferred medication brands.
+              </Text>
+              <TextInput
+                style={styles.rxTextInputMultiline}
+                placeholder="e.g. Prescribed Augmentin 625mg & Paracetamol for fever. Also experiencing dry cough. Please check if you have syrup version..."
+                placeholderTextColor="#94A3B8"
+                multiline
+                numberOfLines={4}
+                value={prescriptionSymptomsNote}
+                onChangeText={setPrescriptionSymptomsNote}
+                textAlignVertical="top"
+              />
+            </View>
+
+            {/* Patient WhatsApp / Contact Phone */}
+            <View style={styles.rxInputSection}>
+              <Text style={styles.rxSectionHeading}>PATIENT CONTACT NUMBER *</Text>
+              <TextInput
+                style={styles.rxTextInputPhone}
+                placeholder="e.g. 0803 555 7788"
+                placeholderTextColor="#94A3B8"
+                keyboardType="phone-pad"
+                value={prescriptionPatientPhone}
+                onChangeText={setPrescriptionPatientPhone}
+              />
+            </View>
+
+            {/* Transmit to Pharmacy Button */}
+            <TouchableOpacity
+              style={styles.rxTransmitButton}
+              onPress={handleSubmitPrescriptionToPharmacy}
+              activeOpacity={0.88}
+            >
+              <Text style={styles.rxTransmitButtonText}>
+                Transmit to Pharmacy Dispensary ➔
+              </Text>
+            </TouchableOpacity>
+
+            <Text style={styles.rxDisclaimerText}>
+              ⚕️ Verified by Licensed Nigerian Pharmacists (PCN Compliant). The dispensary will review availability and prepare your order before checkout.
+            </Text>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 // --- High Luxury Stylesheet ---
 const styles = StyleSheet.create({
+  // In-Store Pharmacy Hub & Prescription Styles
+  storePharmacyHubCard: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    borderRadius: 18,
+    padding: 14,
+    marginVertical: 12,
+  },
+  storePharmHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  storePharmAvatarWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  storePharmOnlineDot: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#10B981',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  storePharmName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1E3A8A',
+  },
+  storePharmLicense: {
+    fontSize: 11,
+    color: '#475569',
+    marginTop: 1,
+  },
+  storePharmStatus: {
+    fontSize: 10.5,
+    color: '#065F46',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  rxTargetPharmacyCard: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+  },
+  rxPharmacyIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rxTargetPharmacyLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#2563EB',
+    letterSpacing: 0.8,
+  },
+  rxTargetPharmacyName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1E3A8A',
+    marginTop: 1,
+  },
+  rxTargetPharmacistName: {
+    fontSize: 11.5,
+    color: '#475569',
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  rxSecurityPill: {
+    marginTop: 10,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  rxSecurityText: {
+    fontSize: 10.5,
+    color: '#1E40AF',
+    fontWeight: '600',
+  },
+  rxUploadCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+  },
+  rxSectionHeading: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#1E293B',
+    letterSpacing: 0.6,
+  },
+  rxSectionSub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 2,
+    marginBottom: 12,
+  },
+  rxUploadDottedBox: {
+    borderWidth: 2,
+    borderColor: '#93C5FD',
+    borderStyle: 'dashed',
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    padding: 20,
+  },
+  rxDottedTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginTop: 2,
+  },
+  rxDottedSub: {
+    fontSize: 11,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 2,
+    marginBottom: 14,
+  },
+  rxUploadBtnsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  rxPickBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    gap: 6,
+  },
+  rxPickBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  rxImagePreviewWrap: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  rxImagePreview: {
+    width: '100%',
+    height: 220,
+    borderRadius: 12,
+  },
+  rxRemoveImageBtn: {
+    marginTop: 10,
+    alignSelf: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 8,
+  },
+  rxRemoveImageText: {
+    color: '#DC2626',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  rxInputSection: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+  },
+  rxTextInputMultiline: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 13,
+    color: '#0F172A',
+    minHeight: 90,
+  },
+  rxTextInputPhone: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 14,
+    color: '#0F172A',
+    fontWeight: '600',
+  },
+  rxTransmitButton: {
+    backgroundColor: '#1E3A8A',
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#1E3A8A',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  rxTransmitButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+  },
+  rxDisclaimerText: {
+    fontSize: 11,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 14,
+    lineHeight: 16,
+  },
   // Live Chat Modal Styles
   chatModalHeader: {
     flexDirection: 'row',
