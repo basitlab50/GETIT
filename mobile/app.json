@@ -2,29 +2,65 @@
   "expo": {
     "name": "GETIT Nigeria",
     "slug": "getit-nigeria",
+    "scheme": "getit",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "backgroundColor": "#008751"
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#056B4B"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "ng.getit.mobile"
+      "bundleIdentifier": "ng.getit.mobile",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "GETIT uses your location to show available provision stores in Abuja and deliver orders to your doorstep.",
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      }
     },
     "android": {
       "package": "ng.getit.mobile",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#008751"
-      }
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundColor": "#056B4B"
+      },
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-audio",
-      "expo-status-bar"
-    ]
+      "expo-status-bar",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#056B4B",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow GETIT to access your location to show stores and track delivery couriers in real time."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "getit-nigeria-app"
+      }
+    }
   }
 }

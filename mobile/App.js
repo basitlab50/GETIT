@@ -79,6 +79,12 @@ import {
   notifyItemRefunded,
   notifyNewChatMessage,
 } from './services/notificationService';
+import {
+  registerDevicePushToken,
+  dispatchMerchantNewOrderRemotePush,
+  dispatchCustomerStatusRemotePush,
+  dispatchChatRemotePush,
+} from './services/pushNotificationService';
 import { getProductImageSource, matchCatalogImageByName } from './assets/productImages';
 
 const { width } = Dimensions.get('window');
@@ -4521,6 +4527,16 @@ export default function App() {
             // 🔔 Delivery Push & Sound
             notifyOrderDelivered(targetOrder);
 
+            if (targetOrder?.customerId) {
+              dispatchCustomerStatusRemotePush({
+                customerId: targetOrder.customerId,
+                orderId,
+                title: '🎉 Order Delivered!',
+                body: `Your provisions order #${orderId} was delivered successfully. Enjoy!`,
+                status: 'Delivered',
+              }).catch(() => {});
+            }
+
             // Supabase cloud sync
             updateDatabaseOrderStatus(orderId, {
               status: 'Delivered',
@@ -4699,7 +4715,16 @@ export default function App() {
 
   // Register push notifications & subscribe to in-app audio toasts
   useEffect(() => {
-    registerForPushNotificationsAsync();
+    registerForPushNotificationsAsync().then((token) => {
+      if (token) {
+        registerDevicePushToken({
+          userId: currentUser?.id,
+          role: appMode,
+          storeId: currentMerchantStore?.id,
+          pushToken: token,
+        });
+      }
+    });
 
     const unsubscribe = subscribeToInAppNotifications((notif) => {
       const targetAudience = notif.data?.audience;
@@ -4767,6 +4792,20 @@ export default function App() {
 
     return unsubscribe;
   }, []);
+
+  // Synchronize Push Token with Supabase when active user/mode/store changes
+  useEffect(() => {
+    AsyncStorage.getItem('getit_push_token').then((token) => {
+      if (token) {
+        registerDevicePushToken({
+          userId: currentUser?.id,
+          role: appMode,
+          storeId: currentMerchantStore?.id,
+          pushToken: token,
+        });
+      }
+    });
+  }, [currentUser?.id, appMode, currentMerchantStore?.id]);
 
   // --- 1-MINUTE MERCHANT RECURRING REMINDER ENGINE (ACCEPTANCE & PREPARATION) ---
   const lastMerchantReminderRef = useRef({});
@@ -5172,6 +5211,15 @@ export default function App() {
     // Send through supabase & WebSocket broadcast
     await sendOrderChatMessage(targetChatOrder.id, newMsg);
 
+    // 🔔 Remote Push Notification to Recipient Device
+    dispatchChatRemotePush({
+      recipientRole: targetChatPartner.role,
+      recipientId: targetChatPartner.id,
+      senderName: senderName,
+      text: trimmed,
+      orderId: targetChatOrder.id,
+    }).catch(() => {});
+
     // Increment unread count for recipient in unreadChatMap & AsyncStorage
     setUnreadChatMap((prev) => {
       const key = `${targetChatOrder.id}_${myRole}`;
@@ -5494,6 +5542,13 @@ export default function App() {
       vendorPayout: stops.reduce((s, st) => s + st.vendorPayout, 0),
       pickupPin: stops[0]?.pickupPin,
     }).catch((e) => console.log('Supabase order upload notice:', e?.message));
+
+    // 🔔 Real-Time Remote Push to Store Merchant Device
+    dispatchMerchantNewOrderRemotePush({
+      ...masterOrder,
+      storeId: stops[0]?.storeId || masterOrder.storeId,
+      storeName: stops[0]?.storeName || masterOrder.storeName,
+    }).catch(() => {});
   };
 
   // Merchant Helper Computations & Actions
@@ -6093,6 +6148,18 @@ Support: help@getit.ng | Abuja, Nigeria`;
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
       journeyAlert: alertToSend,
     }).catch(() => {});
+
+    // Remote push to customer device
+    const targetOrder = orders.find((o) => o.id === orderId);
+    if (targetOrder?.customerId) {
+      dispatchCustomerStatusRemotePush({
+        customerId: targetOrder.customerId,
+        orderId,
+        title: '🍳 Order Accepted!',
+        body: `${storeAcceptedName} has accepted your order and started preparing.`,
+        status: 'Preparing',
+      }).catch(() => {});
+    }
   };
 
   const dispatchBoltCourier = (orderId) => {

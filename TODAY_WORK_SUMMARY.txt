@@ -955,6 +955,27 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Streamlined the buyer order card UI on `All` and `Delivered` tabs so instead of showing three fragmented buttons (`View Receipt`, `Share`, `Download`), customers now see one clean, prominent button: **`[ 🧾 View Receipt ]`**.
      * When tapped, it presents the complete Classy GETIT Visual Digital Receipt Modal where customers can both share to WhatsApp/SMS and download the official PDF receipt in one tap.
 
+45. Real-Time Device-to-Device Push Notification Engine:
+   - 🔔 Created `mobile/services/pushNotificationService.js`:
+     * Device token registration with Supabase (`getit_push_tokens`) and local AsyncStorage fallback.
+     * High-reliability Expo Push API relay (`https://exp.host/--/api/v2/push/send`) reaching locked devices over APNs (iOS) and FCM (Android).
+   - ⚡ Targeted Device Dispatches:
+     * **Store Merchant Alert**: On checkout, `dispatchMerchantNewOrderRemotePush` wakes up the merchant's physical phone with max-priority sound, light, and banner (`merchant_orders` channel).
+     * **Customer Status Updates**: When store accepts (`Preparing`) or courier finishes handover (`Delivered`), `dispatchCustomerStatusRemotePush` alerts the buyer's phone.
+     * **Live Order Chat Remote Push**: `dispatchChatRemotePush` alerts the recipient device when store or customer sends a message.
+
+46. Production EAS Build & App Store / Google Play Setup:
+   - 📱 Created `mobile/eas.json`:
+     * `preview`: Generates a standalone, directly-installable Android `.apk` file for rapid physical device testing without Google Play Console.
+     * `production`: Configured for Google Play Store Android App Bundle (`app-bundle` / AAB) with auto-incrementing version codes and Apple App Store / TestFlight iOS IPA builds.
+     * `development`: Configured for custom Expo Dev Client.
+   - ⚙️ Upgraded `mobile/app.json`:
+     * Added `expo-notifications` plugin with custom emerald icon and theme colors.
+     * Added `expo-location` plugin with GPS permission descriptions for store locator and courier tracking.
+     * Configured Android native permissions (`RECEIVE_BOOT_COMPLETED`, `VIBRATE`, `ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION`).
+     * Configured iOS `infoPlist` (`UIBackgroundModes: ["remote-notification"]`).
+     * Fixed package & bundle identifiers to `ng.getit.mobile`.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
