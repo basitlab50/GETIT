@@ -30,7 +30,14 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Notifications from 'expo-notifications';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, AudioModule } from 'expo-audio';
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  createAudioPlayer,
+  setAudioModeAsync,
+  AudioModule,
+} from 'expo-audio';
 import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
 import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
 import { REAL_ROAD_LEGS, REAL_ROAD_POINTS, REAL_ROAD_WAYPOINTS } from './realRoadRouteData';
@@ -5371,6 +5378,10 @@ export default function App() {
         );
         return;
       }
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      }).catch(() => {});
       await recorder.prepareToRecordAsync();
       recorder.record();
     } catch (err) {
@@ -5483,11 +5494,21 @@ export default function App() {
 
     try {
       if (uri) {
-        const player = new AudioModule.AudioPlayer(uri);
+        // Guarantee playback output through loudspeaker and in silent mode
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+          allowsRecording: false,
+        }).catch(() => {});
+
+        const player = createAudioPlayer(uri);
         currentAudioPlayerRef.current = player;
         player.play();
         player.addListener('playbackStatusUpdate', (status) => {
-          if (status.didJustFinish) {
+          if (
+            status.didJustFinish ||
+            (!status.playing && status.currentTime > 0 && status.duration > 0 && status.currentTime >= (status.duration - 0.2))
+          ) {
             setActivePlayingVoiceId(null);
           }
         });
@@ -19925,7 +19946,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
             <ScrollView
               ref={chatScrollRef}
               style={styles.chatMessagesScroll}
-              contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
+              contentContainerStyle={{ padding: 16, paddingBottom: 24, width: '100%' }}
               onContentSizeChange={() => chatScrollRef.current?.scrollToEnd({ animated: true })}
             >
               {chatMessages.length === 0 ? (
@@ -19939,8 +19960,9 @@ Support: help@getit.ng | Abuja, Nigeria`;
               ) : (
                 chatMessages.map((msg, mIdx) => {
                   const isMine =
-                    (appMode === 'merchant' && msg.senderRole === 'merchant') ||
-                    (appMode === 'customer' && msg.senderRole === 'buyer');
+                    (appMode === 'merchant' && (msg.senderRole === 'merchant' || msg.senderRole === 'seller')) ||
+                    (appMode === 'customer' && (msg.senderRole === 'buyer' || msg.senderRole === 'customer' || msg.senderRole === 'patient')) ||
+                    (!msg.senderRole && msg.senderId && currentUser?.id && String(msg.senderId) === String(currentUser.id));
 
                   return (
                     <View
@@ -21377,12 +21399,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     marginVertical: 4,
+    width: '100%',
   },
   chatBubbleRowMine: {
     justifyContent: 'flex-end',
+    alignSelf: 'flex-end',
   },
   chatBubbleRowTheirs: {
     justifyContent: 'flex-start',
+    alignSelf: 'flex-start',
   },
   chatSenderAvatarCircle: {
     width: 28,
@@ -21405,12 +21430,16 @@ const styles = StyleSheet.create({
   chatBubbleMine: {
     backgroundColor: '#056B4B',
     borderBottomRightRadius: 4,
+    alignSelf: 'flex-end',
+    marginLeft: 36,
   },
   chatBubbleTheirs: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderBottomLeftRadius: 4,
+    alignSelf: 'flex-start',
+    marginRight: 36,
   },
   chatSenderNameText: {
     fontSize: 11,

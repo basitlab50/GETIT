@@ -1151,6 +1151,16 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Fix: Declared `const handleOpenChatModal = openChatModal;` and updated the card's `onPress` to call `openChatModal(c, 'buyer')`.
      * Tapping on any patient consultation row now smoothly opens the chat modal with the full consultation history, prescription notes, and patient details without error.
 
+59. Fix Chat Bubble Left/Right Alignment & Restore Voice Note Sound Playback:
+   - 💬 Chat Bubble Left/Right Positioning:
+     * Root Cause: `chatBubbleRow` lacked `width: '100%'` in the message ScrollView. As a result, rows collapsed to the bubble's intrinsic width, rendering `justifyContent: 'flex-end'` ineffective and making all messages stack along the left edge.
+     * Fix: Applied `width: '100%'` to `chatBubbleRow` and the ScrollView `contentContainerStyle`, added `alignSelf: 'flex-end'` and `marginLeft: 36` to `chatBubbleMine`, and `alignSelf: 'flex-start'` and `marginRight: 36` to `chatBubbleTheirs`.
+     * Upgraded `isMine` role matching to reliably differentiate merchant/seller vs. buyer/customer/patient.
+     * Sent messages now firmly pin to the RIGHT (green bubbles), while partner messages pin to the LEFT (white bubbles with avatars).
+   - 🔊 Voice Note Audio Playback (`expo-audio`):
+     * Root Cause: Playback used `new AudioModule.AudioPlayer(uri)` directly which failed to resolve local recording file URIs, and audio routing remained in recording mode rather than speaker playback.
+     * Fix: Integrated `createAudioPlayer(uri)` and invoked `await setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true, allowsRecording: false })` before playing, ensuring loud output through the device speaker even in silent mode.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
