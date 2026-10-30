@@ -1351,7 +1351,7 @@ export async function getStoreReviews(storeId) {
 // Sub-50ms peer delivery via WebSocket + Supabase bolt_rider.messages sync
 // =========================================================================
 
-export async function sendOrderChatMessage(orderId, message) {
+export async function sendOrderChatMessage(orderId, message, orderData = null) {
   try {
     // 1. Retrieve local cached messages
     let existingMessages = [];
@@ -1373,6 +1373,7 @@ export async function sendOrderChatMessage(orderId, message) {
     broadcastLiveEvent('CHAT_MESSAGE', {
       orderId,
       message,
+      order: orderData,
     });
 
     // 4. Persist to Supabase orders.bolt_rider.messages

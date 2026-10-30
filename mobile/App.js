@@ -3275,11 +3275,24 @@ export default function App() {
       } else if (event.eventType === 'CHAT_MESSAGE') {
         const payload = event.payload || event;
         const { orderId, message } = payload;
+        const incomingOrder = payload.order;
         if (orderId && message) {
           const myMode = appModeRef.current;
           const isAddressedToMe =
             (myMode === 'customer' && message.recipientRole === 'buyer') ||
             (myMode === 'merchant' && message.recipientRole === 'merchant');
+
+          // Always cache message to AsyncStorage
+          try {
+            getOrderChatMessages(orderId).then((existing) => {
+              if (!existing.some((m) => m.id === message.id)) {
+                AsyncStorage.setItem(
+                  `getit_chat_messages_${orderId}`,
+                  JSON.stringify([...existing, message])
+                );
+              }
+            });
+          } catch (e) {}
 
           if (chatModalVisibleRef.current && targetChatOrderIdRef.current === orderId) {
             setChatMessages((prev) => {
@@ -3299,12 +3312,15 @@ export default function App() {
               });
 
               const allOrders = [...(ordersRef.current || []), ...(merchantOrdersRef.current || [])];
-              const targetOrd = allOrders.find((o) => o.id === orderId) || {
+              const targetOrd = allOrders.find((o) => o.id === orderId) || incomingOrder || {
                 id: orderId,
                 storeId: message.storeId,
                 customerId: message.customerId,
                 storeName: message.storeName || (message.senderRole === 'merchant' ? message.senderName : 'Store'),
                 customerName: message.customerName || (message.senderRole === 'buyer' ? message.senderName : 'Customer'),
+                customerPhone: message.customerPhone || '',
+                status: 'Consultation',
+                storeType: 'pharmacy',
               };
 
               try {
@@ -3321,16 +3337,45 @@ export default function App() {
             }
           }
 
-          updateAndPersistOrders((prev) =>
-            prev.map((o) => {
-              if (o.id === orderId) {
-                const existing = o.messages || [];
-                if (existing.some((m) => m.id === message.id)) return o;
-                return { ...o, messages: [...existing, message] };
-              }
-              return o;
-            })
-          );
+          updateAndPersistOrders((prev) => {
+            const exists = prev.some((o) => o.id === orderId);
+            if (exists) {
+              return prev.map((o) => {
+                if (o.id === orderId) {
+                  const existing = o.messages || [];
+                  if (existing.some((m) => m.id === message.id)) return o;
+                  return { ...o, messages: [...existing, message] };
+                }
+                return o;
+              });
+            } else {
+              // Auto-construct and attach conversation order entry on recipient's device
+              const newEntry = incomingOrder
+                ? {
+                    ...incomingOrder,
+                    messages: incomingOrder.messages?.some((m) => m.id === message.id)
+                      ? incomingOrder.messages
+                      : [...(incomingOrder.messages || []), message],
+                  }
+                : {
+                    id: orderId,
+                    status: 'Consultation',
+                    storeId: message.storeId || currentMerchantStoreRef.current?.id,
+                    storeName: message.storeName || currentMerchantStoreRef.current?.name || 'Pharmacy',
+                    storeType: 'pharmacy',
+                    customerId: message.customerId,
+                    customerName: message.customerName || (message.senderRole === 'buyer' ? message.senderName : 'Patient'),
+                    customerPhone: message.customerPhone || '',
+                    createdAt: message.createdAt || new Date().toISOString(),
+                    isPrescriptionOrder: true,
+                    prescriptionImage: message.prescriptionImage || null,
+                    items: [],
+                    total: 0,
+                    messages: [message],
+                  };
+              return [newEntry, ...prev];
+            }
+          });
         }
       } else if (event.eventType === 'ORDER_UPDATE') {
         const payload = event.payload || event;
@@ -5162,17 +5207,27 @@ export default function App() {
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response?.notification?.request?.content?.data;
       if (data?.type === 'chat' && data?.orderId) {
-        const targetOrd = ordersRef.current?.find((o) => o.id === data.orderId);
-        if (targetOrd) {
-          openChatModal(
-            targetOrd,
-            data.senderRole === 'merchant'
-              ? 'merchant'
-              : data.senderRole === 'courier'
-                ? 'courier'
-                : 'buyer'
-          );
+        const allOrders = [...(ordersRef.current || []), ...(merchantOrdersRef.current || [])];
+        let targetOrd = allOrders.find((o) => o.id === data.orderId);
+        if (!targetOrd) {
+          targetOrd = {
+            id: data.orderId,
+            storeId: data.storeId || currentMerchantStoreRef.current?.id,
+            customerId: data.customerId,
+            customerName: data.senderRole === 'buyer' ? (data.senderName || 'Patient') : 'Customer',
+            storeName: data.senderRole === 'merchant' ? (data.senderName || 'Store') : 'Store',
+            status: 'Consultation',
+            storeType: 'pharmacy',
+          };
         }
+        openChatModal(
+          targetOrd,
+          data.senderRole === 'merchant'
+            ? 'merchant'
+            : data.senderRole === 'courier'
+              ? 'courier'
+              : 'buyer'
+        );
       }
     });
     return () => subscription.remove();
@@ -5270,7 +5325,10 @@ export default function App() {
       id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       orderId: targetChatOrder.id,
       storeId: targetChatOrder.storeId || targetChatOrder.store_id || currentMerchantStore?.id,
+      storeName: targetChatOrder.storeName || currentMerchantStore?.name || 'Store',
       customerId: targetChatOrder.customerId || targetChatOrder.customer_id || currentUser?.id,
+      customerName: targetChatOrder.customerName || (myRole === 'buyer' ? myName : 'Customer'),
+      customerPhone: targetChatOrder.customerPhone || (myRole === 'buyer' ? currentUser?.phone : '') || '',
       senderId: currentUser?.id || myRole,
       senderName: myName,
       senderRole: myRole,
@@ -5301,8 +5359,8 @@ export default function App() {
       }
     });
 
-    // Send through supabase & WebSocket broadcast
-    await sendOrderChatMessage(targetChatOrder.id, newMsg);
+    // Send through supabase & WebSocket broadcast with full order context
+    await sendOrderChatMessage(targetChatOrder.id, newMsg, targetChatOrder);
 
     // 🔔 Remote Push Notification to Recipient Device
     dispatchChatRemotePush({
@@ -5426,7 +5484,10 @@ export default function App() {
       id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       orderId: targetChatOrder.id,
       storeId: targetChatOrder.storeId || targetChatOrder.store_id || currentMerchantStore?.id,
+      storeName: targetChatOrder.storeName || currentMerchantStore?.name || 'Store',
       customerId: targetChatOrder.customerId || targetChatOrder.customer_id || currentUser?.id,
+      customerName: targetChatOrder.customerName || (myRole === 'buyer' ? myName : 'Customer'),
+      customerPhone: targetChatOrder.customerPhone || (myRole === 'buyer' ? currentUser?.phone : '') || '',
       senderId: currentUser?.id || myRole,
       senderName: myName,
       senderRole: myRole,
@@ -5452,7 +5513,7 @@ export default function App() {
       })
     );
 
-    await sendOrderChatMessage(targetChatOrder.id, voiceMsg).catch(() => { });
+    await sendOrderChatMessage(targetChatOrder.id, voiceMsg, targetChatOrder).catch(() => { });
 
     dispatchChatRemotePush({
       recipientRole: targetChatPartner.role,
@@ -5619,7 +5680,10 @@ export default function App() {
           id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
           orderId: targetChatOrder.id,
           storeId: targetChatOrder.storeId || currentMerchantStore?.id,
+          storeName: targetChatOrder.storeName || currentMerchantStore?.name || 'Store',
           customerId: targetChatOrder.customerId || currentUser?.id,
+          customerName: targetChatOrder.customerName || (myRole === 'buyer' ? myName : 'Customer'),
+          customerPhone: targetChatOrder.customerPhone || (myRole === 'buyer' ? currentUser?.phone : '') || '',
           senderId: currentUser?.id || myRole,
           senderName: myName,
           senderRole: myRole,
@@ -5649,7 +5713,7 @@ export default function App() {
           }
         });
 
-        await sendOrderChatMessage(targetChatOrder.id, newPhotoMsg).catch(() => {});
+        await sendOrderChatMessage(targetChatOrder.id, newPhotoMsg, targetChatOrder).catch(() => {});
 
         dispatchChatRemotePush({
           recipientRole: targetChatPartner.role,
@@ -5698,6 +5762,10 @@ export default function App() {
         messages: [],
       };
       updateAndPersistOrders((prev) => [targetOrd, ...prev.filter((o) => o.id !== consultId)]);
+
+      // Broadcast order insert so pharmacy's device immediately receives the consultation order
+      broadcastLiveEvent('ORDER_INSERT', { order: targetOrd });
+      createDatabaseOrder(targetOrd).catch(() => {});
     }
 
     setTargetChatOrder(targetOrd);
@@ -5717,7 +5785,10 @@ export default function App() {
         id: `msg-${Date.now()}`,
         orderId: consultId,
         storeId: pharmacy.id,
+        storeName: pharmacy.name,
         customerId: currentUser?.id,
+        customerName: currentUser?.fullName || currentUser?.name || 'Patient',
+        customerPhone: currentUser?.phone || '',
         senderRole: 'buyer',
         senderName: currentUser?.fullName || currentUser?.name || 'Patient',
         text: initialText || '📷 Attached Doctor Prescription Note for pharmacist review.',
@@ -5744,7 +5815,7 @@ export default function App() {
         )
       );
 
-      await sendOrderChatMessage(consultId, initMsg).catch(() => {});
+      await sendOrderChatMessage(consultId, initMsg, targetOrd).catch(() => {});
       dispatchChatRemotePush({
         recipientRole: 'merchant',
         recipientId: pharmacy.id,
@@ -5886,7 +5957,10 @@ export default function App() {
       id: `rx-bill-msg-${Date.now()}`,
       orderId: targetChatOrder.id,
       storeId: targetChatOrder.storeId,
+      storeName: targetChatOrder.storeName || currentMerchantStore?.name || 'Pharmacy',
       customerId: targetChatOrder.customerId,
+      customerName: targetChatOrder.customerName || 'Patient',
+      customerPhone: targetChatOrder.customerPhone || '',
       senderRole: 'merchant',
       senderName: currentMerchantStore?.name || 'Pharmacist',
       text: `📋 Official Prescription & Medication Invoice (${selectedPrescribeItems.length} items • ₦${total.toLocaleString()})`,
@@ -5899,7 +5973,7 @@ export default function App() {
     setChatMessages((prev) => [...prev, newMsg]);
     setPrescribeMedicationModalVisible(false);
 
-    await sendOrderChatMessage(targetChatOrder.id, newMsg);
+    await sendOrderChatMessage(targetChatOrder.id, newMsg, targetChatOrder);
 
     dispatchChatRemotePush({
       recipientRole: 'buyer',
@@ -6402,11 +6476,11 @@ export default function App() {
   }, [merchantOrders]);
 
   const pharmacyConsultations = useMemo(() => {
-    return orders.filter((o) => {
+    const filtered = orders.filter((o) => {
       const isMyStore =
-        (currentMerchantStore &&
-          (o.storeId === currentMerchantStore.id ||
-            (o.storeName && currentMerchantStore.name && o.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()))) ||
+        !currentMerchantStore ||
+        (o.storeId && currentMerchantStore.id && String(o.storeId) === String(currentMerchantStore.id)) ||
+        (o.storeName && currentMerchantStore.name && o.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()) ||
         o.storeType === 'pharmacy' ||
         (o.id && String(o.id).startsWith('RX-'));
       const hasChat =
@@ -6415,6 +6489,12 @@ export default function App() {
         o.isPrescriptionOrder ||
         Boolean(o.prescriptionImage);
       return isMyStore && hasChat;
+    });
+
+    return filtered.sort((a, b) => {
+      const timeA = new Date(a.messages?.[a.messages.length - 1]?.createdAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.messages?.[b.messages.length - 1]?.createdAt || b.createdAt || 0).getTime();
+      return timeB - timeA;
     });
   }, [orders, currentMerchantStore]);
 

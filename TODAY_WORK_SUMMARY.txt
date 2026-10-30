@@ -1161,6 +1161,17 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Root Cause: Playback used `new AudioModule.AudioPlayer(uri)` directly which failed to resolve local recording file URIs, and audio routing remained in recording mode rather than speaker playback.
      * Fix: Integrated `createAudioPlayer(uri)` and invoked `await setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true, allowsRecording: false })` before playing, ensuring loud output through the device speaker even in silent mode.
 
+60. Real-Time Synchronization for Patient Consultation & Store Chat Messages:
+   - 🩺 Patient Consultation Propagation to Store Side:
+     * Root Cause: When a buyer initiated a consultation (`RX-...`), the order was initialized locally in the buyer's state and a `CHAT_MESSAGE` broadcast was sent. However, the store device's `orders` array did not yet contain the newly generated `RX-...` order ID. When the message arrived, `updateAndPersistOrders` used `.map((o) => ...)` which ignored orders not already in the array. Thus, `pharmacyConsultations` remained empty ("No Active Messages Yet") even though the notification chime had fired on the merchant's device.
+     * Fix:
+       1. Updated `sendOrderChatMessage` in `mobile/services/supabaseService.js` to broadcast the complete `order` object alongside the message.
+       2. Updated the `CHAT_MESSAGE` live sync listener in `mobile/App.js` to auto-construct and prepend missing consultation orders into `orders` if not present, ensuring the patient's consultation card appears instantly in the store owner's `💬 Messages` tab.
+       3. In `handleConsultPharmacist`, added `broadcastLiveEvent('ORDER_INSERT', { order: targetOrd })` and `createDatabaseOrder(targetOrd)` to guarantee immediate cross-device propagation.
+       4. Included `storeName`, `customerName`, and `customerPhone` across `handleSendChatMessage`, `handleStopAndSendVoiceNote`, `handleSendChatPhoto`, and `handleSendPrescriptionBill`.
+       5. Updated `addNotificationResponseReceivedListener` so tapping a chat notification immediately opens the chat modal even if the order was just generated.
+       6. Sorted `pharmacyConsultations` by newest message/consultation timestamp first.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
