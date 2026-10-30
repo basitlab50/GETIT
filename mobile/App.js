@@ -94,6 +94,7 @@ import {
   dispatchChatRemotePush,
 } from './services/pushNotificationService';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import {
   INITIAL_PHARMACY_STORES,
   PHARMACY_CATEGORIES,
@@ -3282,6 +3283,18 @@ export default function App() {
             (myMode === 'customer' && message.recipientRole === 'buyer') ||
             (myMode === 'merchant' && message.recipientRole === 'merchant');
 
+          // If incoming message contains voiceNoteBase64, persist to local device cache immediately
+          if (message.voiceNoteBase64) {
+            try {
+              const localCacheFile = `${FileSystem.cacheDirectory || ''}voice_${message.id}.m4a`;
+              FileSystem.writeAsStringAsync(localCacheFile, message.voiceNoteBase64, {
+                encoding: FileSystem.EncodingType.Base64,
+              }).then(() => {
+                message.voiceNoteUri = localCacheFile;
+              }).catch(() => {});
+            } catch (e) {}
+          }
+
           // Always cache message to AsyncStorage
           try {
             getOrderChatMessages(orderId).then((existing) => {
@@ -5463,9 +5476,19 @@ export default function App() {
     setVoiceRecordSeconds(0);
 
     let audioUri = null;
+    let audioBase64 = null;
     try {
       await recorder.stop();
       audioUri = recorder.uri;
+      if (audioUri) {
+        try {
+          audioBase64 = await FileSystem.readAsStringAsync(audioUri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+        } catch (b64Err) {
+          console.warn('Voice base64 encoding error:', b64Err);
+        }
+      }
     } catch (err) {
       console.warn('Voice record stop error:', err);
     }
@@ -5494,6 +5517,7 @@ export default function App() {
       recipientRole: targetChatPartner.role,
       text: `🎙️ Voice Note (${durStr || '0:03'})`,
       voiceNoteUri: audioUri,
+      voiceNoteBase64: audioBase64,
       voiceNoteDuration: durStr || '0:03',
       createdAt: new Date().toISOString(),
       read: false,
@@ -5536,7 +5560,7 @@ export default function App() {
     } catch (e) { }
   };
 
-  const handleTogglePlayVoiceNote = async (msgId, uri) => {
+  const handleTogglePlayVoiceNote = async (msgId, uri, base64Data = null) => {
     if (activePlayingVoiceId === msgId) {
       try {
         currentAudioPlayerRef.current?.pause();
@@ -5554,7 +5578,33 @@ export default function App() {
     setActivePlayingVoiceId(msgId);
 
     try {
-      if (uri) {
+      let playableUri = uri;
+      let uriExists = false;
+
+      if (playableUri) {
+        try {
+          const check = await FileSystem.getInfoAsync(playableUri);
+          uriExists = Boolean(check?.exists);
+        } catch (e) {
+          uriExists = false;
+        }
+      }
+
+      // If URI doesn't exist on this device (e.g. sender's private path), unpack base64 to local cache!
+      if (!uriExists && base64Data) {
+        try {
+          const targetCachePath = `${FileSystem.cacheDirectory || ''}voice_${msgId}.m4a`;
+          await FileSystem.writeAsStringAsync(targetCachePath, base64Data, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          playableUri = targetCachePath;
+          uriExists = true;
+        } catch (cacheErr) {
+          console.warn('Failed to unpack voice base64 to local file:', cacheErr);
+        }
+      }
+
+      if (playableUri && uriExists) {
         // Guarantee playback output through loudspeaker and in silent mode
         await setAudioModeAsync({
           playsInSilentMode: true,
@@ -5562,7 +5612,7 @@ export default function App() {
           allowsRecording: false,
         }).catch(() => {});
 
-        const player = createAudioPlayer(uri);
+        const player = createAudioPlayer(playableUri);
         currentAudioPlayerRef.current = player;
         player.play();
         player.addListener('playbackStatusUpdate', (status) => {
@@ -5614,7 +5664,8 @@ export default function App() {
         result = await ImagePicker.launchCameraAsync({
           mediaTypes: ImagePicker.MediaTypeOptions.Images,
           allowsEditing: true,
-          quality: 0.85,
+          quality: 0.5,
+          base64: true,
         });
       } else {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -5628,12 +5679,26 @@ export default function App() {
         result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ImagePicker.MediaTypeOptions.Images,
           allowsEditing: true,
-          quality: 0.85,
+          quality: 0.5,
+          base64: true,
         });
       }
 
-      if (!result.canceled && result.assets && result.assets[0]?.uri) {
-        setPrescriptionImage(result.assets[0].uri);
+      if (!result.canceled && result.assets && result.assets[0]) {
+        let photoUri = result.assets[0].base64
+          ? `data:image/jpeg;base64,${result.assets[0].base64}`
+          : result.assets[0].uri;
+        if (!result.assets[0].base64 && result.assets[0].uri) {
+          try {
+            const b64 = await FileSystem.readAsStringAsync(result.assets[0].uri, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            photoUri = `data:image/jpeg;base64,${b64}`;
+          } catch (e) {
+            photoUri = result.assets[0].uri;
+          }
+        }
+        setPrescriptionImage(photoUri);
       }
     } catch (err) {
       console.warn('Prescription image picker error:', err?.message);
@@ -5653,7 +5718,8 @@ export default function App() {
         result = await ImagePicker.launchCameraAsync({
           mediaTypes: ImagePicker.MediaTypeOptions.Images,
           allowsEditing: true,
-          quality: 0.85,
+          quality: 0.5,
+          base64: true,
         });
       } else {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -5664,12 +5730,25 @@ export default function App() {
         result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ImagePicker.MediaTypeOptions.Images,
           allowsEditing: true,
-          quality: 0.85,
+          quality: 0.5,
+          base64: true,
         });
       }
 
-      if (!result.canceled && result.assets && result.assets[0]?.uri) {
-        const photoUri = result.assets[0].uri;
+      if (!result.canceled && result.assets && result.assets[0]) {
+        let photoUri = result.assets[0].base64
+          ? `data:image/jpeg;base64,${result.assets[0].base64}`
+          : result.assets[0].uri;
+        if (!result.assets[0].base64 && result.assets[0].uri) {
+          try {
+            const b64 = await FileSystem.readAsStringAsync(result.assets[0].uri, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            photoUri = `data:image/jpeg;base64,${b64}`;
+          } catch (e) {
+            photoUri = result.assets[0].uri;
+          }
+        }
         const myRole = appMode === 'merchant' ? 'merchant' : 'buyer';
         const myName =
           appMode === 'merchant'
@@ -20137,7 +20216,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                 styles.voiceNotePlayBtn,
                                 isMine && { backgroundColor: 'rgba(255, 255, 255, 0.25)' },
                               ]}
-                              onPress={() => handleTogglePlayVoiceNote(msg.id, msg.voiceNoteUri)}
+                              onPress={() => handleTogglePlayVoiceNote(msg.id, msg.voiceNoteUri, msg.voiceNoteBase64)}
                               activeOpacity={0.8}
                             >
                               <Text style={{ fontSize: 16, color: isMine ? '#FFFFFF' : '#1E3A8A' }}>

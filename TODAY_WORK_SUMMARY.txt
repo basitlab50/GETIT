@@ -1172,6 +1172,19 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        5. Updated `addNotificationResponseReceivedListener` so tapping a chat notification immediately opens the chat modal even if the order was just generated.
        6. Sorted `pharmacyConsultations` by newest message/consultation timestamp first.
 
+61. Cross-Device Media Synchronization for Chat Images & Voice Notes:
+   - 📸 Image Cross-Device Visibility:
+     * Root Cause: When a sender picked a prescription note or camera photo, the app saved the sender's private sandboxed local URI (e.g. `file:///var/mobile/...` or `file:///data/user/0/...`). When broadcasted over WebSocket to the receiver's phone, the receiver attempted to load the sender's non-existent local file path, causing blank or broken images.
+     * Fix: Configured `launchImageLibraryAsync` and `launchCameraAsync` with `base64: true` and `quality: 0.5` across `handlePickPrescriptionImage` and `handleSendChatPhoto`. Combined with a fallback `FileSystem.readAsStringAsync` read, every attached image is encoded as a portable `data:image/jpeg;base64,...` data URI, which renders immediately on both sender and receiver devices without external file dependencies.
+   - 🎙️ Voice Note Cross-Device Audio Playback:
+     * Root Cause: Audio recorded with `expo-audio` is saved in the sender's local cache. The receiver received the sender's private `voiceNoteUri`, which does not exist on the receiver's device. When tapping play, `createAudioPlayer` failed to find the file and timed out silently.
+     * Fix:
+       1. Installed `expo-file-system` and imported `* as FileSystem from 'expo-file-system/legacy'`.
+       2. In `handleStopAndSendVoiceNote`, converted the recorded audio to base64 (`voiceNoteBase64`) before broadcasting.
+       3. In `CHAT_MESSAGE` live event listener, proactively unpacks incoming `voiceNoteBase64` to the receiver device's local cache directory (`${FileSystem.cacheDirectory}voice_${id}.m4a`) as soon as the message arrives.
+       4. In `handleTogglePlayVoiceNote(msgId, uri, base64Data)`, verifies if the local file exists on the current device; if not, unpacks `base64Data` into a fresh local `.m4a` file and plays it directly through the loudspeaker.
+       5. Connected `msg.voiceNoteBase64` to the chat bubble play button.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
