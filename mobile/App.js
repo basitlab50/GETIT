@@ -104,6 +104,34 @@ import { getProductImageSource, matchCatalogImageByName } from './assets/product
 
 const { width } = Dimensions.get('window');
 
+// Voice-optimized audio recording options: 22.05kHz mono AAC ~32kbps
+// Generates compact 15-30KB voice notes that broadcast instantly across devices without hitting Supabase payload limits
+const VOICE_NOTE_RECORDER_OPTIONS = {
+  extension: '.m4a',
+  sampleRate: 22050,
+  numberOfChannels: 1,
+  bitRate: 32000,
+  android: {
+    extension: '.m4a',
+    outputFormat: 'mpeg4',
+    audioEncoder: 'aac',
+    sampleRate: 22050,
+    numberOfChannels: 1,
+    bitRate: 32000,
+  },
+  ios: {
+    extension: '.m4a',
+    outputFormat: 'aac ',
+    audioQuality: 32,
+    sampleRate: 22050,
+    numberOfChannels: 1,
+    bitRate: 32000,
+    linearPCMBitDepth: 16,
+    linearPCMIsBigEndian: false,
+    linearPCMIsFloat: false,
+  },
+};
+
 // --- Logos ---
 const LOGO_TRANSPARENT = require('./assets/getit-logo-transparent.png');
 const LOGO_CREAM = require('./assets/getit-logo-cream.jpg');
@@ -1552,7 +1580,7 @@ export default function App() {
   const chatScrollRef = useRef(null);
 
   // Voice Note Recording & Playback States
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorder = useAudioRecorder(VOICE_NOTE_RECORDER_OPTIONS);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [voiceRecordSeconds, setVoiceRecordSeconds] = useState(0);
   const [activePlayingVoiceId, setActivePlayingVoiceId] = useState(null);
@@ -2574,7 +2602,10 @@ export default function App() {
     const MS_PER_POINT = 2000; // Smooth 2 seconds per point for visible, responsive progress
     const legDurationMs = (totalPoints - 1) * MS_PER_POINT;
 
-    const legStartedAt = Number(ord.legStartedAt) || now;
+    let legStartedAt = Number(ord.legStartedAt);
+    if (!legStartedAt || isNaN(legStartedAt) || legStartedAt > (now + 1000)) {
+      legStartedAt = now;
+    }
     const elapsedMs = Math.max(0, now - legStartedAt);
 
     if (elapsedMs < legDurationMs) {
@@ -3286,13 +3317,27 @@ export default function App() {
           // If incoming message contains voiceNoteBase64, persist to local device cache immediately
           if (message.voiceNoteBase64) {
             try {
-              const localCacheFile = `${FileSystem.cacheDirectory || ''}voice_${message.id}.m4a`;
-              FileSystem.writeAsStringAsync(localCacheFile, message.voiceNoteBase64, {
+              const safeMsgId = String(message.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+              const cacheDir = FileSystem.cacheDirectory || '';
+              const localCacheFile = `${cacheDir.endsWith('/') ? cacheDir : cacheDir + '/'}voice_${safeMsgId}.m4a`;
+              const cleanB64 = String(message.voiceNoteBase64).replace(/^data:[^;]+;base64,/, '').trim();
+              FileSystem.writeAsStringAsync(localCacheFile, cleanB64, {
                 encoding: FileSystem.EncodingType.Base64,
               }).then(() => {
                 message.voiceNoteUri = localCacheFile;
               }).catch(() => {});
             } catch (e) {}
+          }
+
+          // If message carries prescription payment confirmation, update bill cards immediately
+          if (message.paidBillId) {
+            setChatMessages((prev) =>
+              prev.map((m) =>
+                m.prescription?.billId === message.paidBillId
+                  ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: new Date().toISOString() } }
+                  : m
+              )
+            );
           }
 
           // Always cache message to AsyncStorage
@@ -3355,8 +3400,15 @@ export default function App() {
             if (exists) {
               return prev.map((o) => {
                 if (o.id === orderId) {
-                  const existing = o.messages || [];
-                  if (existing.some((m) => m.id === message.id)) return o;
+                  let existing = o.messages || [];
+                  if (message.paidBillId) {
+                    existing = existing.map((m) =>
+                      m.prescription?.billId === message.paidBillId
+                        ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: new Date().toISOString() } }
+                        : m
+                    );
+                  }
+                  if (existing.some((m) => m.id === message.id)) return { ...o, messages: existing };
                   return { ...o, messages: [...existing, message] };
                 }
                 return o;
@@ -5479,6 +5531,8 @@ export default function App() {
     let audioBase64 = null;
     try {
       await recorder.stop();
+      // Allow file system handle to flush to disk
+      await new Promise((r) => setTimeout(r, 120));
       audioUri = recorder.uri;
       if (audioUri) {
         try {
@@ -5571,7 +5625,11 @@ export default function App() {
 
     try {
       if (currentAudioPlayerRef.current) {
-        currentAudioPlayerRef.current.pause();
+        try {
+          currentAudioPlayerRef.current.pause();
+          currentAudioPlayerRef.current.remove?.();
+        } catch (e) { }
+        currentAudioPlayerRef.current = null;
       }
     } catch (e) { }
 
@@ -5593,8 +5651,11 @@ export default function App() {
       // If URI doesn't exist on this device (e.g. sender's private path), unpack base64 to local cache!
       if (!uriExists && base64Data) {
         try {
-          const targetCachePath = `${FileSystem.cacheDirectory || ''}voice_${msgId}.m4a`;
-          await FileSystem.writeAsStringAsync(targetCachePath, base64Data, {
+          const safeId = String(msgId).replace(/[^a-zA-Z0-9_-]/g, '_');
+          const cacheDir = FileSystem.cacheDirectory || '';
+          const targetCachePath = `${cacheDir.endsWith('/') ? cacheDir : cacheDir + '/'}voice_${safeId}.m4a`;
+          const cleanBase64 = String(base64Data).replace(/^data:[^;]+;base64,/, '').trim();
+          await FileSystem.writeAsStringAsync(targetCachePath, cleanBase64, {
             encoding: FileSystem.EncodingType.Base64,
           });
           playableUri = targetCachePath;
@@ -5618,6 +5679,7 @@ export default function App() {
         player.addListener('playbackStatusUpdate', (status) => {
           if (
             status.didJustFinish ||
+            status.error ||
             (!status.playing && status.currentTime > 0 && status.duration > 0 && status.currentTime >= (status.duration - 0.2))
           ) {
             setActivePlayingVoiceId(null);
@@ -5626,13 +5688,13 @@ export default function App() {
       } else {
         setTimeout(() => {
           setActivePlayingVoiceId(null);
-        }, 3000);
+        }, 2000);
       }
     } catch (e) {
       console.warn('Audio play error:', e);
       setTimeout(() => {
         setActivePlayingVoiceId(null);
-      }, 3000);
+      }, 2000);
     }
   };
 
@@ -6074,7 +6136,9 @@ export default function App() {
           text: `Pay ₦${Number(prescription.total).toLocaleString()}`,
           style: 'default',
           onPress: () => {
-            // Update prescription message state to paid
+            const paidTimestamp = new Date().toISOString();
+
+            // 1. Update prescription message state to paid in active chat modal
             setChatMessages((prev) =>
               prev.map((m) => {
                 if (m.prescription && m.prescription.billId === prescription.billId) {
@@ -6083,7 +6147,7 @@ export default function App() {
                     prescription: {
                       ...m.prescription,
                       paid: true,
-                      paidAt: new Date().toISOString(),
+                      paidAt: paidTimestamp,
                     },
                   };
                 }
@@ -6091,18 +6155,112 @@ export default function App() {
               })
             );
 
-            // Create formal delivery order
+            // 2. Also update targetChatOrder's messages in orders array
+            updateAndPersistOrders((prev) =>
+              prev.map((o) => {
+                if (o.id === order.id) {
+                  const updatedMsgs = (o.messages || []).map((m) =>
+                    m.prescription && m.prescription.billId === prescription.billId
+                      ? {
+                          ...m,
+                          prescription: {
+                            ...m.prescription,
+                            paid: true,
+                            paidAt: paidTimestamp,
+                          },
+                        }
+                      : m
+                  );
+                  return { ...o, messages: updatedMsgs };
+                }
+                return o;
+              })
+            );
+
+            // 3. Send paid receipt message over WebSocket so shop side flips to Paid immediately
+            const paymentReceiptMsg = {
+              id: `msg-paid-${Date.now()}`,
+              orderId: order.id,
+              storeId: prescription.storeId,
+              customerId: currentUser?.id,
+              senderRole: 'buyer',
+              senderName: currentUser?.fullName || currentUser?.name || 'Patient',
+              text: `💳 Prescription Invoice Paid (${prescription.items.length} items • ₦${Number(prescription.total).toLocaleString()}). Delivery order generated!`,
+              prescriptionBillPaid: true,
+              paidBillId: prescription.billId,
+              createdAt: paidTimestamp,
+              timestamp: Date.now(),
+              read: false,
+            };
+
+            sendOrderChatMessage(order.id, paymentReceiptMsg, {
+              ...order,
+              messages: [
+                ...(order.messages || []).map((m) =>
+                  m.prescription?.billId === prescription.billId
+                    ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: paidTimestamp } }
+                    : m
+                ),
+                paymentReceiptMsg,
+              ],
+            }).catch(() => {});
+
+            // 4. Create formal delivery order with full route, stops & geolocation
+            const pickupPin = `${Math.floor(1000 + Math.random() * 9000)}`;
+            const masterDeliveryPin = `${Math.floor(1000 + Math.random() * 9000)}`;
+            const pharmacyStore = filteredStores.find((s) => s.id === prescription.storeId) ||
+              INITIAL_PHARMACY_STORES.find((s) => s.id === prescription.storeId) ||
+              currentMerchantStore;
+
+            const storeLat = Number(pharmacyStore?.latitude || 9.0882);
+            const storeLng = Number(pharmacyStore?.longitude || 7.4933);
+            const destLat = Number(pinnedLocation?.latitude || 9.0765);
+            const destLng = Number(pinnedLocation?.longitude || 7.4925);
+            const destName = pinnedLocation?.name || selectedLocation || currentUser?.address || 'Maitama, Abuja';
+
+            const stops = [
+              {
+                stopNumber: 1,
+                storeId: prescription.storeId,
+                storeName: prescription.storeName,
+                latitude: storeLat,
+                longitude: storeLng,
+                isAnchorStore: true,
+                itemsCount: prescription.items.length,
+                items: prescription.items.map((it) => ({
+                  id: it.id,
+                  name: it.name,
+                  price: it.price,
+                  qty: it.quantity || 1,
+                  dosage: it.dosageInstruction,
+                  icon: it.icon || '💊',
+                })),
+                subtotal: prescription.subtotal,
+                total: prescription.total,
+                vendorPayout: Math.round(prescription.subtotal * 0.9),
+                pickupPin: pickupPin,
+                pickupStatus: 'in_progress',
+                status: 'New Order',
+                pickedUpAt: null,
+              },
+            ];
+
             const prescriptionDeliveryOrder = {
               id: `RX-${Date.now().toString().slice(-6)}`,
+              isMultiStore: false,
+              isRouteOptimized: false,
+              stopsCount: 1,
+              currentStopIndex: 0,
               storeId: prescription.storeId,
               storeName: prescription.storeName,
               storeType: 'pharmacy',
               status: 'New Order',
+              stops: stops,
               items: prescription.items.map((it) => ({
                 id: it.id,
                 name: it.name,
                 price: it.price,
-                quantity: it.quantity || 1,
+                qty: it.quantity || 1,
                 dosage: it.dosageInstruction,
                 icon: it.icon || '💊',
               })),
@@ -6113,19 +6271,73 @@ export default function App() {
               customerName: currentUser?.fullName || currentUser?.name || 'Patient',
               customerId: currentUser?.id || 'patient-user',
               customerPhone: currentUser?.phone || '08000000000',
-              customerAddress: selectedLocation || currentUser?.address || 'Maitama, Abuja',
-              deliveryAddress: selectedLocation || currentUser?.address || 'Maitama, Abuja',
-              deliveryPin: Math.floor(1000 + Math.random() * 9000).toString(),
-              createdAt: new Date().toISOString(),
+              customerAddress: destName,
+              deliveryAddress: destName,
+              deliveryLocation: {
+                latitude: destLat,
+                longitude: destLng,
+                name: destName,
+              },
+              deliveryPin: masterDeliveryPin,
+              createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              dateStr: 'Today',
+              timestamp: Date.now(),
               isPrescriptionOrder: true,
               journeyAlert:
                 '💊 Pharmacy is preparing and tamper-sealing your prescribed medications.',
+              boltRider: null,
+              boltStatus: 'PENDING_STORE_READY',
+              riderOrigin: {
+                latitude: storeLat - 0.0090,
+                longitude: storeLng - 0.0080,
+              },
+              boltCoords: {
+                latitude: storeLat,
+                longitude: storeLng,
+              },
+              eta: '15-25 mins',
             };
 
             setLastPlacedOrderId(prescriptionDeliveryOrder.id);
             updateAndPersistOrders((prev) => [prescriptionDeliveryOrder, ...prev]);
             createDatabaseOrder(prescriptionDeliveryOrder).catch(() => { });
+            broadcastLiveEvent('ORDER_INSERT', { order: prescriptionDeliveryOrder });
             dispatchMerchantNewOrderRemotePush(prescriptionDeliveryOrder).catch(() => { });
+
+            // Calculate road route for smooth real-time rider progression
+            const defaultAssignedRider = {
+              name: 'Musa Ibrahim',
+              phone: '+234 803 294 1194',
+              rating: '4.95',
+              vehicle: 'Bajaj Boxer 150 (Red)',
+              plate: 'ABJ-492-KW',
+              latitude: storeLat - 0.0090,
+              longitude: storeLng - 0.0080,
+            };
+
+            calculateMultiStopRoadRoute(
+              defaultAssignedRider,
+              [{ latitude: storeLat, longitude: storeLng, storeId: prescription.storeId, storeName: prescription.storeName }],
+              { latitude: destLat, longitude: destLng },
+              REAL_ROAD_POINTS,
+              REAL_ROAD_WAYPOINTS,
+              REAL_ROAD_LEGS
+            ).then((result) => {
+              if (result && result.roadPoints && result.roadPoints.length > 0) {
+                updateAndPersistOrders((prev) =>
+                  prev.map((o) =>
+                    o.id === prescriptionDeliveryOrder.id
+                      ? {
+                          ...o,
+                          roadRouteCoordinates: result.roadPoints,
+                          roadLegs: result.legs,
+                          boltCoords: result.roadPoints[0],
+                        }
+                      : o
+                  )
+                );
+              }
+            }).catch(() => {});
 
             try {
               playAudioBeep('default');

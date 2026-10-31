@@ -1185,6 +1185,31 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        4. In `handleTogglePlayVoiceNote(msgId, uri, base64Data)`, verifies if the local file exists on the current device; if not, unpacks `base64Data` into a fresh local `.m4a` file and plays it directly through the loudspeaker.
        5. Connected `msg.voiceNoteBase64` to the chat bubble play button.
 
+62. Account Isolation for Customer Order Filter Badges & Unread Counts:
+   - 🛡️ Cross-Account Data Badge Leak Prevention:
+     * Root Cause: When a merchant or another user had an active order in the Supabase database, the buyer/shopper side displayed `🟢 Active (1)` on the status filter pill, even though the order list underneath showed "No Active Orders".
+     * Investigation: In `mobile/App.js`, all cloud orders were fetched into the global `orders` array for merchants to view incoming orders. While the list itself correctly filtered by `currentUser` using `myOrders`, the tab pill headers at lines 9148–9186 were hardcoded to evaluate against the global array:
+       `🟢 Active ({orders.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled').length})`
+       `✅ Delivered ({orders.filter((o) => o.status === 'Delivered').length})`
+       `❌ Cancelled ({orders.filter((o) => o.status === 'Cancelled').length})`
+       `📦 All ({orders.length})`
+     * Fix:
+       1. Created a robust, memoized `myCustomerOrders` array that strictly isolates orders matching `currentUser.id`, `currentUser.email`, 10-digit suffix of `currentUser.phone`, or `lastPlacedOrderId`.
+       2. Replaced all tab pill counter badges to evaluate against `myCustomerOrders` instead of the global `orders` array.
+       3. Updated `customerUnreadCount` to count unread messages only for the authenticated buyer's own orders.
+       4. Updated `pendingReplacementOrder` to search within `myCustomerOrders`.
+       5. Added `setLastPlacedOrderId(null);` on logout to prevent state retention between accounts.
+
+63. Prescription Order Fulfillment Route Engine & Live Payment Broadcast:
+   - 💊 Full Tele-Pharmacy Order Fulfillment Pipeline:
+     * Upgraded `handlePayPrescriptionBill` to generate an enterprise-grade multi-stop delivery order with pickup PIN, master delivery PIN, destination coordinates, and route waypoints.
+     * Connected `calculateMultiStopRoadRoute` to calculate real road coordinates between the pharmacy and the patient's delivery pin.
+     * Synchronized prescription bill payment across devices: emits `paidBillId` over WebSocket and dispatches `ORDER_INSERT` live event so both patient and pharmacist interfaces flip the bill status to `✅ Paid` in real-time.
+   - 🎙️ Voice Note Performance Optimization:
+     * Configured `useAudioRecorder` with `VOICE_NOTE_RECORDER_OPTIONS` (16kHz mono, 32kbps AAC) for lightweight, instantaneous base64 transfer.
+     * Added file flush buffer delay to eliminate truncated recordings.
+     * Hardened receiver-side base64 unpack and cache directory path resolution.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

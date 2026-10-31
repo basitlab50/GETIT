@@ -1370,10 +1370,24 @@ export async function sendOrderChatMessage(orderId, message, orderData = null) {
     } catch (e) {}
 
     // 3. Broadcast real-time over WebSocket (sub-50ms peer delivery)
+    const cleanOrderData = orderData
+      ? {
+          id: orderData.id,
+          storeId: orderData.storeId,
+          storeName: orderData.storeName,
+          customerId: orderData.customerId,
+          customerName: orderData.customerName,
+          customerPhone: orderData.customerPhone,
+          status: orderData.status,
+          total: orderData.total,
+          createdAt: orderData.createdAt,
+        }
+      : null;
+
     broadcastLiveEvent('CHAT_MESSAGE', {
       orderId,
       message,
-      order: orderData,
+      order: cleanOrderData,
     });
 
     // 4. Persist to Supabase orders.bolt_rider.messages
