@@ -1247,6 +1247,18 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Attached `cache: 'force-cache'` to all store card banners, map callouts, modal banners, and merchant dashboard covers.
      * Added instant placeholder backdrops (`storeImagePlaceholderBackdrop`) with category emojis (`💊`, `🥐`, `🍷`, `🌿`, `🛒`) to eliminate grey blank loading flashes.
 
+69. Fix Premature "Paid" State on Newly Issued Prescriptions:
+   - 🔍 Root Cause Analysis:
+     * When a pharmacist issued a new prescription invoice (`billId: rx-bill-${Date.now()}`), the UI immediately displayed `✅ Paid • Transferred to Active Orders` even though the patient hadn't viewed or paid for it yet.
+     * Root Cause 1 (`openChatModal` lines 6220-6230): If the consultation thread ever contained ANY historical paid invoice, `mergedAll.some(m => m.prescriptionBillPaid || m.paidBillId)` was true. The previous logic executed `mergedAll.map(m => m.prescription ? { ...m, prescription: { ...m.prescription, paid: true } } : m)`, marking EVERY prescription (including brand-new ones) as `paid: true` in local cache and Supabase!
+     * Root Cause 2 (UI Rendering condition `isRxPaid` lines 22886-22902): Evaluated `orders.some(o => (o.isPrescriptionOrder || o.id?.startsWith('RX-')) && (o.storeId === msg.prescription.storeId || o.storeName === msg.prescription.storeName))`. If the customer had ANY past RX delivery order from that pharmacy, ALL prescriptions from that pharmacy were rendered as Paid!
+     * Root Cause 3 (Event Handlers `CHAT_MESSAGE` and `PRESCRIPTION_PAID`): Contained fallback conditions `(!message.paidBillId || !m.prescription.paid)` which evaluated to true on unpaid bills, prematurely flipping them to `paid: true`.
+   - 🛠️ Resolution & Tight Bill ID Isolation:
+     * Updated `openChatModal` to extract specific `paidBillIds` (`new Set(mergedAll.filter(m => m.prescriptionBillPaid && m.paidBillId).map(m => m.paidBillId))`). Only prescriptions whose explicit `billId` is in `paidBillIds` are reconciled as paid.
+     * Overhauled `isRxPaid` render check: strictly checks `Boolean(msg.prescription?.paid)` OR checks for an explicit payment receipt message matching the unique `billId` (`cm.prescriptionBillPaid && cm.paidBillId === curBillId`), or an active order tied to that exact `prescriptionBillId === curBillId`.
+     * Tied `prescriptionDeliveryOrder` explicitly to `prescriptionBillId: prescription.billId`.
+     * Hardened `PRESCRIPTION_PAID` event handler, `CHAT_MESSAGE` handler in `App.js`, and `sendOrderChatMessage` in `supabaseService.js` to strictly require `m.prescription.billId === targetBillId`.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

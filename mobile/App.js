@@ -3584,35 +3584,37 @@ export default function App() {
         const payload = event.payload || event;
         const { orderId, billId, paidAt } = payload;
         const paidIso = paidAt || new Date().toISOString();
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.prescription && (!billId || !m.prescription.billId || m.prescription.billId === billId)
-              ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: paidIso } }
-              : m
-          )
-        );
-        updateAndPersistOrders((prev) =>
-          prev.map((o) => {
-            if (o.id === orderId) {
-              const updatedMsgs = (o.messages || []).map((m) =>
-                m.prescription && (!billId || !m.prescription.billId || m.prescription.billId === billId)
+        if (billId) {
+          setChatMessages((prev) =>
+            prev.map((m) =>
+              m.prescription && m.prescription.billId === billId
+                ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: paidIso } }
+                : m
+            )
+          );
+          updateAndPersistOrders((prev) =>
+            prev.map((o) => {
+              if (o.id === orderId) {
+                const updatedMsgs = (o.messages || []).map((m) =>
+                  m.prescription && m.prescription.billId === billId
+                    ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: paidIso } }
+                    : m
+                );
+                return { ...o, messages: updatedMsgs };
+              }
+              return o;
+            })
+          );
+          if (orderId) {
+            getOrderChatMessages(orderId).then((existing) => {
+              const updated = existing.map((m) =>
+                m.prescription && m.prescription.billId === billId
                   ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: paidIso } }
                   : m
               );
-              return { ...o, messages: updatedMsgs };
-            }
-            return o;
-          })
-        );
-        if (orderId) {
-          getOrderChatMessages(orderId).then((existing) => {
-            const updated = existing.map((m) =>
-              m.prescription && (!billId || !m.prescription.billId || m.prescription.billId === billId)
-                ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: paidIso } }
-                : m
-            );
-            AsyncStorage.setItem(`getit_chat_messages_${orderId}`, JSON.stringify(updated)).catch(() => {});
-          }).catch(() => {});
+              AsyncStorage.setItem(`getit_chat_messages_${orderId}`, JSON.stringify(updated)).catch(() => {});
+            }).catch(() => {});
+          }
         }
       } else if (event.eventType === 'CHAT_MESSAGE') {
         const payload = event.payload || event;
@@ -3639,11 +3641,12 @@ export default function App() {
             } catch (e) {}
           }
 
-          // If message carries prescription payment confirmation, update bill cards immediately
-          if (message.paidBillId || message.prescriptionBillPaid) {
+          // If message carries prescription payment confirmation, update ONLY the matching bill card
+          const targetBillId = message.paidBillId;
+          if (message.prescriptionBillPaid && targetBillId) {
             setChatMessages((prev) =>
               prev.map((m) =>
-                m.prescription && (!message.paidBillId || !m.prescription.billId || m.prescription.billId === message.paidBillId || !m.prescription.paid)
+                m.prescription && m.prescription.billId === targetBillId
                   ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: message.createdAt || new Date().toISOString() } }
                   : m
               )
@@ -3654,8 +3657,8 @@ export default function App() {
           try {
             getOrderChatMessages(orderId).then((existing) => {
               let updatedList = existing.map((m) => {
-                if (m.prescription && (message.paidBillId || message.prescriptionBillPaid)) {
-                  if (!message.paidBillId || !m.prescription.billId || m.prescription.billId === message.paidBillId) {
+                if (m.prescription && message.prescriptionBillPaid && targetBillId) {
+                  if (m.prescription.billId === targetBillId) {
                     return { ...m, prescription: { ...m.prescription, paid: true, paidAt: message.createdAt || new Date().toISOString() } };
                   }
                 }
@@ -3739,9 +3742,9 @@ export default function App() {
             if (matchIndex >= 0) {
               const o = prev[matchIndex];
               let existing = o.messages || [];
-              if (message.paidBillId || message.prescriptionBillPaid) {
+              if (message.prescriptionBillPaid && targetBillId) {
                 existing = existing.map((m) =>
-                  m.prescription && (!message.paidBillId || !m.prescription.billId || m.prescription.billId === message.paidBillId || !m.prescription.paid)
+                  m.prescription && m.prescription.billId === targetBillId
                     ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: message.createdAt || new Date().toISOString() } }
                     : m
                 );
@@ -6217,10 +6220,14 @@ export default function App() {
           if (m?.id) msgMap.set(m.id, m);
         });
         let mergedAll = markReadInList(Array.from(msgMap.values()));
-        const hasPaymentReceipt = mergedAll.some((m) => m.prescriptionBillPaid || m.paidBillId);
-        if (hasPaymentReceipt) {
+        const paidBillIds = new Set(
+          mergedAll
+            .filter((m) => m.prescriptionBillPaid && m.paidBillId)
+            .map((m) => m.paidBillId)
+        );
+        if (paidBillIds.size > 0) {
           mergedAll = mergedAll.map((m) =>
-            m.prescription
+            m.prescription && m.prescription.billId && paidBillIds.has(m.prescription.billId)
               ? { ...m, prescription: { ...m.prescription, paid: true } }
               : m
           );
@@ -7792,6 +7799,7 @@ export default function App() {
               dateStr: 'Today',
               timestamp: Date.now(),
               isPrescriptionOrder: true,
+              prescriptionBillId: prescription.billId,
               status: 'On the Way',
               boltStatus: 'IN_TRANSIT',
               currentStopIndex: 0,
@@ -22875,23 +22883,20 @@ Support: help@getit.ng | Abuja, Nigeria`;
                             </View>
 
                             {(() => {
+                              const curBillId = msg.prescription?.billId;
                               const isRxPaid =
                                 Boolean(msg.prescription?.paid) ||
-                                chatMessages.some(
-                                  (cm) =>
-                                    cm.prescriptionBillPaid &&
-                                    (!cm.paidBillId || !msg.prescription.billId || cm.paidBillId === msg.prescription.billId)
-                                ) ||
-                                (targetChatOrder?.messages || []).some(
-                                  (cm) =>
-                                    cm.prescriptionBillPaid &&
-                                    (!cm.paidBillId || !msg.prescription.billId || cm.paidBillId === msg.prescription.billId)
-                                ) ||
-                                orders.some(
-                                  (o) =>
-                                    (o.isPrescriptionOrder || o.id?.startsWith('RX-')) &&
-                                    (String(o.storeId) === String(msg.prescription.storeId) || o.storeName === msg.prescription.storeName)
-                                );
+                                (Boolean(curBillId) && (
+                                  chatMessages.some(
+                                    (cm) => cm.prescriptionBillPaid && cm.paidBillId === curBillId
+                                  ) ||
+                                  (targetChatOrder?.messages || []).some(
+                                    (cm) => cm.prescriptionBillPaid && cm.paidBillId === curBillId
+                                  ) ||
+                                  orders.some(
+                                    (o) => o.prescriptionBillId === curBillId
+                                  )
+                                ));
 
                               if (isRxPaid) {
                                 return (

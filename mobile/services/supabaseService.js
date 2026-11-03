@@ -1521,8 +1521,8 @@ export async function sendOrderChatMessage(orderId, message, orderData = null) {
       } catch (e) {}
 
       let newMessages = existingMessages.map((m) => {
-        if (m.prescription && (message.prescriptionBillPaid || message.paidBillId)) {
-          if (!message.paidBillId || !m.prescription.billId || m.prescription.billId === message.paidBillId) {
+        if (m.prescription && message.prescriptionBillPaid && message.paidBillId) {
+          if (m.prescription.billId === message.paidBillId) {
             return {
               ...m,
               prescription: {
