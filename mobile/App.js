@@ -22,6 +22,7 @@ import {
   AppState,
   KeyboardAvoidingView,
   Share,
+  Vibration,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, Polyline } from 'react-native-maps';
@@ -69,6 +70,7 @@ import {
   getStoreReviews,
   sendOrderChatMessage,
   getOrderChatMessages,
+  ensureLiveBroadcastConnected,
 } from './services/supabaseService';
 import {
   registerForPushNotificationsAsync,
@@ -617,48 +619,60 @@ const CATEGORIES = [
   { id: 'heritage', name: 'Local Specialties', icon: '🌾' },
 ];
 
+// --- High-Performance Image Optimization & CDN Cache Resizer ---
+function optimizeImageUrl(url, width = 500, quality = 65) {
+  if (!url || typeof url !== 'string') return url;
+  if (url.includes('images.unsplash.com')) {
+    let clean = url.replace(/([?&])(w|q|auto|fit|fm)=[^&]*/gi, '');
+    clean = clean.replace(/\?&/g, '?').replace(/&&+/g, '&').replace(/[?&]$/, '');
+    const sep = clean.includes('?') ? '&' : '?';
+    return `${clean}${sep}auto=format&fit=crop&w=${width}&q=${quality}&fm=webp`;
+  }
+  return url;
+}
+
 // --- Curated Luxury Store Cover Photo Presets ---
 const STORE_COVER_PRESETS = [
   {
     id: 'cover-gourmet',
     title: 'Gourmet Supermarket',
     category: 'Gourmet Groceries & Deli',
-    url: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=1200&q=80',
+    url: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=500&q=65',
     icon: '🛒',
   },
   {
     id: 'cover-organic',
     title: 'Fresh Organic Mart',
     category: 'Fruits & Organics',
-    url: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=80',
+    url: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=500&q=65',
     icon: '🌿',
   },
   {
     id: 'cover-boutique',
     title: 'Modern Luxury Mart',
     category: 'Provisions & Essentials',
-    url: 'https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=1200&q=80',
+    url: 'https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=500&q=65',
     icon: '✨',
   },
   {
     id: 'cover-pharmacy',
     title: 'Pharmacy & Wellness',
     category: 'Medicines & Health',
-    url: 'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?auto=format&fit=crop&w=1200&q=80',
+    url: 'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?auto=format&fit=crop&w=500&q=65',
     icon: '💊',
   },
   {
     id: 'cover-bakery',
     title: 'Artisan Bakery & Deli',
     category: 'Breads & Pastries',
-    url: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=1200&q=80',
+    url: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=500&q=65',
     icon: '🥐',
   },
   {
     id: 'cover-cellar',
     title: 'Cellar & Fine Drinks',
     category: 'Wines & Beverages',
-    url: 'https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?auto=format&fit=crop&w=1200&q=80',
+    url: 'https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?auto=format&fit=crop&w=500&q=65',
     icon: '🍾',
   },
 ];
@@ -687,7 +701,7 @@ const STORES_AROUND_ME = [
     closeTime: '10:00 PM',
     is24Hours: true,
     operatingDays: 'Mon - Sun (Daily)',
-    image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+    image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=500&q=65',
     description: 'Mega Stores — prime provisions, artisanal goods, groceries and rapid doorstep delivery across Abuja.',
     phone: '0545802140',
     isOpen: true,
@@ -1587,6 +1601,63 @@ export default function App() {
   const voiceTimerRef = useRef(null);
   const currentAudioPlayerRef = useRef(null);
 
+  // --- IN-APP SECURE VOICE CALLING SUITE (OPTION 1) ---
+  const DEVICE_CLIENT_ID = useRef(`device-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`).current;
+  const targetChatOrderRef = useRef(null);
+  const isCallConnectedRef = useRef(false);
+  const isAudioLoopRunningRef = useRef(false);
+  const incomingAudioQueueRef = useRef([]);
+  const isProcessingAudioQueueRef = useRef(false);
+
+  const [activeCall, setActiveCall] = useState(null);
+  const [isCallModalVisible, setIsCallModalVisible] = useState(false);
+  const [isCallMinimized, setIsCallMinimized] = useState(false);
+  const [isCallRecording, setIsCallRecording] = useState(false);
+  const callTimerRef = useRef(null);
+  const callRingTimeoutRef = useRef(null);
+  const callRingtoneIntervalRef = useRef(null);
+  const callAudioPlayerRef = useRef(null);
+  const activeCallRef = useRef(null);
+  const callRippleAnim = useRef(new Animated.Value(1)).current;
+
+  // Real-time WhatsApp Typing Indicator state & refs
+  const [isPartnerTyping, setIsPartnerTyping] = useState(false);
+  const typingTimeoutRef = useRef(null);
+  const lastTypingBroadcastRef = useRef(0);
+
+  useEffect(() => {
+    activeCallRef.current = activeCall;
+  }, [activeCall]);
+
+  useEffect(() => {
+    targetChatOrderRef.current = targetChatOrder;
+  }, [targetChatOrder]);
+
+  useEffect(() => {
+    if (activeCall && (activeCall.status === 'calling' || activeCall.status === 'ringing' || activeCall.isRemoteSpeaking || isCallRecording)) {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(callRippleAnim, {
+            toValue: 1.18,
+            duration: 800,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(callRippleAnim, {
+            toValue: 1,
+            duration: 800,
+            easing: Easing.in(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      loop.start();
+      return () => loop.stop();
+    } else {
+      callRippleAnim.setValue(1);
+    }
+  }, [activeCall?.status, activeCall?.isRemoteSpeaking, isCallRecording]);
+
   // Load persistent unread badge map on app mount
   useEffect(() => {
     (async () => {
@@ -1809,8 +1880,9 @@ export default function App() {
     });
   }, [suggestedCategoryFilter, suggestedSearch]);
 
-  // Active Orders
-  const [activeTab, setActiveTab] = useState('home'); // 'home' | 'orders' | 'profile'
+  // Active Orders & Tabs
+  const [activeTab, setActiveTab] = useState('home'); // 'home' | 'orders' | 'messages' | 'profile'
+  const [customerMessagesFilter, setCustomerMessagesFilter] = useState('all'); // 'all' | 'pharmacy' | 'stores'
   const [activeVertical, setActiveVertical] = useState('groceries'); // 'groceries' | 'pharmacy'
 
   // Doctor's Prescription & Tele-Pharmacy Consultation
@@ -1818,6 +1890,7 @@ export default function App() {
   const [targetPrescriptionPharmacy, setTargetPrescriptionPharmacy] = useState(null);
   const [prescriptionImage, setPrescriptionImage] = useState(null);
   const [prescriptionSymptomsNote, setPrescriptionSymptomsNote] = useState('');
+  const [prescriptionPatientName, setPrescriptionPatientName] = useState('');
   const [prescriptionPatientPhone, setPrescriptionPatientPhone] = useState('');
 
   // Pharmacist In-Chat Prescription & Billing Modal
@@ -1871,9 +1944,12 @@ export default function App() {
     })();
   }, []);
 
-  // Strict Account-Isolated Customer Orders: Only orders placed by this authenticated customer!
+  // Account-Isolated Customer Orders with Robust Local Session Preservation
   const myCustomerOrders = useMemo(() => {
-    if (!currentUser) return [];
+    if (!currentUser) {
+      // In guest / dev mode, show all customer orders created on this device
+      return orders;
+    }
 
     const userPhoneDigits = (currentUser.phone || '').replace(/\D/g, '');
     const userEmail = (currentUser.email || '').trim().toLowerCase();
@@ -1892,9 +1968,45 @@ export default function App() {
       const orderName = (o.customerName || o.customer_name || '').trim().toLowerCase();
       const userName = (currentUser.fullName || currentUser.name || '').trim().toLowerCase();
       if (userName && orderName && userName === orderName) return true;
+      // Also preserve orders placed locally on this device if customerId is default/unbound
+      if (!o.customerId || o.customerId === 'buyer' || o.customerId === 'customer') return true;
       return false;
     });
   }, [orders, currentUser, lastPlacedOrderId]);
+
+  // Helper to reliably compute the latest message / interaction timestamp (in milliseconds)
+  const getOrderLatestMessageTime = useCallback((o) => {
+    if (!o) return 0;
+    let latest = 0;
+    if (typeof o.timestamp === 'number' && !isNaN(o.timestamp)) {
+      latest = Math.max(latest, o.timestamp);
+    }
+    const orderCreated = new Date(o.createdAt || 0).getTime();
+    if (!isNaN(orderCreated)) {
+      latest = Math.max(latest, orderCreated);
+    }
+
+    if (Array.isArray(o.messages)) {
+      for (const m of o.messages) {
+        if (!m) continue;
+        if (m.createdAt) {
+          const t = new Date(m.createdAt).getTime();
+          if (!isNaN(t) && t > latest) latest = t;
+        }
+        if (typeof m.timestamp === 'number' && !isNaN(m.timestamp) && m.timestamp > latest) {
+          latest = m.timestamp;
+        }
+        if (typeof m.id === 'string' && m.id.startsWith('msg-')) {
+          const parts = m.id.split('-');
+          const idNum = Number(parts[1]);
+          if (!isNaN(idNum) && idNum > 1000000000000 && idNum > latest) {
+            latest = idNum;
+          }
+        }
+      }
+    }
+    return latest;
+  }, []);
 
   const toggleOrderAccordion = (orderId) => {
     setExpandedOrderId((prev) => (prev === orderId ? null : orderId));
@@ -2028,12 +2140,50 @@ export default function App() {
                 total: (co.total !== undefined && co.total > 0) ? co.total : existing.total,
                 status: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.status || existing.status),
                 eta: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.eta || existing.eta),
+                courierArrivedOutside: existing.courierArrivedOutside || co.courierArrivedOutside || Boolean(co.bolt_rider?.courierArrivedOutside) || false,
+                hasNotifiedArrived: existing.hasNotifiedArrived || co.hasNotifiedArrived || Boolean(co.bolt_rider?.hasNotifiedArrived) || false,
+                boltRider: co.boltRider || existing.boltRider || ((co.status === 'On the Way' || existing.status === 'On the Way') ? {
+                  id: 'bolt-rider-01',
+                  name: 'Musa Ibrahim',
+                  phone: '+234 803 294 1194',
+                  rating: '4.95',
+                  trips: 1420,
+                  vehicle: 'Bajaj Boxer 150 (Red)',
+                  plate: 'ABJ-492-KW',
+                  avatar: '🛵',
+                } : null),
+                messages: (() => {
+                  const existingMsgs = (existing.messages && Array.isArray(existing.messages)) ? existing.messages : [];
+                  const cloudMsgs = (co.messages && Array.isArray(co.messages)) ? co.messages : [];
+                  const msgMap = new Map();
+                  existingMsgs.forEach((m) => { if (m?.id) msgMap.set(m.id, m); });
+                  cloudMsgs.forEach((cm) => {
+                    if (!cm?.id) return;
+                    const localM = msgMap.get(cm.id);
+                    msgMap.set(cm.id, {
+                      ...cm,
+                      voiceNoteUri: localM?.voiceNoteUri || cm.voiceNoteUri,
+                      voiceNoteBase64: cm.voiceNoteBase64 || localM?.voiceNoteBase64,
+                      voiceNoteDuration: cm.voiceNoteDuration || localM?.voiceNoteDuration,
+                    });
+                  });
+                  const merged = Array.from(msgMap.values()).sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+                  if (chatModalVisibleRef.current && targetChatOrderIdRef.current === co.id) {
+                    setChatMessages(merged);
+                  }
+                  return merged;
+                })(),
                 stops: (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []),
                 roadRouteCoordinates: (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []),
                 roadLegs: (co.roadLegs && co.roadLegs.length > 0) ? co.roadLegs : (existing.roadLegs || []),
-                roadPointIndex: Math.max(co.roadPointIndex || 0, existing.roadPointIndex || 0),
-                legStartedAt: existing.legStartedAt || co.legStartedAt || Date.now(),
-                boltCoords: (existing.status === 'On the Way' && existing.boltCoords) ? existing.boltCoords : (co.boltCoords || existing.boltCoords),
+                currentStopIndex: co.currentStopIndex !== undefined ? co.currentStopIndex : (existing.currentStopIndex || 0),
+                roadPointIndex: (co.currentStopIndex !== undefined && existing.currentStopIndex !== undefined && co.currentStopIndex !== existing.currentStopIndex)
+                  ? (co.roadPointIndex || 0)
+                  : Math.max(co.roadPointIndex || 0, existing.roadPointIndex || 0),
+                legStartedAt: (co.currentStopIndex !== undefined && existing.currentStopIndex !== undefined && co.currentStopIndex > existing.currentStopIndex)
+                  ? (co.legStartedAt || Date.now())
+                  : (existing.legStartedAt || co.legStartedAt || Date.now()),
+                boltCoords: (existing.status === 'On the Way' && existing.boltCoords && !existing.courierArrivedOutside) ? existing.boltCoords : (co.boltCoords || existing.boltCoords),
               }
               : co
           );
@@ -2361,7 +2511,7 @@ export default function App() {
 
   // Build sequential connection legs directly between actual order waypoints
   const buildDirectLegsBetweenWaypoints = (waypoints) => {
-    if (!waypoints || waypoints.length < 2) return { roadPoints: [], legs: [], snappedWaypoints: waypoints || [] };
+    if (!waypoints || waypoints.length < 2) return { roadPoints: [], legs: [], snappedWaypoints: waypoints || [], isFallback: true };
     const legs = [];
     const roadPoints = [];
 
@@ -2369,15 +2519,31 @@ export default function App() {
       const start = waypoints[i];
       const end = waypoints[i + 1];
       const leg = [];
-      const steps = 25;
-      for (let s = 0; s <= steps; s++) {
-        const t = s / steps;
+
+      // Avoid straight diagonal cuts across buildings: interpolate along orthogonal street grid avenues
+      const corner = {
+        latitude: start.latitude,
+        longitude: end.longitude,
+      };
+      const seg1Steps = 15;
+      const seg2Steps = 15;
+      for (let s = 0; s <= seg1Steps; s++) {
+        const t = s / seg1Steps;
         const pt = {
-          latitude: start.latitude + (end.latitude - start.latitude) * t,
-          longitude: start.longitude + (end.longitude - start.longitude) * t,
+          latitude: start.latitude,
+          longitude: start.longitude + (corner.longitude - start.longitude) * t,
         };
         leg.push(pt);
         if (i === 0 || s > 0) roadPoints.push(pt);
+      }
+      for (let s = 1; s <= seg2Steps; s++) {
+        const t = s / seg2Steps;
+        const pt = {
+          latitude: corner.latitude + (end.latitude - corner.latitude) * t,
+          longitude: end.longitude,
+        };
+        leg.push(pt);
+        roadPoints.push(pt);
       }
       legs.push(leg);
     }
@@ -2386,6 +2552,7 @@ export default function App() {
       roadPoints,
       legs,
       snappedWaypoints: waypoints,
+      isFallback: true,
     };
   };
 
@@ -2394,62 +2561,92 @@ export default function App() {
     if (!waypointCoords || waypointCoords.length < 2) {
       return buildDirectLegsBetweenWaypoints(waypointCoords);
     }
-    try {
-      const coordStr = waypointCoords
-        .map((c) => `${Number(c.longitude).toFixed(5)},${Number(c.latitude).toFixed(5)}`)
-        .join(';');
-      const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson&steps=true`;
-      const response = await fetch(url);
-      const data = await response.json();
-      if (data && data.code === 'Ok' && data.routes && data.routes[0]) {
-        const fullCoords = (data.routes[0].geometry.coordinates || []).map((c) => ({
-          latitude: c[1],
-          longitude: c[0],
-        }));
 
-        // Extract individual legs (Leg 0: Rider -> Stop 1, Leg 1: Stop 1 -> Stop 2, Leg 2: Stop 2 -> Dropoff)
-        const legs = (data.routes[0].legs || []).map((l) =>
-          (l.steps || []).flatMap((st) =>
-            (st.geometry?.coordinates || []).map((c) => ({
+    const coordStr = waypointCoords
+      .map((c) => `${Number(c.longitude).toFixed(5)},${Number(c.latitude).toFixed(5)}`)
+      .join(';');
+
+    const endpoints = [
+      `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson&steps=true`,
+      `https://routing.openstreetmap.de/routed-car/route/v1/driving/${coordStr}?overview=full&geometries=geojson&steps=true`,
+    ];
+
+    for (const url of endpoints) {
+      try {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timeoutId = controller ? setTimeout(() => controller.abort(), 6000) : null;
+
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'GetItDeliveryApp/2.0 (contact@getit.ng)',
+            'Accept': 'application/json',
+          },
+          signal: controller?.signal,
+        });
+        if (timeoutId) clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.code === 'Ok' && data.routes && data.routes[0]) {
+            const fullCoords = (data.routes[0].geometry.coordinates || []).map((c) => ({
               latitude: c[1],
               longitude: c[0],
-            }))
-          )
-        );
+            }));
 
-        // Snapped waypoint coordinates guaranteed to sit precisely on the road line
-        const snappedWaypoints = (data.waypoints || []).map((w) => ({
-          latitude: w.location[1],
-          longitude: w.location[0],
-          name: w.name || '',
-        }));
+            // Extract individual legs (Leg 0: Rider -> Stop 1, Leg 1: Stop 1 -> Stop 2, Leg 2: Stop 2 -> Dropoff)
+            const legs = (data.routes[0].legs || []).map((l) =>
+              (l.steps || []).flatMap((st) =>
+                (st.geometry?.coordinates || []).map((c) => ({
+                  latitude: c[1],
+                  longitude: c[0],
+                }))
+              )
+            );
 
-        if (fullCoords.length > 0 && legs.length > 0 && legs[0].length > 0) {
-          return {
-            roadPoints: fullCoords,
-            legs,
-            snappedWaypoints,
-          };
+            // Snapped waypoint coordinates guaranteed to sit precisely on the road line
+            const snappedWaypoints = (data.waypoints || []).map((w) => ({
+              latitude: w.location[1],
+              longitude: w.location[0],
+              name: w.name || '',
+            }));
+
+            if (fullCoords.length > 0 && legs.length > 0 && legs[0].length > 0) {
+              return {
+                roadPoints: fullCoords,
+                legs,
+                snappedWaypoints,
+                isFallback: false,
+              };
+            }
+          }
         }
+      } catch (e) {
+        // Fall back to next endpoint
       }
-    } catch (e) {
-      console.log('OSRM road directions dynamic fetch notice, using direct route waypoints:', e?.message);
     }
 
     return buildDirectLegsBetweenWaypoints(waypointCoords);
   };
 
   const fetchedRoutesRef = useRef(new Set());
-  // Auto-fetch real-world street road directions for active orders (at most once per order ID)
+  // Auto-fetch real-world street road directions for active orders
   useEffect(() => {
     orders.forEach((ord) => {
+      const hasRealRoadLegs =
+        ord.roadLegs &&
+        Array.isArray(ord.roadLegs) &&
+        ord.roadLegs.length > 0 &&
+        ord.roadLegs[0] &&
+        ord.roadLegs[0].length > 2 &&
+        !ord.isDirectFallback;
+
       if (
         ord.status !== 'Cancelled' &&
         ord.status !== 'Delivered' &&
-        (!ord.roadLegs || !Array.isArray(ord.roadLegs) || ord.roadLegs.length === 0 || !ord.roadLegs[0] || ord.roadLegs[0].length < 2) &&
+        !hasRealRoadLegs &&
         !fetchedRoutesRef.current.has(ord.id)
       ) {
-        fetchedRoutesRef.current.add(ord.id);
         const stopsList = ord.stops && ord.stops.length > 0 ? ord.stops : [];
         const firstStore = stopsList[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
         const dest = ord.deliveryLocation || pinnedLocation || { latitude: 9.0882, longitude: 7.4933 };
@@ -2475,6 +2672,9 @@ export default function App() {
 
         fetchRealRoadDirections(waypoints).then((result) => {
           if (result && result.roadPoints && result.roadPoints.length > 0) {
+            if (!result.isFallback) {
+              fetchedRoutesRef.current.add(ord.id);
+            }
             // Update stops with their snapped pinpoint coordinates directly on the road (sIdx 0 -> snappedWaypoints[1])
             const updatedStops = (ord.stops || []).map((st, sIdx) => {
               const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx + 1] : null;
@@ -2490,7 +2690,7 @@ export default function App() {
                 ? result.snappedWaypoints[result.snappedWaypoints.length - 1]
                 : null;
 
-            setOrders((prev) =>
+            updateAndPersistOrders((prev) =>
               prev.map((o) =>
                 o.id === ord.id
                   ? {
@@ -2504,15 +2704,22 @@ export default function App() {
                       : o.deliveryLocation,
                     roadPointIndex: o.roadPointIndex || 0,
                     boltCoords: (o.roadPointIndex && result.roadPoints[o.roadPointIndex]) || o.boltCoords || result.roadPoints[0],
+                    isDirectFallback: Boolean(result.isFallback),
                   }
                   : o
               )
             );
+
+            updateDatabaseOrderStatus(ord.id, {
+              roadRouteCoordinates: result.roadPoints,
+              roadLegs: result.legs,
+              snappedWaypoints: result.snappedWaypoints,
+            }).catch(() => {});
           }
         });
       }
     });
-  }, [orders.length, orders[0]?.status]);
+  }, [orders]);
 
   // Deterministic Real-Time Courier Route Calculation based on elapsed wall-clock time
   function calculateOrderRiderProgress(ord, now = Date.now()) {
@@ -2520,11 +2727,29 @@ export default function App() {
       !ord ||
       ord.status === 'Cancelled' ||
       ord.status === 'Delivered' ||
-      ord.courierArrivedOutside ||
-      !ord.boltRider ||
-      !ord.boltRider.name
+      ord.courierArrivedOutside
     ) {
       return ord;
+    }
+
+    if (!ord.boltRider || !ord.boltRider.name) {
+      if (ord.status === 'On the Way') {
+        ord = {
+          ...ord,
+          boltRider: {
+            id: 'bolt-rider-01',
+            name: 'Musa Ibrahim',
+            phone: '+234 803 294 1194',
+            rating: '4.95',
+            trips: 1420,
+            vehicle: 'Bajaj Boxer 150 (Red)',
+            plate: 'ABJ-492-KW',
+            avatar: '🛵',
+          },
+        };
+      } else {
+        return ord;
+      }
     }
 
     const stops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
@@ -2548,10 +2773,11 @@ export default function App() {
     const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
     const destCoord = { latitude: homeLat, longitude: homeLng };
     const totalLegs = (ord.roadLegs && ord.roadLegs.length > 0) ? ord.roadLegs.length : (verifiedStops.length + 1);
+    const finalLegIndex = Math.max(0, totalLegs - 1);
 
-    // If already beyond the last delivery leg:
-    if (currentStopIdx >= totalLegs || currentStopIdx > stops.length) {
-      const arrivedAlert = `🛵 Courier has arrived outside your address! Give your Security PIN (${ord.deliveryPin || '2489'}) to collect packages.`;
+    // If courier already arrived outside or beyond total legs:
+    if (ord.courierArrivedOutside || currentStopIdx >= totalLegs || currentStopIdx > stops.length) {
+      const arrivedAlert = `🛵 Courier Musa Ibrahim has arrived outside your address! Provide Security PIN (${ord.deliveryPin || '2489'}) to receive packages.`;
       if (!ord.hasNotifiedArrived && !ord.courierArrivedOutside) {
         notifyCourierArrived(ord);
         updateDatabaseOrderStatus(ord.id, {
@@ -2559,17 +2785,20 @@ export default function App() {
           boltCoords: destCoord,
           eta: 'Arrived outside gate',
           journeyAlert: arrivedAlert,
+          courierArrivedOutside: true,
+          hasNotifiedArrived: true,
         }).catch(() => { });
       }
       return {
         ...ord,
         stops: verifiedStops,
-        currentStopIndex: totalLegs,
+        currentStopIndex: finalLegIndex,
         boltCoords: destCoord,
         hasNotifiedArrived: true,
         courierArrivedOutside: true,
         eta: 'Arrived outside gate',
         journeyAlert: arrivedAlert,
+        status: 'On the Way',
       };
     }
 
@@ -2595,7 +2824,7 @@ export default function App() {
         { latitude: homeLat, longitude: homeLng },
       ];
       const directFallback = buildDirectLegsBetweenWaypoints(wps);
-      activeLegPts = directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
+      activeLegPts = directFallback.legs[currentStopIdx] || directFallback.legs[directFallback.legs.length - 1] || [];
     }
 
     const totalPoints = Math.max(2, activeLegPts.length);
@@ -2613,21 +2842,15 @@ export default function App() {
       const calculatedPointIdx = Math.min(totalPoints - 1, Math.floor(elapsedMs / MS_PER_POINT));
       const nextCoord = activeLegPts[calculatedPointIdx] || activeLegPts[0];
 
-      // If courier reached the last point on the destination leg (buyer's side):
-      // Instantly end ride and trigger Delivered so ratings appear immediately without waiting!
-      if (currentStopIdx >= stops.length && calculatedPointIdx >= totalPoints - 1) {
-        // Fall through immediately to Case B (Delivered)
-      } else {
-        return {
-          ...ord,
-          roadPointIndex: calculatedPointIdx,
-          boltCoords: nextCoord,
-          stops: verifiedStops,
-          currentStopIndex: currentStopIdx,
-          legStartedAt: legStartedAt,
-          status: 'On the Way',
-        };
-      }
+      return {
+        ...ord,
+        roadPointIndex: calculatedPointIdx,
+        boltCoords: nextCoord,
+        stops: verifiedStops,
+        currentStopIndex: currentStopIdx,
+        legStartedAt: legStartedAt,
+        status: 'On the Way',
+      };
     }
 
     // Courier has reached the destination of this leg!
@@ -2715,43 +2938,44 @@ export default function App() {
       };
     }
 
-    // Case B: Courier reached the customer destination (Instant Trip End & Instant Ratings for rapid testing)
-    // 🎉 Courier completed & ended the trip! Order is Delivered INSTANTLY upon motto reaching buyer!
-    const deliveredAlert = '🎉 Order Delivered! Enjoy your fresh provisions.';
-    if (!ord.hasNotifiedDelivered) {
-      notifyOrderDelivered(ord);
+    // Case B: Courier reached the customer destination!
+    // Courier parks outside client's residence and announces arrival with Security PIN. Awaits client handover confirmation!
+    const arrivedAlert = `🛵 Courier Musa Ibrahim has arrived outside your address! Provide Security PIN (${ord.deliveryPin || '2489'}) to receive packages.`;
+    if (!ord.hasNotifiedArrived && !ord.courierArrivedOutside) {
+      notifyCourierArrived(ord);
+      updateDatabaseOrderStatus(ord.id, {
+        stops: verifiedStops,
+        boltCoords: destCoord,
+        eta: 'Arrived outside gate',
+        journeyAlert: arrivedAlert,
+        courierArrivedOutside: true,
+        hasNotifiedArrived: true,
+      }).catch(() => { });
+
+      broadcastLiveEvent('ORDER_UPDATE', {
+        orderId: ord.id,
+        stops: verifiedStops,
+        boltCoords: destCoord,
+        eta: 'Arrived outside gate',
+        journeyAlert: arrivedAlert,
+        boltRider: ord.boltRider,
+        boltStatus: 'ARRIVED',
+        courierArrivedOutside: true,
+        hasNotifiedArrived: true,
+      });
     }
-
-    updateDatabaseOrderStatus(ord.id, {
-      status: 'Delivered',
-      eta: 'Delivered',
-      journeyAlert: deliveredAlert,
-      boltCoords: destCoord,
-      courierArrivedOutside: true,
-      hasNotifiedArrived: true,
-    }).catch(() => { });
-
-    broadcastLiveEvent('ORDER_UPDATE', {
-      orderId: ord.id,
-      status: 'Delivered',
-      eta: 'Delivered',
-      journeyAlert: deliveredAlert,
-      boltCoords: destCoord,
-      boltRider: ord.boltRider,
-      boltStatus: 'DELIVERED',
-      courierArrivedOutside: true,
-      hasNotifiedArrived: true,
-    });
 
     return {
       ...ord,
-      status: 'Delivered',
-      eta: 'Delivered',
-      journeyAlert: deliveredAlert,
+      stops: verifiedStops,
+      currentStopIndex: finalLegIndex,
       boltCoords: destCoord,
-      courierArrivedOutside: true,
+      roadPointIndex: totalPoints - 1,
       hasNotifiedArrived: true,
-      hasNotifiedDelivered: true,
+      courierArrivedOutside: true,
+      eta: 'Arrived outside gate',
+      journeyAlert: arrivedAlert,
+      status: 'On the Way',
     };
   }
 
@@ -2852,6 +3076,7 @@ export default function App() {
               const stops = (riderPayload.stops && Array.isArray(riderPayload.stops) && riderPayload.stops.length > 0)
                 ? riderPayload.stops
                 : o.stops;
+              const isOrderOnTheWay = updated.status === 'On the Way' || o.status === 'On the Way';
               const hasRider = Boolean(riderPayload.name && riderPayload.phone);
               const riderObj = hasRider ? {
                 id: riderPayload.id || 'bolt-rider-01',
@@ -2862,7 +3087,16 @@ export default function App() {
                 vehicle: riderPayload.vehicle || 'Bajaj Boxer 150 (Red)',
                 plate: riderPayload.plate || 'ABJ-492-KW',
                 avatar: riderPayload.avatar || '🛵',
-              } : null;
+              } : (isOrderOnTheWay ? {
+                id: 'bolt-rider-01',
+                name: 'Musa Ibrahim',
+                phone: '+234 803 294 1194',
+                rating: '4.95',
+                trips: 1420,
+                vehicle: 'Bajaj Boxer 150 (Red)',
+                plate: 'ABJ-492-KW',
+                avatar: '🛵',
+              } : null);
 
               return {
                 ...o,
@@ -2870,10 +3104,24 @@ export default function App() {
                 stops: stops,
                 journeyAlert: riderPayload.journeyAlert || o.journeyAlert,
                 boltStatus: updated.bolt_status || o.boltStatus,
-                boltRider: riderObj,
+                boltRider: riderObj || o.boltRider,
                 boltCoords: updated.bolt_coords || o.boltCoords,
                 eta: updated.eta || o.eta,
                 courierSearching: updated.status === 'Looking for Courier',
+                courierArrivedOutside: riderPayload.courierArrivedOutside !== undefined ? Boolean(riderPayload.courierArrivedOutside) : Boolean(o.courierArrivedOutside),
+                hasNotifiedArrived: riderPayload.hasNotifiedArrived !== undefined ? Boolean(riderPayload.hasNotifiedArrived) : Boolean(o.hasNotifiedArrived),
+                messages: (() => {
+                  const existingMsgs = (o.messages && Array.isArray(o.messages)) ? o.messages : [];
+                  const incomingMsgs = (riderPayload.messages && Array.isArray(riderPayload.messages)) ? riderPayload.messages : [];
+                  const msgMap = new Map();
+                  existingMsgs.forEach((m) => msgMap.set(m.id, m));
+                  incomingMsgs.forEach((m) => msgMap.set(m.id, m));
+                  const merged = Array.from(msgMap.values()).sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+                  if (chatModalVisibleRef.current && targetChatOrderIdRef.current === updated.id) {
+                    setChatMessages(merged);
+                  }
+                  return merged;
+                })(),
                 currentStopIndex: riderPayload.currentStopIndex !== undefined ? Number(riderPayload.currentStopIndex) : o.currentStopIndex,
                 roadPointIndex: riderPayload.roadPointIndex !== undefined ? Number(riderPayload.roadPointIndex) : o.roadPointIndex,
                 legStartedAt: riderPayload.legStartedAt !== undefined ? Number(riderPayload.legStartedAt) : o.legStartedAt,
@@ -2899,115 +3147,117 @@ export default function App() {
         const cloudStores = await getStores();
         if (!isMounted || !cloudStores || cloudStores.length === 0) return;
 
-        // Fetch custom store inventories
-        const enriched = await Promise.all(
-          cloudStores.map(async (dbStore) => {
-            const inventory = await getStoreInventory(dbStore.id);
-            const prods =
-              inventory && inventory.length > 0
-                ? inventory
-                : STORES_AROUND_ME.find((s) => s.id === dbStore.id)?.products || [];
+        // 1. Build and render stores IMMEDIATELY without waiting for all inventory queries
+        const buildStoreObject = (dbStore, prods = null) => {
+          const meta = parseStoreMetadata(dbStore);
+          const isPharmacy =
+            meta.storeType === 'pharmacy' ||
+            (dbStore.category || '').toLowerCase().includes('pharm') ||
+            (dbStore.store_type || '').toLowerCase().includes('pharm') ||
+            (dbStore.name || '').toLowerCase().includes('pharm');
 
-            const meta = parseStoreMetadata(dbStore);
-            const isPharmacy =
-              meta.storeType === 'pharmacy' ||
-              (dbStore.category || '').toLowerCase().includes('pharm') ||
-              (dbStore.store_type || '').toLowerCase().includes('pharm') ||
-              (dbStore.name || '').toLowerCase().includes('pharm');
+          const categoryKey = isPharmacy
+            ? 'pharmacy'
+            : (dbStore.category || 'gourmet').toLowerCase().includes('organ')
+              ? 'organic'
+              : (dbStore.category || '').toLowerCase().includes('bake')
+                ? 'bakery'
+                : (dbStore.category || '').toLowerCase().includes('cell')
+                  ? 'cellar'
+                  : (dbStore.category || '').toLowerCase().includes('herit')
+                    ? 'heritage'
+                    : 'gourmet';
+          const isOpenBool =
+            dbStore.isOpen !== undefined
+              ? Boolean(dbStore.isOpen)
+              : (dbStore.is_open !== undefined
+                ? Boolean(dbStore.is_open)
+                : (meta.isOpen !== undefined
+                  ? Boolean(meta.isOpen)
+                  : true));
 
-            const categoryKey = isPharmacy
-              ? 'pharmacy'
-              : (dbStore.category || 'gourmet').toLowerCase().includes('organ')
-                ? 'organic'
-                : (dbStore.category || '').toLowerCase().includes('bake')
-                  ? 'bakery'
-                  : (dbStore.category || '').toLowerCase().includes('cell')
-                    ? 'cellar'
-                    : (dbStore.category || '').toLowerCase().includes('herit')
-                      ? 'heritage'
-                      : 'gourmet';
-            const isOpenBool =
-              dbStore.isOpen !== undefined
-                ? Boolean(dbStore.isOpen)
-                : (dbStore.is_open !== undefined
-                  ? Boolean(dbStore.is_open)
-                  : (meta.isOpen !== undefined
-                    ? Boolean(meta.isOpen)
-                    : true));
+          const rawImg = meta.image || (isPharmacy
+            ? 'https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=500&q=65'
+            : 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=500&q=65');
 
-            return {
-              id: dbStore.id,
-              name: dbStore.name,
-              storeType: isPharmacy ? 'pharmacy' : 'grocery',
-              category: categoryKey,
-              categoryLabel: isPharmacy
-                ? 'Licensed Community Pharmacy'
-                : (dbStore.category || 'Gourmet & Groceries'),
-              pharmacist:
-                meta.pharmacist ||
-                (isPharmacy
-                  ? {
-                      name: 'On-Duty Clinical Pharmacist',
-                      qualification: 'B.Pharm, MPSN',
-                      licenseNo: 'PCN Verified',
-                      status: 'On-Duty • Available for Consult',
-                    }
-                  : null),
-              rating: Number(dbStore.rating) || 5.0,
-              reviewCount: 'New',
-              distance: '1.2 km',
-              deliveryTime: '20-30 min',
-              deliveryFee: dbStore.delivery_fee ? `₦${Number(dbStore.delivery_fee).toLocaleString()}` : '₦1,200',
-              freeDeliveryThreshold: 25000,
-              tag: isPharmacy ? 'VERIFIED PHARMACY' : 'VERIFIED MERCHANT',
-              badgeColor: isPharmacy ? '#2563EB' : COLORS.emeraldPrimary,
-              address: dbStore.address || 'Abuja, Nigeria',
-              district: dbStore.district || 'Maitama, Abuja',
-              latitude: Number(dbStore.latitude) || 9.0882,
-              longitude: Number(dbStore.longitude) || 7.4933,
-              phone: dbStore.phone || '+234 800 000 0000',
-              image:
-                meta.image ||
-                (isPharmacy
-                  ? 'https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=800&q=80'
-                  : 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80'),
-              description: isPharmacy
-                ? `${dbStore.name} — licensed community pharmacy dispensary, authentic medications & clinical pharmacist consultations on GETIT.`
-                : `${dbStore.name} — fresh provisions, artisan goods and rapid doorstep delivery across Abuja.`,
-              products: prods,
-              isOpen: isOpenBool,
-              is_open: isOpenBool,
-              status: isOpenBool ? 'open' : 'closed',
-              isClosed: !isOpenBool,
-              openTime: meta.openTime,
-              closeTime: meta.closeTime,
-              operatingDays: meta.operatingDays,
-              is24Hours: meta.is24Hours,
-            };
-          })
-        );
+          const optimizedImg = optimizeImageUrl(rawImg, 500, 65);
 
+          return {
+            id: dbStore.id,
+            name: dbStore.name,
+            storeType: isPharmacy ? 'pharmacy' : 'grocery',
+            category: categoryKey,
+            categoryLabel: isPharmacy
+              ? 'Licensed Community Pharmacy'
+              : (dbStore.category || 'Gourmet & Groceries'),
+            pharmacist:
+              meta.pharmacist ||
+              (isPharmacy
+                ? {
+                    name: 'On-Duty Clinical Pharmacist',
+                    qualification: 'B.Pharm, MPSN',
+                    licenseNo: 'PCN Verified',
+                    status: 'On-Duty • Available for Consult',
+                  }
+                : null),
+            rating: Number(dbStore.rating) || 5.0,
+            reviewCount: 'New',
+            distance: '1.2 km',
+            deliveryTime: '20-30 min',
+            deliveryFee: dbStore.delivery_fee ? `₦${Number(dbStore.delivery_fee).toLocaleString()}` : '₦1,200',
+            freeDeliveryThreshold: 25000,
+            tag: isPharmacy ? 'VERIFIED PHARMACY' : 'VERIFIED MERCHANT',
+            badgeColor: isPharmacy ? '#2563EB' : COLORS.emeraldPrimary,
+            address: dbStore.address || 'Abuja, Nigeria',
+            district: dbStore.district || 'Maitama, Abuja',
+            latitude: Number(dbStore.latitude) || 9.0882,
+            longitude: Number(dbStore.longitude) || 7.4933,
+            phone: dbStore.phone || '+234 800 000 0000',
+            image: optimizedImg,
+            description: isPharmacy
+              ? `${dbStore.name} — licensed community pharmacy dispensary, authentic medications & clinical pharmacist consultations on GETIT.`
+              : `${dbStore.name} — fresh provisions, artisan goods and rapid doorstep delivery across Abuja.`,
+            products: prods !== null ? prods : (STORES_AROUND_ME.find((s) => s.id === dbStore.id)?.products || []),
+            isOpen: isOpenBool,
+            is_open: isOpenBool,
+            status: isOpenBool ? 'open' : 'closed',
+            isClosed: !isOpenBool,
+            openTime: meta.openTime,
+            closeTime: meta.closeTime,
+            operatingDays: meta.operatingDays,
+            is24Hours: meta.is24Hours,
+          };
+        };
+
+        const immediateStores = cloudStores.map((dbStore) => buildStoreObject(dbStore));
         if (!isMounted) return;
 
         setStoresList((prev) => {
           const prevMap = new Map(prev.map((s) => [s.id, s]));
-          const mergedCloud = enriched.map((dbStore) => {
+          const mergedCloud = immediateStores.map((dbStore) => {
             const existing = prevMap.get(dbStore.id);
             if (!existing) return dbStore;
             return {
               ...existing,
-              ...dbStore, // Fresh cloud values override local stale values!
-              products: (dbStore.products && dbStore.products.length > 0) ? dbStore.products : (existing.products || []),
+              ...dbStore,
+              products: (existing.products && existing.products.length > 0) ? existing.products : dbStore.products,
             };
           });
           AsyncStorage.setItem('getit_stores_list', JSON.stringify(mergedCloud)).catch(console.warn);
           return mergedCloud;
         });
 
-        // LIVE UPDATE: Also update selectedStore in real-time so buyer views the new 24h status immediately!
+        // Fast parallel prefetching for all store images
+        immediateStores.forEach((st) => {
+          if (st.image && typeof st.image === 'string' && st.image.startsWith('http')) {
+            Image.prefetch(st.image).catch(() => {});
+          }
+        });
+
+        // LIVE UPDATE: Also update selectedStore in real-time
         setSelectedStore((prev) => {
           if (!prev) return null;
-          const fresh = enriched.find((s) => s.id === prev.id);
+          const fresh = immediateStores.find((s) => s.id === prev.id);
           if (!fresh) return prev;
           return {
             ...prev,
@@ -3015,6 +3265,28 @@ export default function App() {
             products: (fresh.products && fresh.products.length > 0) ? fresh.products : prev.products,
           };
         });
+
+        // 2. Fetch custom store inventories in the background without blocking the UI
+        Promise.all(
+          cloudStores.map(async (dbStore) => {
+            const inventory = await getStoreInventory(dbStore.id);
+            return { storeId: dbStore.id, inventory };
+          })
+        )
+          .then((invList) => {
+            if (!isMounted) return;
+            const invMap = new Map(invList.map((x) => [x.storeId, x.inventory]));
+            setStoresList((prev) =>
+              prev.map((st) => {
+                const inv = invMap.get(st.id);
+                if (inv && inv.length > 0) {
+                  return { ...st, products: inv };
+                }
+                return st;
+              })
+            );
+          })
+          .catch(() => {});
       } catch (err) {
         console.warn('Error loading cloud stores:', err);
       }
@@ -3058,7 +3330,7 @@ export default function App() {
           latitude: Number(dbStore.latitude) || 9.0882,
           longitude: Number(dbStore.longitude) || 7.4933,
           phone: dbStore.phone || '+234 800 000 0000',
-          image: meta.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+          image: optimizeImageUrl(meta.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=500&q=65', 500, 65),
           description: `${dbStore.name} — partner store live on GETIT Abuja.`,
           products: [],
           isOpen: isOpenBool,
@@ -3068,6 +3340,8 @@ export default function App() {
           operatingDays: meta.operatingDays,
           is24Hours: is24H,
         };
+
+        if (newStoreObj.image) Image.prefetch(newStoreObj.image).catch(() => {});
 
         getStoreInventory(dbStore.id).then((inv) => {
           if (inv && inv.length > 0) {
@@ -3128,10 +3402,12 @@ export default function App() {
               closeTime: meta.closeTime || s.closeTime,
               operatingDays: meta.operatingDays || s.operatingDays,
               is24Hours: is24H,
-              image: meta.image || s.image,
+              image: optimizeImageUrl(meta.image || s.image, 500, 65),
             };
           })
         );
+
+        if (meta.image) Image.prefetch(optimizeImageUrl(meta.image, 500, 65)).catch(() => {});
 
         setSelectedStore((prev) => {
           if (!prev || prev.id !== dbStore.id) return prev;
@@ -3304,6 +3580,40 @@ export default function App() {
         handleInventoryPayload({ eventType: event.eventType === 'INVENTORY_INSERT' ? 'INSERT' : 'UPDATE', new: event.item });
       } else if (event.eventType === 'INVENTORY_DELETE') {
         handleInventoryPayload({ eventType: 'DELETE', old: { id: event.itemId, store_id: event.storeId } });
+      } else if (event.eventType === 'PRESCRIPTION_PAID') {
+        const payload = event.payload || event;
+        const { orderId, billId, paidAt } = payload;
+        const paidIso = paidAt || new Date().toISOString();
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.prescription && (!billId || !m.prescription.billId || m.prescription.billId === billId)
+              ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: paidIso } }
+              : m
+          )
+        );
+        updateAndPersistOrders((prev) =>
+          prev.map((o) => {
+            if (o.id === orderId) {
+              const updatedMsgs = (o.messages || []).map((m) =>
+                m.prescription && (!billId || !m.prescription.billId || m.prescription.billId === billId)
+                  ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: paidIso } }
+                  : m
+              );
+              return { ...o, messages: updatedMsgs };
+            }
+            return o;
+          })
+        );
+        if (orderId) {
+          getOrderChatMessages(orderId).then((existing) => {
+            const updated = existing.map((m) =>
+              m.prescription && (!billId || !m.prescription.billId || m.prescription.billId === billId)
+                ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: paidIso } }
+                : m
+            );
+            AsyncStorage.setItem(`getit_chat_messages_${orderId}`, JSON.stringify(updated)).catch(() => {});
+          }).catch(() => {});
+        }
       } else if (event.eventType === 'CHAT_MESSAGE') {
         const payload = event.payload || event;
         const { orderId, message } = payload;
@@ -3330,32 +3640,61 @@ export default function App() {
           }
 
           // If message carries prescription payment confirmation, update bill cards immediately
-          if (message.paidBillId) {
+          if (message.paidBillId || message.prescriptionBillPaid) {
             setChatMessages((prev) =>
               prev.map((m) =>
-                m.prescription?.billId === message.paidBillId
-                  ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: new Date().toISOString() } }
+                m.prescription && (!message.paidBillId || !m.prescription.billId || m.prescription.billId === message.paidBillId || !m.prescription.paid)
+                  ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: message.createdAt || new Date().toISOString() } }
                   : m
               )
             );
           }
 
-          // Always cache message to AsyncStorage
+          // Always cache message to AsyncStorage & reconcile paid prescription state
           try {
             getOrderChatMessages(orderId).then((existing) => {
-              if (!existing.some((m) => m.id === message.id)) {
-                AsyncStorage.setItem(
-                  `getit_chat_messages_${orderId}`,
-                  JSON.stringify([...existing, message])
-                );
+              let updatedList = existing.map((m) => {
+                if (m.prescription && (message.paidBillId || message.prescriptionBillPaid)) {
+                  if (!message.paidBillId || !m.prescription.billId || m.prescription.billId === message.paidBillId) {
+                    return { ...m, prescription: { ...m.prescription, paid: true, paidAt: message.createdAt || new Date().toISOString() } };
+                  }
+                }
+                return m;
+              });
+              if (!updatedList.some((m) => m.id === message.id)) {
+                updatedList.push(message);
               }
+              AsyncStorage.setItem(
+                `getit_chat_messages_${orderId}`,
+                JSON.stringify(updatedList)
+              ).catch(() => {});
             });
           } catch (e) {}
 
-          if (chatModalVisibleRef.current && targetChatOrderIdRef.current === orderId) {
+          const isActivelyViewingChat =
+            chatModalVisibleRef.current &&
+            (
+              targetChatOrderIdRef.current === orderId ||
+              (targetChatOrderRef.current && (
+                targetChatOrderRef.current.id === orderId ||
+                (message.storeId && String(targetChatOrderRef.current.storeId) === String(message.storeId)) ||
+                (incomingOrder?.id && targetChatOrderRef.current.id === incomingOrder.id)
+              ))
+            );
+
+          const incomingProcessedMsg = isActivelyViewingChat
+            ? {
+                ...message,
+                read: true,
+                readByBuyer: myMode === 'customer' ? true : message.readByBuyer,
+                readByMerchant: myMode === 'merchant' ? true : message.readByMerchant,
+              }
+            : message;
+
+          if (isActivelyViewingChat) {
             setChatMessages((prev) => {
-              if (prev.some((m) => m.id === message.id)) return prev;
-              return [...prev, message];
+              if (prev.some((m) => m.id === incomingProcessedMsg.id)) return prev;
+              return [...prev, incomingProcessedMsg];
             });
           } else {
             // When recipient is not actively inside the chat modal, trigger unread badge & chime/toast
@@ -3396,31 +3735,52 @@ export default function App() {
           }
 
           updateAndPersistOrders((prev) => {
-            const exists = prev.some((o) => o.id === orderId);
-            if (exists) {
-              return prev.map((o) => {
-                if (o.id === orderId) {
-                  let existing = o.messages || [];
-                  if (message.paidBillId) {
-                    existing = existing.map((m) =>
-                      m.prescription?.billId === message.paidBillId
-                        ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: new Date().toISOString() } }
-                        : m
-                    );
-                  }
-                  if (existing.some((m) => m.id === message.id)) return { ...o, messages: existing };
-                  return { ...o, messages: [...existing, message] };
-                }
-                return o;
-              });
+            const matchIndex = prev.findIndex((o) => o.id === orderId);
+            if (matchIndex >= 0) {
+              const o = prev[matchIndex];
+              let existing = o.messages || [];
+              if (message.paidBillId || message.prescriptionBillPaid) {
+                existing = existing.map((m) =>
+                  m.prescription && (!message.paidBillId || !m.prescription.billId || m.prescription.billId === message.paidBillId || !m.prescription.paid)
+                    ? { ...m, prescription: { ...m.prescription, paid: true, paidAt: message.createdAt || new Date().toISOString() } }
+                    : m
+                );
+              }
+              const resolvedName = (o.customerName && o.customerName !== 'Patient')
+                ? o.customerName
+                : (message.customerName && message.customerName !== 'Patient'
+                    ? message.customerName
+                    : (message.senderRole === 'buyer' && message.senderName && message.senderName !== 'Patient'
+                        ? message.senderName
+                        : (incomingOrder?.customerName && incomingOrder.customerName !== 'Patient' ? incomingOrder.customerName : o.customerName)));
+              const resolvedPhone = o.customerPhone || message.customerPhone || incomingOrder?.customerPhone || '';
+              const alreadyHas = existing.some((m) => m.id === message.id);
+              const updatedMsgs = alreadyHas ? existing : [...existing, incomingProcessedMsg];
+              const updatedOrder = {
+                ...o,
+                timestamp: Date.now(),
+                customerName: resolvedName || o.customerName,
+                customerPhone: resolvedPhone,
+                messages: updatedMsgs,
+              };
+              const others = prev.filter((_, idx) => idx !== matchIndex);
+              return [updatedOrder, ...others];
             } else {
-              // Auto-construct and attach conversation order entry on recipient's device
+              // Auto-construct and attach conversation order entry at top of recipient's list
+              const buyerName = (message.customerName && message.customerName !== 'Patient')
+                ? message.customerName
+                : (message.senderRole === 'buyer' && message.senderName && message.senderName !== 'Patient'
+                    ? message.senderName
+                    : (incomingOrder?.customerName && incomingOrder.customerName !== 'Patient' ? incomingOrder.customerName : 'Customer'));
               const newEntry = incomingOrder
                 ? {
                     ...incomingOrder,
+                    timestamp: Date.now(),
+                    customerName: buyerName,
+                    customerPhone: incomingOrder.customerPhone || message.customerPhone || '',
                     messages: incomingOrder.messages?.some((m) => m.id === message.id)
                       ? incomingOrder.messages
-                      : [...(incomingOrder.messages || []), message],
+                      : [...(incomingOrder.messages || []), incomingProcessedMsg],
                   }
                 : {
                     id: orderId,
@@ -3429,18 +3789,258 @@ export default function App() {
                     storeName: message.storeName || currentMerchantStoreRef.current?.name || 'Pharmacy',
                     storeType: 'pharmacy',
                     customerId: message.customerId,
-                    customerName: message.customerName || (message.senderRole === 'buyer' ? message.senderName : 'Patient'),
+                    customerName: buyerName,
                     customerPhone: message.customerPhone || '',
+                    timestamp: Date.now(),
                     createdAt: message.createdAt || new Date().toISOString(),
                     isPrescriptionOrder: true,
                     prescriptionImage: message.prescriptionImage || null,
                     items: [],
                     total: 0,
-                    messages: [message],
+                    messages: [incomingProcessedMsg],
                   };
               return [newEntry, ...prev];
             }
           });
+
+          // If message was received from another device, broadcast delivery & read acknowledgments
+          if (message.senderDeviceId !== DEVICE_CLIENT_ID) {
+            broadcastLiveEvent('MESSAGE_DELIVERED', {
+              messageId: message.id,
+              orderId,
+              recipientDeviceId: DEVICE_CLIENT_ID,
+              deliveredAt: new Date().toISOString(),
+            });
+
+            if (isActivelyViewingChat) {
+              broadcastLiveEvent('MESSAGE_READ', {
+                messageIds: [message.id],
+                orderId,
+                readByDeviceId: DEVICE_CLIENT_ID,
+                readAt: new Date().toISOString(),
+              });
+            }
+          }
+        }
+      } else if (event.eventType === 'MESSAGE_DELIVERED') {
+        const payload = event.payload || event;
+        if (payload.recipientDeviceId === DEVICE_CLIENT_ID) return;
+        const { messageId, orderId } = payload;
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId && m.status !== 'read'
+              ? { ...m, status: 'delivered', delivered: true, deliveredAt: payload.deliveredAt }
+              : m
+          )
+        );
+        updateAndPersistOrders((prev) =>
+          prev.map((o) =>
+            o.id === orderId
+              ? {
+                  ...o,
+                  messages: (o.messages || []).map((m) =>
+                    m.id === messageId && m.status !== 'read'
+                      ? { ...m, status: 'delivered', delivered: true, deliveredAt: payload.deliveredAt }
+                      : m
+                  ),
+                }
+              : o
+          )
+        );
+      } else if (event.eventType === 'MESSAGE_READ') {
+        const payload = event.payload || event;
+        if (payload.readByDeviceId === DEVICE_CLIENT_ID) return;
+        const { messageIds, orderId } = payload;
+        const idSet = messageIds ? new Set(messageIds) : null;
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            !idSet || idSet.has(m.id)
+              ? { ...m, status: 'read', read: true, readAt: payload.readAt }
+              : m
+          )
+        );
+        updateAndPersistOrders((prev) =>
+          prev.map((o) =>
+            o.id === orderId
+              ? {
+                  ...o,
+                  messages: (o.messages || []).map((m) =>
+                    !idSet || idSet.has(m.id)
+                      ? { ...m, status: 'read', read: true, readAt: payload.readAt }
+                      : m
+                  ),
+                }
+              : o
+          )
+        );
+      } else if (event.eventType === 'INCOMING_CALL') {
+        const callPayload = event.payload || event;
+        // Prevent echo if self-broadcast
+        if (callPayload.callerDeviceId && callPayload.callerDeviceId === DEVICE_CLIENT_ID) return;
+
+        const myUserId = currentUserRef.current?.id;
+        const myAppMode = appModeRef.current;
+        const currentChatOrdId = targetChatOrderRef.current?.id;
+        const myStoreId = currentMerchantStoreRef.current?.id;
+
+        const isTargetMatch =
+          // Match user ID
+          (myUserId && (callPayload.recipientId === myUserId || callPayload.customerId === myUserId)) ||
+          // Match merchant
+          (myAppMode === 'merchant' && (callPayload.recipientRole === 'merchant' || (myStoreId && String(callPayload.storeId) === String(myStoreId)))) ||
+          // Match buyer
+          (myAppMode === 'customer' && (callPayload.recipientRole === 'buyer' || callPayload.recipientRole === 'customer')) ||
+          // Looking at same order
+          (currentChatOrdId && callPayload.orderId && currentChatOrdId === callPayload.orderId) ||
+          (myAppMode === 'merchant' && merchantOrdersRef.current?.some((o) => o.id === callPayload.orderId)) ||
+          (myAppMode === 'customer' && ordersRef.current?.some((o) => o.id === callPayload.orderId));
+
+        if (isTargetMatch) {
+          if (activeCallRef.current && activeCallRef.current.status !== 'ended') {
+            broadcastLiveEvent('CALL_DECLINED', {
+              callId: callPayload.callId,
+              orderId: callPayload.orderId,
+              callerDeviceId: DEVICE_CLIENT_ID,
+              reason: 'busy',
+            });
+            return;
+          }
+
+          const partnerName =
+            callPayload.callerName && callPayload.callerName !== 'Patient'
+              ? callPayload.callerName
+              : (callPayload.callerRole === 'merchant' ? (callPayload.storeName || 'Pharmacy Dispensary') : 'Patient Consultation');
+
+          const newIncomingCall = {
+            callId: callPayload.callId,
+            orderId: callPayload.orderId,
+            status: 'ringing',
+            direction: 'incoming',
+            callerDeviceId: callPayload.callerDeviceId,
+            callerId: callPayload.callerId,
+            callerName: callPayload.callerName,
+            callerRole: callPayload.callerRole,
+            recipientId: callPayload.recipientId,
+            recipientRole: callPayload.recipientRole,
+            storeName: callPayload.storeName,
+            partnerName,
+            partnerRole: callPayload.callerRole,
+            durationSec: 0,
+            isMuted: false,
+            isSpeaker: true,
+            isRemoteSpeaking: false,
+          };
+
+          // IMMEDIATELY CLOSE CHAT MODAL SO FULL-SCREEN INCOMING CALL SCREEN POPS UP INSTANTLY!
+          setChatModalVisible(false);
+          setActiveCall(newIncomingCall);
+          setIsCallModalVisible(true);
+          setIsCallMinimized(false);
+          startRingtoneLoop('incoming');
+
+          // Immediately acknowledge caller that receiver's phone is online and ringing
+          broadcastLiveEvent('CALL_RINGING', {
+            callId: callPayload.callId,
+            orderId: callPayload.orderId,
+            callerDeviceId: callPayload.callerDeviceId,
+            responderDeviceId: DEVICE_CLIENT_ID,
+          });
+        }
+      } else if (event.eventType === 'CALL_RINGING') {
+        const payload = event.payload || event;
+        if (payload.responderDeviceId === DEVICE_CLIENT_ID) return;
+        if (activeCallRef.current && activeCallRef.current.callId === payload.callId) {
+          // Handshake confirmed: receiver's phone is online & ringing!
+          setActiveCall((prev) => (prev && prev.status === 'calling' ? { ...prev, status: 'ringing' } : prev));
+          startRingtoneLoop('outgoing');
+        }
+      } else if (event.eventType === 'TYPING_STATUS') {
+        const payload = event.payload || event;
+        if (payload.senderDeviceId === DEVICE_CLIENT_ID) return;
+        const isForCurrentChat =
+          chatModalVisibleRef.current &&
+          (targetChatOrderIdRef.current === payload.orderId ||
+           (targetChatOrderRef.current && (
+             targetChatOrderRef.current.id === payload.orderId ||
+             (payload.storeId && String(targetChatOrderRef.current.storeId) === String(payload.storeId))
+           )));
+        if (isForCurrentChat) {
+          setIsPartnerTyping(Boolean(payload.isTyping));
+          if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+          if (payload.isTyping) {
+            typingTimeoutRef.current = setTimeout(() => {
+              setIsPartnerTyping(false);
+            }, 3500);
+          }
+        }
+      } else if (event.eventType === 'CALL_ACCEPTED') {
+        const payload = event.payload || event;
+        if (payload.callerDeviceId === DEVICE_CLIENT_ID) return;
+        if (activeCallRef.current && activeCallRef.current.callId === payload.callId) {
+          stopRingtoneLoop();
+          isCallConnectedRef.current = true;
+          setActiveCall((prev) => (prev ? { ...prev, status: 'connected', startedAt: Date.now(), durationSec: 0 } : prev));
+          if (callTimerRef.current) clearInterval(callTimerRef.current);
+          callTimerRef.current = setInterval(() => {
+            setActiveCall((prev) => {
+              if (!prev || prev.status !== 'connected') return prev;
+              return { ...prev, durationSec: (prev.durationSec || 0) + 1 };
+            });
+          }, 1000);
+          try {
+            playAudioBeep('default');
+          } catch (e) {}
+
+          // IMMEDIATELY START CONTINUOUS LIVE AUDIO STREAMING
+          startContinuousLiveAudioLoop();
+        }
+      } else if (event.eventType === 'CALL_DECLINED') {
+        const payload = event.payload || event;
+        if (payload.callerDeviceId === DEVICE_CLIENT_ID) return;
+        if (activeCallRef.current && activeCallRef.current.callId === payload.callId) {
+          stopRingtoneLoop();
+          isCallConnectedRef.current = false;
+          incomingAudioQueueRef.current = [];
+          setActiveCall((prev) => (prev ? { ...prev, status: 'ended', endReason: payload.reason || 'Declined' } : prev));
+          if (callTimerRef.current) {
+            clearInterval(callTimerRef.current);
+            callTimerRef.current = null;
+          }
+          setTimeout(() => {
+            setActiveCall(null);
+            setIsCallModalVisible(false);
+            setIsCallMinimized(false);
+          }, 1400);
+        }
+      } else if (event.eventType === 'CALL_ENDED') {
+        const payload = event.payload || event;
+        if (payload.callerDeviceId === DEVICE_CLIENT_ID) return;
+        if (activeCallRef.current && activeCallRef.current.callId === payload.callId) {
+          stopRingtoneLoop();
+          isCallConnectedRef.current = false;
+          incomingAudioQueueRef.current = [];
+          setActiveCall((prev) => (prev ? { ...prev, status: 'ended' } : prev));
+          if (callTimerRef.current) {
+            clearInterval(callTimerRef.current);
+            callTimerRef.current = null;
+          }
+          setTimeout(() => {
+            setActiveCall(null);
+            setIsCallModalVisible(false);
+            setIsCallMinimized(false);
+          }, 1200);
+        }
+      } else if (event.eventType === 'CALL_AUDIO_BURST') {
+        const burstPayload = event.payload || event;
+        if (burstPayload.callerDeviceId === DEVICE_CLIENT_ID) return;
+        if (
+          activeCallRef.current &&
+          activeCallRef.current.callId === burstPayload.callId &&
+          isCallConnectedRef.current &&
+          burstPayload.audioBase64
+        ) {
+          incomingAudioQueueRef.current.push(burstPayload.audioBase64);
+          processIncomingAudioQueue();
         }
       } else if (event.eventType === 'ORDER_UPDATE') {
         const payload = event.payload || event;
@@ -3506,7 +4106,7 @@ export default function App() {
                 subtotal: payload.subtotal !== undefined ? payload.subtotal : o.subtotal,
                 total: payload.total !== undefined ? payload.total : o.total,
                 boltStatus: payload.boltStatus || o.boltStatus,
-                boltRider: payload.boltRider || o.boltRider,
+                boltRider: payload.boltRider || o.boltRider || (payload.status === 'On the Way' || o.status === 'On the Way' ? { id: 'bolt-rider-01', name: 'Musa Ibrahim', phone: '+234 803 294 1194', rating: '4.95', trips: 1420, vehicle: 'Bajaj Boxer 150 (Red)', plate: 'ABJ-492-KW', avatar: '🛵' } : null),
                 stops: payload.stops || o.stops,
                 currentStopIndex: payload.currentStopIndex !== undefined ? payload.currentStopIndex : o.currentStopIndex,
                 roadPointIndex: payload.roadPointIndex !== undefined ? payload.roadPointIndex : o.roadPointIndex,
@@ -3523,17 +4123,18 @@ export default function App() {
       }
     });
 
-    // 3. Background Heartbeat Poller (Every 15s): Guarantees live sync of stores & active orders
+    // 3. Background Heartbeat Poller (Every 30s): Guarantees live sync of stores & active orders
     const syncInterval = setInterval(() => {
       if (isMounted) {
         loadCloudStores();
         syncOrdersFromCloud(false);
       }
-    }, 15000);
+    }, 30000);
 
     // 4. AppState Lifecycle Listener: When user returns from background / unlocks screen, catch up elapsed time
     const appStateSub = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active' && isMounted) {
+        ensureLiveBroadcastConnected();
         setOrders((prev) => prev.map((ord) => calculateOrderRiderProgress(ord, Date.now())));
         loadCloudStores();
         syncOrdersFromCloud(false);
@@ -3609,32 +4210,29 @@ export default function App() {
         if (storedUser) {
           try {
             const parsed = JSON.parse(storedUser);
-            // Verify against authoritative database
-            const verified = await findDatabaseUser(parsed.id || parsed.phone || parsed.email);
-            if (verified) {
-              setCurrentUser(verified);
+            let userToSet = parsed;
+            try {
+              // Attempt to verify and sync latest profile from database
+              const verified = await findDatabaseUser(parsed.id || parsed.phone || parsed.email);
+              if (verified) {
+                userToSet = { ...parsed, ...verified };
+              }
+            } catch (vErr) {
+              // Network/offline: retain local session
+            }
+            if (userToSet && (userToSet.id || userToSet.fullName || userToSet.name || userToSet.phone)) {
+              setCurrentUser(userToSet);
               setIsLoggedIn(true);
-              if (verified.role === 'seller') {
+              if (userToSet.role === 'seller') {
                 setAppMode('merchant');
-                if (verified.storeId) {
-                  setMerchantStoreId(verified.storeId);
-                  activeMerchantStoreId = verified.storeId;
+                if (userToSet.storeId) {
+                  setMerchantStoreId(userToSet.storeId);
+                  activeMerchantStoreId = userToSet.storeId;
                 }
               }
-            } else {
-              // Stale or deleted account: completely purge from device storage
-              console.log('Stale user session detected, purging local storage');
-              setCurrentUser(null);
-              setIsLoggedIn(false);
-              await AsyncStorage.removeItem('getit_current_user');
-              await AsyncStorage.removeItem('getit_registered_users');
-              await AsyncStorage.removeItem('getit_orders');
-              setOrders([]);
             }
           } catch (e) {
-            setCurrentUser(null);
-            setIsLoggedIn(false);
-            await AsyncStorage.removeItem('getit_current_user');
+            console.warn('Error reading stored user session:', e);
           }
         } else {
           setCurrentUser(null);
@@ -3702,8 +4300,15 @@ export default function App() {
             setOrders(caughtUp);
             await AsyncStorage.setItem('getit_orders', JSON.stringify(caughtUp));
           } else {
-            setOrders([]);
-            await AsyncStorage.removeItem('getit_orders');
+            const storedOrders = await AsyncStorage.getItem('getit_orders');
+            if (storedOrders) {
+              try {
+                const parsed = JSON.parse(storedOrders);
+                const now = Date.now();
+                const caughtUp = (parsed || []).map((ord) => calculateOrderRiderProgress(ord, now));
+                setOrders(caughtUp);
+              } catch (e) {}
+            }
           }
         } catch (err) {
           console.warn('Could not sync cloud orders on startup:', err);
@@ -4667,16 +5272,167 @@ export default function App() {
     );
   };
 
+  // Only actual paid/delivery orders belong in Orders tab (excludes unpaid pharmacy consultations)
+  const myPaidCustomerOrders = useMemo(() => {
+    return (myCustomerOrders || []).filter((o) => o.status !== 'Consultation');
+  }, [myCustomerOrders]);
+
+  // Customer conversations: all direct chat lines with individual stores, pharmacies, and couriers
+  const customerConversations = useMemo(() => {
+    const convList = [];
+
+    (myCustomerOrders || []).forEach((o) => {
+      // 1. If multi-store order with multiple stops: decompose so customer can chat with each shop independently!
+      if (o.isMultiStore && Array.isArray(o.stops) && o.stops.length > 1) {
+        o.stops.forEach((stop, sIdx) => {
+          const stopMessages = (o.messages || []).filter((m) => {
+            const matchStore =
+              !m.storeId ||
+              String(m.storeId) === String(stop.storeId) ||
+              (m.storeName && stop.storeName && m.storeName.toLowerCase() === stop.storeName.toLowerCase());
+            const notCourier = m.recipientRole !== 'courier' && m.senderRole !== 'courier';
+            return matchStore && notCourier;
+          });
+
+          const isPharm = stop.storeType === 'pharmacy' || o.storeType === 'pharmacy' || o.isPrescriptionOrder;
+          const lastMsg = stopMessages[stopMessages.length - 1];
+
+          convList.push({
+            id: `${o.id}_stop_${stop.storeId || sIdx}`,
+            orderId: o.id,
+            order: o,
+            targetStore: stop,
+            storeId: stop.storeId,
+            storeName: stop.storeName,
+            storeType: isPharm ? 'pharmacy' : (stop.storeType || 'groceries'),
+            isMultiStore: true,
+            stopNumber: stop.stopNumber || (sIdx + 1),
+            messages: stopMessages,
+            lastMsg: lastMsg,
+            time: getOrderLatestMessageTime({ ...o, messages: stopMessages }),
+            partnerRole: 'merchant',
+            tagLabel: `Stop ${stop.stopNumber || (sIdx + 1)} • ${isPharm ? '🩺 Pharmacy' : '🏪 Shop'}`,
+            orderStatus: o.status,
+            hasPrescription: Boolean(o.prescriptionImage || stopMessages.some((m) => m.prescriptionImage)),
+          });
+        });
+      } else {
+        // Single store order or consultation
+        const storeMessages = (o.messages || []).filter(
+          (m) => m.recipientRole !== 'courier' && m.senderRole !== 'courier'
+        );
+        const isPharm = o.storeType === 'pharmacy' || o.isPrescriptionOrder || String(o.id).startsWith('RX-');
+        const lastMsg = storeMessages[storeMessages.length - 1];
+
+        convList.push({
+          id: o.id,
+          orderId: o.id,
+          order: o,
+          targetStore: null,
+          storeId: o.storeId,
+          storeName: o.storeName || (isPharm ? 'Pharmacy Dispensary' : 'Merchant Store'),
+          storeType: isPharm ? 'pharmacy' : (o.storeType || 'groceries'),
+          isMultiStore: false,
+          messages: storeMessages,
+          lastMsg: lastMsg,
+          time: getOrderLatestMessageTime({ ...o, messages: storeMessages }),
+          partnerRole: 'merchant',
+          tagLabel: o.status === 'Consultation' ? '🩺 Pharmacist Consultation' : `📦 Order #${o.id.replace('RX-', '').slice(-5)}`,
+          orderStatus: o.status,
+          hasPrescription: Boolean(o.prescriptionImage || storeMessages.some((m) => m.prescriptionImage)),
+        });
+      }
+
+      // 2. If courier is assigned, add independent courier conversation channel
+      if (o.boltRider || (o.messages || []).some((m) => m.recipientRole === 'courier' || m.senderRole === 'courier')) {
+        const courierMessages = (o.messages || []).filter(
+          (m) => m.recipientRole === 'courier' || m.senderRole === 'courier'
+        );
+        const lastCourierMsg = courierMessages[courierMessages.length - 1];
+
+        convList.push({
+          id: `${o.id}_courier`,
+          orderId: o.id,
+          order: o,
+          targetStore: null,
+          isCourier: true,
+          storeId: 'courier-musa',
+          storeName: o.boltRider?.name || 'Musa Ibrahim (Courier)',
+          storeType: 'courier',
+          isMultiStore: false,
+          messages: courierMessages,
+          lastMsg: lastCourierMsg,
+          time: getOrderLatestMessageTime({ ...o, messages: courierMessages }),
+          partnerRole: 'courier',
+          tagLabel: `🚴 Courier Delivery • #${o.id.replace('RX-', '').slice(-5)}`,
+          orderStatus: o.status,
+          hasPrescription: false,
+        });
+      }
+    });
+
+    // Consolidate & deduplicate by partner so each pharmacy/store has exactly ONE unified conversation thread!
+    const groupedMap = new Map();
+    convList.forEach((c) => {
+      const storeKey = (c.storeName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const groupKey = c.isCourier
+        ? `courier_${c.orderId}`
+        : (c.storeId ? `store_${c.storeId}` : `storename_${storeKey}`);
+
+      if (!groupedMap.has(groupKey)) {
+        groupedMap.set(groupKey, { ...c });
+      } else {
+        const existing = groupedMap.get(groupKey);
+        // Merge messages & deduplicate by msg.id
+        const msgMap = new Map();
+        (existing.messages || []).forEach((m) => { if (m?.id) msgMap.set(m.id, m); });
+        (c.messages || []).forEach((m) => { if (m?.id) msgMap.set(m.id, m); });
+        const mergedMsgs = Array.from(msgMap.values()).sort(
+          (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
+        );
+        const latestMsg = mergedMsgs[mergedMsgs.length - 1];
+        const latestTime = Math.max(
+          existing.time || 0,
+          c.time || 0,
+          getOrderLatestMessageTime({ messages: mergedMsgs })
+        );
+
+        // Keep the more recent order for routing and status
+        const isCMoreRecent = (c.time || 0) >= (existing.time || 0);
+        const primaryOrder = isCMoreRecent ? c.order : existing.order;
+
+        groupedMap.set(groupKey, {
+          ...existing,
+          order: primaryOrder,
+          orderId: primaryOrder.id,
+          id: primaryOrder.id,
+          targetStore: isCMoreRecent ? c.targetStore : existing.targetStore,
+          messages: mergedMsgs,
+          lastMsg: latestMsg,
+          time: latestTime,
+          hasPrescription: existing.hasPrescription || c.hasPrescription,
+          orderStatus: primaryOrder.status || existing.orderStatus,
+          tagLabel: isCMoreRecent ? c.tagLabel : existing.tagLabel,
+          storeType: existing.storeType === 'pharmacy' || c.storeType === 'pharmacy' ? 'pharmacy' : existing.storeType,
+        });
+      }
+    });
+
+    return Array.from(groupedMap.values()).sort((a, b) => (b.time || 0) - (a.time || 0));
+  }, [myCustomerOrders, getOrderLatestMessageTime]);
+
   // Cleanly sorted & filtered buyer orders list:
   // - Shows only orders belonging to the authenticated account
   // - Latest placed order is pinned at the top with 🔥 highlight badge
-  // - Chronologically sorted (newest orders first)
+  // - Chronologically sorted by newest activity (latest message or status change first)
   // - Filterable by Active, All, Delivered, Cancelled
   const sortedAndFilteredOrders = useMemo(() => {
-    const sorted = [...myCustomerOrders].sort((a, b) => {
+    const sorted = [...myPaidCustomerOrders].sort((a, b) => {
       if (lastPlacedOrderId && a.id === lastPlacedOrderId) return -1;
       if (lastPlacedOrderId && b.id === lastPlacedOrderId) return 1;
-      return (b.timestamp || 0) - (a.timestamp || 0);
+      const timeA = Math.max(a.timestamp || 0, getOrderLatestMessageTime(a));
+      const timeB = Math.max(b.timestamp || 0, getOrderLatestMessageTime(b));
+      return timeB - timeA;
     });
 
     if (ordersFilterTab === 'active') {
@@ -4689,7 +5445,7 @@ export default function App() {
       return sorted.filter((o) => o.status === 'Cancelled');
     }
     return sorted;
-  }, [myCustomerOrders, ordersFilterTab, lastPlacedOrderId]);
+  }, [myPaidCustomerOrders, ordersFilterTab, lastPlacedOrderId, getOrderLatestMessageTime]);
 
   // 1-Tap Delivery Handover & PIN Verification
   const completeDeliveryHandover = (orderId) => {
@@ -5279,7 +6035,7 @@ export default function App() {
             id: data.orderId,
             storeId: data.storeId || currentMerchantStoreRef.current?.id,
             customerId: data.customerId,
-            customerName: data.senderRole === 'buyer' ? (data.senderName || 'Patient') : 'Customer',
+            customerName: data.senderRole === 'buyer' ? (data.senderName && data.senderName !== 'Patient' ? data.senderName : 'Customer') : 'Customer',
             storeName: data.senderRole === 'merchant' ? (data.senderName || 'Store') : 'Store',
             status: 'Consultation',
             storeType: 'pharmacy',
@@ -5298,87 +6054,287 @@ export default function App() {
     return () => subscription.remove();
   }, []);
 
-  const openChatModal = async (order, partnerRole = 'merchant') => {
+  const openChatModal = (order, partnerRole = 'merchant', targetStore = null) => {
     if (!order) return;
+    ensureLiveBroadcastConnected();
     setTargetChatOrder(order);
 
     let partnerName = 'Store Concierge';
     let partnerId = order.storeId || 'store';
     let partnerPhone = '';
+    let resolvedStoreId = order.storeId;
+    let resolvedStoreName = order.storeName;
 
     if (partnerRole === 'merchant') {
-      partnerName = order.storeName || 'Store';
-      partnerId = order.storeId;
+      if (targetStore && (targetStore.storeId || targetStore.id)) {
+        partnerName = targetStore.storeName || targetStore.name || 'Store';
+        partnerId = targetStore.storeId || targetStore.id;
+        resolvedStoreId = partnerId;
+        resolvedStoreName = partnerName;
+      } else {
+        partnerName = order.storeName || 'Store';
+        partnerId = order.storeId;
+      }
     } else if (partnerRole === 'courier') {
       partnerName = order.boltRider?.name || 'Musa Ibrahim (Courier)';
       partnerId = 'courier-musa';
       partnerPhone = order.boltRider?.phone || '+2348032941194';
     } else if (partnerRole === 'buyer') {
-      partnerName = order.customerName || 'Customer';
+      let resolvedBuyerName = order.customerName;
+      if (!resolvedBuyerName || resolvedBuyerName === 'Patient') {
+        const buyerMsg = (order.messages || []).find(
+          (m) => m.senderRole === 'buyer' && m.senderName && m.senderName !== 'Patient'
+        );
+        if (buyerMsg?.senderName) {
+          resolvedBuyerName = buyerMsg.senderName;
+        } else if (currentUser?.role === 'buyer' && (currentUser.fullName || currentUser.name)) {
+          resolvedBuyerName = currentUser.fullName || currentUser.name;
+        } else {
+          resolvedBuyerName = 'Customer';
+        }
+      }
+      partnerName = resolvedBuyerName;
       partnerId = order.customerId || 'buyer';
       partnerPhone = order.customerPhone || '';
+      if (currentMerchantStore) {
+        resolvedStoreId = currentMerchantStore.id;
+        resolvedStoreName = currentMerchantStore.name;
+      }
     }
 
     setTargetChatPartner({
       id: partnerId,
       name: partnerName,
       role: partnerRole,
+      storeId: resolvedStoreId,
+      storeName: resolvedStoreName,
+      targetStore: targetStore || null,
       roleLabel:
         partnerRole === 'merchant'
-          ? '🏪 Store Concierge'
+          ? (targetStore ? `🏪 ${partnerName}` : '🏪 Store Concierge')
           : partnerRole === 'courier'
             ? '🚴 Dispatch Courier'
             : '👤 Customer',
       phone: partnerPhone,
     });
 
-    // Load stored messages
-    const stored = await getOrderChatMessages(order.id);
-    const orderMsgs = order.messages || [];
-    const combined = orderMsgs.length > stored.length ? orderMsgs : stored;
+    const isMessageForThisThread = (m) => {
+      if (!m) return false;
+      if (partnerRole === 'courier') {
+        return m.recipientRole === 'courier' || m.senderRole === 'courier';
+      }
+      return m.recipientRole !== 'courier' && m.senderRole !== 'courier';
+    };
 
+    // 1. Immediately hydrate with in-memory messages (0ms latency!)
     const viewerRole = appMode === 'merchant' ? 'merchant' : 'buyer';
-    const readUpdated = combined.map((m) => {
-      if (viewerRole === 'merchant' && (m.recipientRole === 'merchant' || m.senderRole === 'buyer')) {
-        return { ...m, readByMerchant: true, read: true };
+    const targetStoreId = String(targetStore?.storeId || targetStore?.id || order?.storeId || '');
+    const targetStoreName = (targetStore?.storeName || targetStore?.name || order?.storeName || '').trim().toLowerCase();
+    const isCourierChat = partnerRole === 'courier';
+
+    const doesOrderMatchThread = (o) => {
+      if (!o) return false;
+      if (isCourierChat) return o.id === order.id;
+      if (viewerRole === 'buyer') {
+        if (o.id === order.id) return true;
+        if (targetStoreId && String(o.storeId) === targetStoreId) return true;
+        if (targetStoreName && (o.storeName || '').trim().toLowerCase() === targetStoreName) return true;
+        return false;
       }
-      if (viewerRole === 'buyer' && (m.recipientRole === 'buyer' || m.senderRole === 'merchant' || m.senderRole === 'courier')) {
-        return { ...m, readByBuyer: true, read: true };
+      if (viewerRole === 'merchant') {
+        if (o.id === order.id) return true;
+        if (order.customerId && o.customerId === order.customerId) return true;
+        return false;
       }
-      return m;
+      return o.id === order.id;
+    };
+
+    const markReadInList = (list) =>
+      (list || []).map((m) => {
+        if (!isMessageForThisThread(m)) return m;
+        if (viewerRole === 'merchant' && m.senderRole !== 'merchant') {
+          return { ...m, readByMerchant: true, read: true, status: 'read' };
+        }
+        if (viewerRole === 'buyer' && m.senderRole !== 'buyer') {
+          return { ...m, readByBuyer: true, read: true, status: 'read' };
+        }
+        return m;
+      });
+
+    const updatedImmediateOrderMsgs = markReadInList(order.messages || []);
+    const initialMsgs = updatedImmediateOrderMsgs.filter(isMessageForThisThread);
+
+    setChatMessages(initialMsgs);
+
+    // 2. Open modal INSTANTLY (0ms - zero delay, zero freeze)
+    setChatModalVisible(true);
+
+    // Broadcast WhatsApp-style read receipt to sender so their checkmarks turn double blue!
+    broadcastLiveEvent('MESSAGE_READ', {
+      orderId: order.id,
+      readByDeviceId: DEVICE_CLIENT_ID,
+      readAt: new Date().toISOString(),
     });
 
-    setChatMessages(readUpdated);
-
-    try {
-      await AsyncStorage.setItem(`getit_chat_messages_${order.id}`, JSON.stringify(readUpdated));
-    } catch (e) { }
-
+    // 3. Immediately mark all orders matching this store/thread as read so unread badge deducts to 0 immediately!
     updateAndPersistOrders((prev) =>
-      prev.map((o) => (o.id === order.id ? { ...o, messages: readUpdated } : o))
+      prev.map((o) => {
+        if (doesOrderMatchThread(o)) {
+          const markedMsgs = markReadInList(o.messages || []);
+          AsyncStorage.setItem(`getit_chat_messages_${o.id}`, JSON.stringify(markedMsgs)).catch(() => {});
+          updateDatabaseOrderStatus(o.id, { messages: markedMsgs, prescriptionRead: true }).catch(() => {});
+          return { ...o, prescriptionRead: true, messages: markedMsgs };
+        }
+        return o;
+      })
     );
 
-    // Clear unread badge in unreadChatMap and persist to AsyncStorage
+    // 4. Clear unread badges in unreadChatMap immediately
     setUnreadChatMap((prev) => {
       const updated = { ...prev };
+      Object.keys(updated).forEach((k) => {
+        if (k.startsWith(`${order.id}_`)) delete updated[k];
+        if (targetStoreId && k.includes(targetStoreId)) delete updated[k];
+      });
       delete updated[`${order.id}_${partnerRole}`];
+      delete updated[`${order.id}_${partnerId}`];
       delete updated[`${order.id}_buyer`];
       delete updated[`${order.id}_merchant`];
       delete updated[`${order.id}_courier`];
       try {
-        AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
-      } catch (e) { }
+        AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated)).catch(() => {});
+      } catch (e) {}
       return updated;
     });
 
-    setChatModalVisible(true);
+    // 5. Background non-blocking sync: verify against local cache & cloud without blocking the screen
+    (async () => {
+      try {
+        const stored = await getOrderChatMessages(order.id);
+        const orderMsgs = order.messages || [];
+        const msgMap = new Map();
+        [...orderMsgs, ...stored].forEach((m) => {
+          if (m?.id) msgMap.set(m.id, m);
+        });
+        let mergedAll = markReadInList(Array.from(msgMap.values()));
+        const hasPaymentReceipt = mergedAll.some((m) => m.prescriptionBillPaid || m.paidBillId);
+        if (hasPaymentReceipt) {
+          mergedAll = mergedAll.map((m) =>
+            m.prescription
+              ? { ...m, prescription: { ...m.prescription, paid: true } }
+              : m
+          );
+        }
+
+        setChatMessages((prev) => {
+          const filtered = mergedAll.filter(isMessageForThisThread);
+          return filtered.length > 0 ? filtered : prev;
+        });
+
+        AsyncStorage.setItem(`getit_chat_messages_${order.id}`, JSON.stringify(mergedAll)).catch(() => {});
+
+        updateAndPersistOrders((prev) =>
+          prev.map((o) => (doesOrderMatchThread(o) ? { ...o, prescriptionRead: true, messages: markReadInList(o.messages || []) } : o))
+        );
+
+        updateDatabaseOrderStatus(order.id, { messages: mergedAll, prescriptionRead: true }).catch(() => {});
+      } catch (e) {}
+    })();
   };
 
   const handleOpenChatModal = openChatModal;
 
+  // --- REAL-TIME ACTIVE CHAT FAST SYNC ---
+  // When chat modal is actively displayed, polls every 2.5s to guarantee swift sub-second delivery even if socket fluctuates
+  useEffect(() => {
+    if (!chatModalVisible || !targetChatOrder?.id) return;
+    ensureLiveBroadcastConnected();
+    const activeOrdId = targetChatOrder.id;
+
+    const chatPoller = setInterval(async () => {
+      try {
+        const cloudMsgs = await getOrderChatMessages(activeOrdId);
+        if (cloudMsgs && Array.isArray(cloudMsgs) && cloudMsgs.length > 0) {
+          const partnerRole = targetChatPartner?.role;
+          const isThreadMsg = (m) => {
+            if (!m) return false;
+            if (partnerRole === 'courier') {
+              return m.recipientRole === 'courier' || m.senderRole === 'courier';
+            }
+            return m.recipientRole !== 'courier' && m.senderRole !== 'courier';
+          };
+
+          const filteredCloudMsgs = cloudMsgs.filter(isThreadMsg);
+
+          setChatMessages((prev) => {
+            const hasNew = filteredCloudMsgs.some((cm) => !prev.some((pm) => pm.id === cm.id));
+            if (hasNew) {
+              const msgMap = new Map();
+              prev.forEach((m) => msgMap.set(m.id, m));
+              filteredCloudMsgs.forEach((m) => msgMap.set(m.id, m));
+              return Array.from(msgMap.values()).sort(
+                (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+              );
+            }
+            return prev;
+          });
+        }
+      } catch (e) {}
+    }, 1200);
+
+    return () => clearInterval(chatPoller);
+  }, [chatModalVisible, targetChatOrder?.id, targetChatPartner?.id, targetChatPartner?.role]);
+
+  const handleTypingIndicator = (text) => {
+    if (!targetChatOrder?.id) return;
+    const now = Date.now();
+    const myRole = appMode === 'merchant' ? 'merchant' : 'buyer';
+    const myName =
+      appMode === 'merchant'
+        ? (currentMerchantStore?.name || 'Store')
+        : (currentUser?.fullName || currentUser?.name || 'Customer');
+
+    if (text && text.trim().length > 0) {
+      if (now - lastTypingBroadcastRef.current > 1800) {
+        lastTypingBroadcastRef.current = now;
+        broadcastLiveEvent('TYPING_STATUS', {
+          orderId: targetChatOrder.id,
+          storeId: targetChatOrder.storeId,
+          senderDeviceId: DEVICE_CLIENT_ID,
+          senderRole: myRole,
+          senderName: myName,
+          isTyping: true,
+        });
+      }
+
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => {
+        broadcastLiveEvent('TYPING_STATUS', {
+          orderId: targetChatOrder.id,
+          storeId: targetChatOrder.storeId,
+          senderDeviceId: DEVICE_CLIENT_ID,
+          senderRole: myRole,
+          senderName: myName,
+          isTyping: false,
+        });
+      }, 2200);
+    } else {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      broadcastLiveEvent('TYPING_STATUS', {
+        orderId: targetChatOrder.id,
+        storeId: targetChatOrder.storeId,
+        senderDeviceId: DEVICE_CLIENT_ID,
+        senderRole: myRole,
+        senderName: myName,
+        isTyping: false,
+      });
+    }
+  };
+
   const handleSendChatMessage = async (textToSend) => {
     const text = (textToSend || chatInputText).trim();
     if (!text || !targetChatOrder) return;
+    handleTypingIndicator('');
 
     const myRole = appMode === 'merchant' ? 'merchant' : 'buyer';
     const myName =
@@ -5386,20 +6342,32 @@ export default function App() {
         ? (currentMerchantStore?.name || 'Store')
         : (currentUser?.fullName || currentUser?.name || 'Customer');
 
+    const targetStoreId =
+      myRole === 'merchant'
+        ? (currentMerchantStore?.id || targetChatPartner?.storeId || targetChatOrder.storeId)
+        : (targetChatPartner?.storeId || targetChatPartner?.id || targetChatOrder.storeId);
+
+    const targetStoreName =
+      myRole === 'merchant'
+        ? (currentMerchantStore?.name || targetChatPartner?.storeName || targetChatOrder.storeName)
+        : (targetChatPartner?.storeName || targetChatPartner?.name || targetChatOrder.storeName);
+
     const newMsg = {
       id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       orderId: targetChatOrder.id,
-      storeId: targetChatOrder.storeId || targetChatOrder.store_id || currentMerchantStore?.id,
-      storeName: targetChatOrder.storeName || currentMerchantStore?.name || 'Store',
+      storeId: targetStoreId,
+      storeName: targetStoreName,
       customerId: targetChatOrder.customerId || targetChatOrder.customer_id || currentUser?.id,
       customerName: targetChatOrder.customerName || (myRole === 'buyer' ? myName : 'Customer'),
       customerPhone: targetChatOrder.customerPhone || (myRole === 'buyer' ? currentUser?.phone : '') || '',
       senderId: currentUser?.id || myRole,
+      senderDeviceId: DEVICE_CLIENT_ID,
       senderName: myName,
       senderRole: myRole,
       recipientRole: targetChatPartner.role,
       text,
       createdAt: new Date().toISOString(),
+      status: 'sending',
       read: false,
       readByMerchant: myRole === 'merchant',
       readByBuyer: myRole === 'buyer',
@@ -5408,24 +6376,48 @@ export default function App() {
     setChatInputText('');
     setChatMessages((prev) => [...prev, newMsg]);
 
-    // Update local state orders immediately
+    // Update local state orders immediately & pop to top of all conversations
     updateAndPersistOrders((prev) => {
-      const exists = prev.some((o) => o.id === targetChatOrder.id);
-      if (exists) {
-        return prev.map((o) => {
-          if (o.id === targetChatOrder.id) {
-            const existing = o.messages || [];
-            return { ...o, messages: [...existing, newMsg] };
-          }
-          return o;
-        });
+      const matchIndex = prev.findIndex((o) => o.id === targetChatOrder.id);
+      if (matchIndex >= 0) {
+        const o = prev[matchIndex];
+        const existing = o.messages || [];
+        const updatedOrder = {
+          ...o,
+          timestamp: Date.now(),
+          messages: [...existing, newMsg],
+        };
+        const others = prev.filter((_, idx) => idx !== matchIndex);
+        return [updatedOrder, ...others];
       } else {
-        return [{ ...targetChatOrder, messages: [newMsg] }, ...prev];
+        return [{ ...targetChatOrder, timestamp: Date.now(), messages: [newMsg] }, ...prev];
       }
     });
 
     // Send through supabase & WebSocket broadcast with full order context
-    await sendOrderChatMessage(targetChatOrder.id, newMsg, targetChatOrder);
+    (async () => {
+      try {
+        await sendOrderChatMessage(targetChatOrder.id, newMsg, targetChatOrder);
+        // Cloud & socket confirmed -> update status from 'sending' (clock) to 'sent' (single check ✓)
+        setChatMessages((prev) =>
+          prev.map((m) => (m.id === newMsg.id && m.status === 'sending' ? { ...m, status: 'sent' } : m))
+        );
+        updateAndPersistOrders((prev) =>
+          prev.map((o) =>
+            o.id === targetChatOrder.id
+              ? {
+                  ...o,
+                  messages: (o.messages || []).map((m) =>
+                    m.id === newMsg.id && m.status === 'sending' ? { ...m, status: 'sent' } : m
+                  ),
+                }
+              : o
+          )
+        );
+      } catch (err) {
+        console.warn('Network send issue; retained as sending for retry:', err);
+      }
+    })();
 
     // 🔔 Remote Push Notification to Recipient Device
     dispatchChatRemotePush({
@@ -5436,16 +6428,6 @@ export default function App() {
       orderId: targetChatOrder.id,
     }).catch(() => { });
 
-    // Increment unread count for recipient in unreadChatMap & AsyncStorage
-    setUnreadChatMap((prev) => {
-      const recipientRole = targetChatPartner.role;
-      const key = `${targetChatOrder.id}_${recipientRole}`;
-      const updated = { ...prev, [key]: (Number(prev[key]) || 0) + 1 };
-      try {
-        AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
-      } catch (e) { }
-      return updated;
-    });
 
     // If buyer sends message to courier Musa, autonomous courier responds realistically
     if (targetChatPartner.role === 'courier' && myRole === 'buyer') {
@@ -5473,15 +6455,22 @@ export default function App() {
           readByBuyer: false,
         };
         setChatMessages((prev) => [...prev, courierMsg]);
-        updateAndPersistOrders((prev) =>
-          prev.map((o) => {
-            if (o.id === targetChatOrder.id) {
-              const existing = o.messages || [];
-              return { ...o, messages: [...existing, courierMsg] };
-            }
-            return o;
-          })
-        );
+        updateAndPersistOrders((prev) => {
+          const matchIndex = prev.findIndex((o) => o.id === targetChatOrder.id);
+          if (matchIndex >= 0) {
+            const o = prev[matchIndex];
+            const existing = o.messages || [];
+            const updatedOrder = {
+              ...o,
+              timestamp: Date.now(),
+              messages: [...existing, courierMsg],
+            };
+            const others = prev.filter((_, idx) => idx !== matchIndex);
+            return [updatedOrder, ...others];
+          } else {
+            return [{ ...targetChatOrder, timestamp: Date.now(), messages: [courierMsg] }, ...prev];
+          }
+        });
         await sendOrderChatMessage(targetChatOrder.id, courierMsg);
         try {
           playAudioBeep('default');
@@ -5533,14 +6522,31 @@ export default function App() {
       await recorder.stop();
       // Allow file system handle to flush to disk
       await new Promise((r) => setTimeout(r, 120));
-      audioUri = recorder.uri;
-      if (audioUri) {
+      const rawUri = recorder.uri;
+      if (rawUri) {
         try {
-          audioBase64 = await FileSystem.readAsStringAsync(audioUri, {
+          audioBase64 = await FileSystem.readAsStringAsync(rawUri, {
             encoding: FileSystem.EncodingType.Base64,
           });
         } catch (b64Err) {
           console.warn('Voice base64 encoding error:', b64Err);
+        }
+
+        // Copy recording to persistent documentDirectory so it survives Expo Go restarts!
+        try {
+          const permDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+          const permVoicePath = `${permDir.endsWith('/') ? permDir : permDir + '/'}voice_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}.m4a`;
+          if (audioBase64) {
+            await FileSystem.writeAsStringAsync(permVoicePath, audioBase64, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            audioUri = permVoicePath;
+          } else {
+            await FileSystem.copyAsync({ from: rawUri, to: permVoicePath });
+            audioUri = permVoicePath;
+          }
+        } catch (copyErr) {
+          audioUri = rawUri;
         }
       }
     } catch (err) {
@@ -5566,6 +6572,7 @@ export default function App() {
       customerName: targetChatOrder.customerName || (myRole === 'buyer' ? myName : 'Customer'),
       customerPhone: targetChatOrder.customerPhone || (myRole === 'buyer' ? currentUser?.phone : '') || '',
       senderId: currentUser?.id || myRole,
+      senderDeviceId: DEVICE_CLIENT_ID,
       senderName: myName,
       senderRole: myRole,
       recipientRole: targetChatPartner.role,
@@ -5574,6 +6581,7 @@ export default function App() {
       voiceNoteBase64: audioBase64,
       voiceNoteDuration: durStr || '0:03',
       createdAt: new Date().toISOString(),
+      status: 'sending',
       read: false,
       readByMerchant: myRole === 'merchant',
       readByBuyer: myRole === 'buyer',
@@ -5581,17 +6589,36 @@ export default function App() {
 
     setChatMessages((prev) => [...prev, voiceMsg]);
 
-    updateAndPersistOrders((prev) =>
-      prev.map((o) => {
-        if (o.id === targetChatOrder.id) {
-          const existing = o.messages || [];
-          return { ...o, messages: [...existing, voiceMsg] };
-        }
-        return o;
-      })
-    );
+    updateAndPersistOrders((prev) => {
+      const matchIndex = prev.findIndex((o) => o.id === targetChatOrder.id);
+      if (matchIndex >= 0) {
+        const o = prev[matchIndex];
+        const existing = o.messages || [];
+        const updatedOrder = {
+          ...o,
+          timestamp: Date.now(),
+          messages: [...existing, voiceMsg],
+        };
+        const others = prev.filter((_, idx) => idx !== matchIndex);
+        return [updatedOrder, ...others];
+      } else {
+        return [{ ...targetChatOrder, timestamp: Date.now(), messages: [voiceMsg] }, ...prev];
+      }
+    });
 
-    await sendOrderChatMessage(targetChatOrder.id, voiceMsg, targetChatOrder).catch(() => { });
+    try {
+      const cached = await AsyncStorage.getItem(`getit_chat_messages_${targetChatOrder.id}`);
+      const list = cached ? JSON.parse(cached) : [];
+      AsyncStorage.setItem(`getit_chat_messages_${targetChatOrder.id}`, JSON.stringify([...list, voiceMsg])).catch(() => {});
+    } catch (e) {}
+
+    sendOrderChatMessage(targetChatOrder.id, voiceMsg, targetChatOrder)
+      .then(() => {
+        setChatMessages((prev) =>
+          prev.map((m) => (m.id === voiceMsg.id && m.status === 'sending' ? { ...m, status: 'sent' } : m))
+        );
+      })
+      .catch(() => { });
 
     dispatchChatRemotePush({
       recipientRole: targetChatPartner.role,
@@ -5652,7 +6679,7 @@ export default function App() {
       if (!uriExists && base64Data) {
         try {
           const safeId = String(msgId).replace(/[^a-zA-Z0-9_-]/g, '_');
-          const cacheDir = FileSystem.cacheDirectory || '';
+          const cacheDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
           const targetCachePath = `${cacheDir.endsWith('/') ? cacheDir : cacheDir + '/'}voice_${safeId}.m4a`;
           const cleanBase64 = String(base64Data).replace(/^data:[^;]+;base64,/, '').trim();
           await FileSystem.writeAsStringAsync(targetCachePath, cleanBase64, {
@@ -5698,6 +6725,379 @@ export default function App() {
     }
   };
 
+  // --- IN-APP SECURE VOICE CALLING (OPTION 1) HANDLERS ---
+  const stopRingtoneLoop = () => {
+    if (callRingtoneIntervalRef.current) {
+      clearInterval(callRingtoneIntervalRef.current);
+      callRingtoneIntervalRef.current = null;
+    }
+    try {
+      Vibration.cancel();
+    } catch (e) {}
+  };
+
+  const startRingtoneLoop = (type = 'incoming') => {
+    stopRingtoneLoop();
+    try {
+      playAudioBeep('default');
+      Vibration.vibrate([0, 500, 400, 500]);
+    } catch (e) {}
+    callRingtoneIntervalRef.current = setInterval(() => {
+      try {
+        playAudioBeep('default');
+        Vibration.vibrate([0, 500, 400, 500]);
+      } catch (e) {}
+    }, 3000);
+  };
+
+  const formatCallDuration = (totalSeconds = 0) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  const startInAppCall = (order, partner) => {
+    if (!order && !partner) return;
+    const orderId = order?.id || (partner?.id ? `CONSULT-${partner.id}` : `CALL-${Date.now()}`);
+    const callId = `call-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+    const myName = currentUser?.fullName || currentUser?.name || (appMode === 'merchant' ? (currentMerchantStore?.name || 'Pharmacist') : 'Customer');
+    const myRole = appMode === 'merchant' ? 'merchant' : 'buyer';
+    const partnerRole = partner?.role || (myRole === 'merchant' ? 'buyer' : 'merchant');
+    const partnerName =
+      partner?.name && partner.name !== 'Patient'
+        ? partner.name
+        : (order?.customerName && order.customerName !== 'Patient'
+            ? order.customerName
+            : (partnerRole === 'merchant' ? (order?.storeName || 'Pharmacy Dispensary') : 'Customer'));
+
+    const callData = {
+      callId,
+      orderId,
+      status: 'calling', // Starts as 'calling' until receiver phone acknowledges with 'CALL_RINGING'
+      direction: 'outgoing',
+      callerDeviceId: DEVICE_CLIENT_ID,
+      callerId: currentUser?.id || 'caller',
+      callerName: myName,
+      callerRole: myRole,
+      recipientId: partner?.id || order?.customerId || 'recipient',
+      recipientRole: partnerRole,
+      storeName: currentMerchantStore?.name || order?.storeName || 'Pharmacy Dispensary',
+      partnerName,
+      partnerRole,
+      durationSec: 0,
+      isMuted: false,
+      isSpeaker: true,
+      isRemoteSpeaking: false,
+    };
+
+    // Close any lower modal immediately so call screen pops up directly like WhatsApp
+    setChatModalVisible(false);
+    setActiveCall(callData);
+    setIsCallModalVisible(true);
+    setIsCallMinimized(false);
+
+    try {
+      playAudioBeep('default');
+    } catch (e) {}
+
+    // 60-second ringing timeout: if unanswered after 1 minute, automatically hangs up & logs missed call
+    if (callRingTimeoutRef.current) clearTimeout(callRingTimeoutRef.current);
+    callRingTimeoutRef.current = setTimeout(() => {
+      if (activeCallRef.current && activeCallRef.current.callId === callId && activeCallRef.current.status !== 'connected') {
+        endInAppCall('no_answer');
+      }
+    }, 60000);
+
+    broadcastLiveEvent('INCOMING_CALL', {
+      callId,
+      orderId,
+      callerDeviceId: DEVICE_CLIENT_ID,
+      callerId: currentUser?.id || 'caller',
+      callerName: myName,
+      callerRole: myRole,
+      recipientId: partner?.id || order?.customerId || 'recipient',
+      recipientRole: partnerRole,
+      storeName: currentMerchantStore?.name || order?.storeName || 'Pharmacy Dispensary',
+      partnerName,
+    });
+  };
+
+  const startContinuousLiveAudioLoop = async () => {
+    if (isAudioLoopRunningRef.current) return;
+    isAudioLoopRunningRef.current = true;
+    isCallConnectedRef.current = true;
+
+    try {
+      const perm = await requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        console.warn('Microphone permission not granted for call');
+        isAudioLoopRunningRef.current = false;
+        return;
+      }
+    } catch (e) {}
+
+    while (isCallConnectedRef.current) {
+      try {
+        if (activeCallRef.current?.isMuted) {
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+
+        await setAudioModeAsync({
+          allowsRecording: true,
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+        }).catch(() => {});
+
+        await recorder.prepareToRecordAsync();
+        recorder.record();
+        setIsCallRecording(true);
+
+        // Record chunks of 1.3 seconds of natural voice
+        await new Promise((r) => setTimeout(r, 1300));
+
+        if (!isCallConnectedRef.current) {
+          try { await recorder.stop(); } catch (e) {}
+          setIsCallRecording(false);
+          break;
+        }
+
+        let rawUri = null;
+        try {
+          await recorder.stop();
+          setIsCallRecording(false);
+          await new Promise((r) => setTimeout(r, 60));
+          rawUri = recorder.uri;
+        } catch (recErr) {
+          setIsCallRecording(false);
+        }
+
+        if (rawUri && isCallConnectedRef.current && !activeCallRef.current?.isMuted) {
+          try {
+            const audioBase64 = await FileSystem.readAsStringAsync(rawUri, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            if (audioBase64 && isCallConnectedRef.current) {
+              broadcastLiveEvent('CALL_AUDIO_BURST', {
+                callId: activeCallRef.current?.callId,
+                orderId: activeCallRef.current?.orderId,
+                callerDeviceId: DEVICE_CLIENT_ID,
+                senderId: currentUserRef.current?.id || 'speaker',
+                audioBase64,
+                timestamp: Date.now(),
+              });
+            }
+          } catch (b64Err) {
+            console.warn('Live voice base64 read error:', b64Err);
+          }
+        }
+      } catch (chunkErr) {
+        console.warn('Voice loop cycle error:', chunkErr);
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    }
+
+    setIsCallRecording(false);
+    isAudioLoopRunningRef.current = false;
+  };
+
+  const processIncomingAudioQueue = async () => {
+    if (isProcessingAudioQueueRef.current) return;
+    isProcessingAudioQueueRef.current = true;
+
+    while (incomingAudioQueueRef.current.length > 0 && isCallConnectedRef.current) {
+      const burstBase64 = incomingAudioQueueRef.current.shift();
+      try {
+        const tempUri = `${FileSystem.cacheDirectory || ''}live_voice_${Date.now()}_${Math.random().toString(36).substr(2, 4)}.m4a`;
+        await FileSystem.writeAsStringAsync(tempUri, burstBase64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+          allowsRecording: true,
+        }).catch(() => {});
+
+        setActiveCall((prev) => (prev ? { ...prev, isRemoteSpeaking: true } : prev));
+
+        await new Promise((resolve) => {
+          try {
+            const player = createAudioPlayer(tempUri);
+            callAudioPlayerRef.current = player;
+            player.play();
+            player.addListener('playbackStatusUpdate', (status) => {
+              if (status.didJustFinish || status.error || !isCallConnectedRef.current) {
+                resolve();
+              }
+            });
+            setTimeout(resolve, 1900);
+          } catch (pErr) {
+            resolve();
+          }
+        });
+
+        setActiveCall((prev) => (prev ? { ...prev, isRemoteSpeaking: false } : prev));
+      } catch (err) {
+        console.warn('Incoming voice burst playback error:', err);
+      }
+    }
+
+    isProcessingAudioQueueRef.current = false;
+    setActiveCall((prev) => (prev ? { ...prev, isRemoteSpeaking: false } : prev));
+  };
+
+  const acceptInAppCall = async () => {
+    if (!activeCallRef.current) return;
+    if (callRingTimeoutRef.current) {
+      clearTimeout(callRingTimeoutRef.current);
+      callRingTimeoutRef.current = null;
+    }
+    stopRingtoneLoop();
+
+    isCallConnectedRef.current = true;
+    const curr = activeCallRef.current;
+
+    // Close any lower modal immediately
+    setChatModalVisible(false);
+
+    setActiveCall((prev) => ({
+      ...prev,
+      status: 'connected',
+      startedAt: Date.now(),
+      durationSec: 0,
+    }));
+
+    if (callTimerRef.current) clearInterval(callTimerRef.current);
+    callTimerRef.current = setInterval(() => {
+      setActiveCall((prev) => {
+        if (!prev || prev.status !== 'connected') return prev;
+        return { ...prev, durationSec: (prev.durationSec || 0) + 1 };
+      });
+    }, 1000);
+
+    broadcastLiveEvent('CALL_ACCEPTED', {
+      callId: curr.callId,
+      orderId: curr.orderId,
+      callerDeviceId: DEVICE_CLIENT_ID,
+      responderId: currentUser?.id,
+    });
+
+    // Start full-duplex continuous live audio speaking immediately!
+    startContinuousLiveAudioLoop();
+  };
+
+  const endInAppCall = (reason = 'normal') => {
+    if (callRingTimeoutRef.current) {
+      clearTimeout(callRingTimeoutRef.current);
+      callRingTimeoutRef.current = null;
+    }
+    stopRingtoneLoop();
+    isCallConnectedRef.current = false;
+    incomingAudioQueueRef.current = [];
+    isAudioLoopRunningRef.current = false;
+    isProcessingAudioQueueRef.current = false;
+    if (callTimerRef.current) {
+      clearInterval(callTimerRef.current);
+      callTimerRef.current = null;
+    }
+    try {
+      recorder.stop();
+    } catch (e) {}
+    try {
+      callAudioPlayerRef.current?.pause();
+      callAudioPlayerRef.current?.remove?.();
+    } catch (e) {}
+
+    const curr = activeCallRef.current;
+    if (curr) {
+      const isUnanswered =
+        curr.direction === 'outgoing' &&
+        (curr.status === 'calling' || curr.status === 'ringing') &&
+        (reason === 'no_answer' || reason === 'user_ended' || reason === 'timeout');
+
+      const eventType = curr.status === 'ringing' && curr.direction === 'incoming' ? 'CALL_DECLINED' : 'CALL_ENDED';
+      broadcastLiveEvent(eventType, {
+        callId: curr.callId,
+        orderId: curr.orderId,
+        callerDeviceId: DEVICE_CLIENT_ID,
+        endedBy: currentUser?.id,
+        reason: isUnanswered ? 'Missed Call' : reason,
+      });
+
+      // If call was unanswered/timed out/cancelled while calling, log a Missed Call card
+      // so the recipient sees it immediately or when they launch the app / come online!
+      if (isUnanswered) {
+        const missedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const myName = currentUser?.fullName || currentUser?.name || (appMode === 'merchant' ? (currentMerchantStore?.name || 'Pharmacist') : 'Customer');
+        const missedCallMsg = {
+          id: `msg-call-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+          orderId: curr.orderId,
+          storeId: curr.storeName,
+          customerId: curr.recipientId,
+          customerName: curr.partnerName,
+          senderId: currentUser?.id || 'caller',
+          senderDeviceId: DEVICE_CLIENT_ID,
+          senderName: curr.callerName || myName,
+          senderRole: curr.callerRole,
+          recipientRole: curr.partnerRole,
+          text: `🔴 Missed Voice Call (${missedTime})`,
+          isMissedCall: true,
+          callTimestamp: Date.now(),
+          createdAt: new Date().toISOString(),
+          status: 'sent',
+          read: false,
+          readByMerchant: curr.callerRole === 'merchant',
+          readByBuyer: curr.callerRole === 'buyer',
+        };
+
+        sendOrderChatMessage(curr.orderId, missedCallMsg, {
+          id: curr.orderId,
+          customerName: curr.partnerName,
+          storeName: curr.storeName,
+        }).catch(() => {});
+
+        setChatMessages((prev) => [...prev, missedCallMsg]);
+        updateAndPersistOrders((prev) =>
+          prev.map((o) =>
+            o.id === curr.orderId
+              ? { ...o, timestamp: Date.now(), messages: [...(o.messages || []), missedCallMsg] }
+              : o
+          )
+        );
+      }
+
+      setActiveCall((prev) => (prev ? { ...prev, status: 'ended', endReason: isUnanswered ? 'No Answer' : reason } : null));
+      try {
+        playAudioBeep('default');
+      } catch (e) {}
+    }
+    setTimeout(() => {
+      setActiveCall(null);
+      setIsCallModalVisible(false);
+      setIsCallMinimized(false);
+    }, 1200);
+  };
+
+  const toggleCallMute = () => {
+    setActiveCall((prev) => {
+      if (!prev) return prev;
+      return { ...prev, isMuted: !prev.isMuted };
+    });
+  };
+
+  const toggleCallSpeaker = async () => {
+    const nextSpeaker = !activeCall?.isSpeaker;
+    setActiveCall((prev) => (prev ? { ...prev, isSpeaker: nextSpeaker } : prev));
+    try {
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        shouldPlayInBackground: true,
+        allowsRecording: true,
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
   // --- TELE-PHARMACY, DOCTOR'S PRESCRIPTION & CONSULTATION SUITE ---
   const handleOpenPrescriptionModal = (pharmacy = null) => {
     const target =
@@ -5707,6 +7107,7 @@ export default function App() {
       INITIAL_PHARMACY_STORES[0];
     setTargetPrescriptionPharmacy(target);
     setPrescriptionSymptomsNote('');
+    setPrescriptionPatientName(currentUser?.fullName || currentUser?.name || '');
     setPrescriptionPatientPhone(currentUser?.phone || '');
     setPrescriptionModalVisible(true);
   };
@@ -5826,12 +7227,14 @@ export default function App() {
           customerName: targetChatOrder.customerName || (myRole === 'buyer' ? myName : 'Customer'),
           customerPhone: targetChatOrder.customerPhone || (myRole === 'buyer' ? currentUser?.phone : '') || '',
           senderId: currentUser?.id || myRole,
+          senderDeviceId: DEVICE_CLIENT_ID,
           senderName: myName,
           senderRole: myRole,
           recipientRole: targetChatPartner.role,
           text: '📷 Attached Doctor Prescription Note',
           prescriptionImage: photoUri,
           createdAt: new Date().toISOString(),
+          status: 'sending',
           read: false,
           readByMerchant: myRole === 'merchant',
           readByBuyer: myRole === 'buyer',
@@ -5840,21 +7243,30 @@ export default function App() {
         setChatMessages((prev) => [...prev, newPhotoMsg]);
 
         updateAndPersistOrders((prev) => {
-          const exists = prev.some((o) => o.id === targetChatOrder.id);
-          if (exists) {
-            return prev.map((o) => {
-              if (o.id === targetChatOrder.id) {
-                const existing = o.messages || [];
-                return { ...o, prescriptionImage: photoUri, messages: [...existing, newPhotoMsg] };
-              }
-              return o;
-            });
+          const matchIndex = prev.findIndex((o) => o.id === targetChatOrder.id);
+          if (matchIndex >= 0) {
+            const o = prev[matchIndex];
+            const existing = o.messages || [];
+            const updatedOrder = {
+              ...o,
+              timestamp: Date.now(),
+              prescriptionImage: photoUri,
+              messages: [...existing, newPhotoMsg],
+            };
+            const others = prev.filter((_, idx) => idx !== matchIndex);
+            return [updatedOrder, ...others];
           } else {
-            return [{ ...targetChatOrder, prescriptionImage: photoUri, messages: [newPhotoMsg] }, ...prev];
+            return [{ ...targetChatOrder, timestamp: Date.now(), prescriptionImage: photoUri, messages: [newPhotoMsg] }, ...prev];
           }
         });
 
-        await sendOrderChatMessage(targetChatOrder.id, newPhotoMsg, targetChatOrder).catch(() => {});
+        sendOrderChatMessage(targetChatOrder.id, newPhotoMsg, targetChatOrder)
+          .then(() => {
+            setChatMessages((prev) =>
+              prev.map((m) => (m.id === newPhotoMsg.id && m.status === 'sending' ? { ...m, status: 'sent' } : m))
+            );
+          })
+          .catch(() => {});
 
         dispatchChatRemotePush({
           recipientRole: targetChatPartner.role,
@@ -5864,23 +7276,17 @@ export default function App() {
           orderId: targetChatOrder.id,
         }).catch(() => {});
 
-        setUnreadChatMap((prev) => {
-          const recipientKey = `${targetChatOrder.id}_${targetChatPartner.role}`;
-          const updated = { ...prev, [recipientKey]: (Number(prev[recipientKey]) || 0) + 1 };
-          try {
-            AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
-          } catch (e) {}
-          return updated;
-        });
       }
     } catch (err) {
       console.warn('Error attaching chat photo:', err?.message);
     }
   };
 
-  const handleConsultPharmacist = async (pharmacy, initialText = null, prescriptionImg = null) => {
+  const handleConsultPharmacist = async (pharmacy, initialText = null, prescriptionImg = null, customPatientName = null, customPatientPhone = null) => {
     if (!pharmacy) return;
-    const phoneSuffix = (currentUser?.phone || '0000').replace(/\D/g, '').slice(-4) || 'user';
+    const resolvedPatientName = (customPatientName && customPatientName.trim()) || currentUser?.fullName || currentUser?.name || 'Customer';
+    const resolvedPatientPhone = (customPatientPhone && customPatientPhone.trim()) || currentUser?.phone || '';
+    const phoneSuffix = (resolvedPatientPhone || currentUser?.phone || '0000').replace(/\D/g, '').slice(-4) || 'user';
     const consultId = `RX-${pharmacy.id.replace('pharm-', '')}-${phoneSuffix}`;
 
     let targetOrd = orders.find((o) => o.id === consultId);
@@ -5889,9 +7295,9 @@ export default function App() {
         id: consultId,
         storeId: pharmacy.id,
         storeName: pharmacy.name,
-        customerName: currentUser?.fullName || currentUser?.name || 'Patient',
-        customerId: currentUser?.id || 'patient-user',
-        customerPhone: currentUser?.phone || '08000000000',
+        customerName: resolvedPatientName,
+        customerId: currentUser?.id || `buyer-${phoneSuffix}`,
+        customerPhone: resolvedPatientPhone || '08000000000',
         status: 'Consultation',
         storeType: 'pharmacy',
         total: 0,
@@ -5900,6 +7306,7 @@ export default function App() {
         storePhone: pharmacy.phone || pharmacy.ownerPhone || '0545802140',
         createdAt: new Date().toISOString(),
         prescriptionImage: prescriptionImg || null,
+        prescriptionRead: false,
         messages: [],
       };
       updateAndPersistOrders((prev) => [targetOrd, ...prev.filter((o) => o.id !== consultId)]);
@@ -5907,6 +7314,19 @@ export default function App() {
       // Broadcast order insert so pharmacy's device immediately receives the consultation order
       broadcastLiveEvent('ORDER_INSERT', { order: targetOrd });
       createDatabaseOrder(targetOrd).catch(() => {});
+    } else {
+      // Order already exists: ensure customerName and customerPhone are updated if previously generic
+      const shouldUpdateName = !targetOrd.customerName || targetOrd.customerName === 'Patient' || (resolvedPatientName && resolvedPatientName !== 'Customer' && targetOrd.customerName !== resolvedPatientName);
+      if (shouldUpdateName || (resolvedPatientPhone && !targetOrd.customerPhone) || prescriptionImg) {
+        targetOrd = {
+          ...targetOrd,
+          prescriptionImage: prescriptionImg || targetOrd.prescriptionImage,
+          prescriptionRead: prescriptionImg ? false : targetOrd.prescriptionRead,
+          customerName: shouldUpdateName ? resolvedPatientName : targetOrd.customerName,
+          customerPhone: resolvedPatientPhone || targetOrd.customerPhone,
+        };
+        updateAndPersistOrders((prev) => prev.map((o) => (o.id === consultId ? targetOrd : o)));
+      }
     }
 
     setTargetChatOrder(targetOrd);
@@ -5918,8 +7338,7 @@ export default function App() {
       phone: pharmacy.phone || pharmacy.ownerPhone || '0545802140',
     });
 
-    const stored = await getOrderChatMessages(consultId);
-    let msgsToDisplay = stored.length > 0 ? stored : targetOrd.messages || [];
+    let msgsToDisplay = targetOrd.messages || [];
 
     if (initialText || prescriptionImg) {
       const initMsg = {
@@ -5927,15 +7346,17 @@ export default function App() {
         orderId: consultId,
         storeId: pharmacy.id,
         storeName: pharmacy.name,
-        customerId: currentUser?.id,
-        customerName: currentUser?.fullName || currentUser?.name || 'Patient',
-        customerPhone: currentUser?.phone || '',
+        customerId: currentUser?.id || targetOrd.customerId,
+        customerName: resolvedPatientName,
+        customerPhone: resolvedPatientPhone || currentUser?.phone || '',
         senderRole: 'buyer',
-        senderName: currentUser?.fullName || currentUser?.name || 'Patient',
+        senderDeviceId: DEVICE_CLIENT_ID,
+        senderName: resolvedPatientName,
         text: initialText || '📷 Attached Doctor Prescription Note for pharmacist review.',
         prescriptionImage: prescriptionImg || null,
         createdAt: new Date().toISOString(),
         timestamp: Date.now(),
+        status: 'sending',
         read: false,
         readByMerchant: false,
         readByBuyer: true,
@@ -5944,11 +7365,16 @@ export default function App() {
       msgsToDisplay = [...msgsToDisplay, initMsg];
       setChatMessages(msgsToDisplay);
 
+      // Open modal INSTANTLY (0ms)
+      setChatModalVisible(true);
+
       updateAndPersistOrders((prev) =>
         prev.map((o) =>
           o.id === consultId
             ? {
                 ...o,
+                customerName: resolvedPatientName,
+                customerPhone: resolvedPatientPhone || o.customerPhone,
                 prescriptionImage: prescriptionImg || o.prescriptionImage,
                 messages: [...(o.messages || []), initMsg],
               }
@@ -5956,28 +7382,41 @@ export default function App() {
         )
       );
 
-      await sendOrderChatMessage(consultId, initMsg, targetOrd).catch(() => {});
-      dispatchChatRemotePush({
-        recipientRole: 'merchant',
-        recipientId: pharmacy.id,
-        senderName: currentUser?.fullName || currentUser?.name || 'Patient',
-        text: initialText || '📷 Attached Doctor Prescription Note for review.',
-        orderId: consultId,
-      }).catch(() => {});
-
-      setUnreadChatMap((prev) => {
-        const key = `${consultId}_merchant`;
-        const updated = { ...prev, [key]: (Number(prev[key]) || 0) + 1 };
+      // Asynchronous background transmission
+      (async () => {
         try {
-          AsyncStorage.setItem('getit_unread_chat_map', JSON.stringify(updated));
+          sendOrderChatMessage(consultId, initMsg, targetOrd)
+            .then(() => {
+              setChatMessages((prev) =>
+                prev.map((m) => (m.id === initMsg.id && m.status === 'sending' ? { ...m, status: 'sent' } : m))
+              );
+            })
+            .catch(() => {});
+          dispatchChatRemotePush({
+            recipientRole: 'merchant',
+            recipientId: pharmacy.id,
+            senderName: resolvedPatientName,
+            text: initialText || '📷 Attached Doctor Prescription Note for review.',
+            orderId: consultId,
+          }).catch(() => {});
+
         } catch (e) {}
-        return updated;
-      });
+      })();
     } else {
       setChatMessages(msgsToDisplay);
-    }
+      // Open modal INSTANTLY (0ms)
+      setChatModalVisible(true);
 
-    setChatModalVisible(true);
+      // Background check for stored messages
+      (async () => {
+        try {
+          const stored = await getOrderChatMessages(consultId);
+          if (stored && stored.length > msgsToDisplay.length) {
+            setChatMessages(stored);
+          }
+        } catch (e) {}
+      })();
+    }
   };
 
   const handleSubmitPrescriptionToPharmacy = async () => {
@@ -5987,6 +7426,16 @@ export default function App() {
         'Please attach a photo of your doctor prescription or type the symptoms you are experiencing so our on-duty pharmacist can prescribe the right medications for you.'
       );
       return;
+    }
+
+    const patientName = prescriptionPatientName.trim() || currentUser?.fullName || currentUser?.name || 'Customer';
+    const patientPhone = prescriptionPatientPhone.trim() || currentUser?.phone || '';
+
+    // If user is logged in but profile lacked fullName, preserve it now
+    if (currentUser && prescriptionPatientName.trim() && !currentUser.fullName) {
+      const updatedUser = { ...currentUser, fullName: prescriptionPatientName.trim() };
+      setCurrentUser(updatedUser);
+      AsyncStorage.setItem('getit_current_user', JSON.stringify(updatedUser)).catch(() => {});
     }
 
     const targetPharm =
@@ -6010,13 +7459,31 @@ export default function App() {
       [
         {
           text: 'Open Pharmacist Chat',
-          onPress: () => handleConsultPharmacist(targetPharm, noteText, attachedImg),
+          onPress: () => handleConsultPharmacist(targetPharm, noteText, attachedImg, patientName, patientPhone),
         },
       ]
     );
   };
 
-  const handleOpenPrescribeMedicationModal = () => {
+  const handleOpenPrescribeMedicationModal = (order = null) => {
+    // If order is an event (e.g. from onPress={handleOpenPrescribeMedicationModal}), ignore it!
+    const validOrder = (order && order.id && typeof order.id === 'string' && !order.nativeEvent) ? order : null;
+    const activeOrder = validOrder || targetChatOrder || orders.find(
+      (o) =>
+        (o.storeId === currentMerchantStore?.id || o.storeName === currentMerchantStore?.name) &&
+        (o.storeType === 'pharmacy' || (o.messages && o.messages.length > 0))
+    ) || orders[0];
+
+    if (activeOrder && (!targetChatOrder || targetChatOrder.id !== activeOrder.id)) {
+      setTargetChatOrder(activeOrder);
+      setTargetChatPartner({
+        id: activeOrder.customerId || 'patient',
+        name: activeOrder.customerName || 'Customer',
+        role: 'buyer',
+        roleLabel: 'Patient',
+      });
+    }
+
     setSelectedPrescribeItems([]);
     setPrescribeSearchQuery('');
     setPrescribeCategoryFilter('all');
@@ -6094,14 +7561,27 @@ export default function App() {
       issuedAt: new Date().toISOString(),
     };
 
+    const activeOrder = targetChatOrder || orders.find(
+      (o) =>
+        (o.storeId === currentMerchantStore?.id || o.storeName === currentMerchantStore?.name) &&
+        (o.storeType === 'pharmacy' || (o.messages && o.messages.length > 0))
+    ) || orders[0] || {
+      id: `ord-rx-${Date.now()}`,
+      storeId: currentMerchantStore?.id || 'pharmacy-1',
+      storeName: currentMerchantStore?.name || 'Pharmacy',
+      customerId: 'patient-guest',
+      customerName: 'Customer',
+      messages: [],
+    };
+
     const newMsg = {
       id: `rx-bill-msg-${Date.now()}`,
-      orderId: targetChatOrder.id,
-      storeId: targetChatOrder.storeId,
-      storeName: targetChatOrder.storeName || currentMerchantStore?.name || 'Pharmacy',
-      customerId: targetChatOrder.customerId,
-      customerName: targetChatOrder.customerName || 'Patient',
-      customerPhone: targetChatOrder.customerPhone || '',
+      orderId: activeOrder.id,
+      storeId: activeOrder.storeId || currentMerchantStore?.id || 'pharmacy-1',
+      storeName: activeOrder.storeName || currentMerchantStore?.name || 'Pharmacy',
+      customerId: activeOrder.customerId || 'patient',
+      customerName: (activeOrder.customerName && activeOrder.customerName !== 'Patient') ? activeOrder.customerName : 'Customer',
+      customerPhone: activeOrder.customerPhone || '',
       senderRole: 'merchant',
       senderName: currentMerchantStore?.name || 'Pharmacist',
       text: `📋 Official Prescription & Medication Invoice (${selectedPrescribeItems.length} items • ₦${total.toLocaleString()})`,
@@ -6111,18 +7591,34 @@ export default function App() {
       read: false,
     };
 
+    setTargetChatOrder(activeOrder);
     setChatMessages((prev) => [...prev, newMsg]);
     setPrescribeMedicationModalVisible(false);
+    setChatModalVisible(true);
 
-    await sendOrderChatMessage(targetChatOrder.id, newMsg, targetChatOrder);
+    updateAndPersistOrders((prev) => {
+      const exists = prev.some((o) => o.id === activeOrder.id);
+      if (exists) {
+        return prev.map((o) =>
+          o.id === activeOrder.id
+            ? { ...o, timestamp: Date.now(), messages: [...(o.messages || []), newMsg] }
+            : o
+        );
+      }
+      return [{ ...activeOrder, timestamp: Date.now(), messages: [newMsg] }, ...prev];
+    });
 
-    dispatchChatRemotePush({
-      recipientRole: 'buyer',
-      recipientId: targetChatOrder.customerId,
-      senderName: currentMerchantStore?.name || 'Pharmacist',
-      text: `📋 Pharmacist has issued your prescription invoice (₦${total.toLocaleString()}). Tap to review & pay.`,
-      orderId: targetChatOrder.id,
-    }).catch(() => { });
+    await sendOrderChatMessage(activeOrder.id, newMsg, activeOrder);
+
+    if (activeOrder.customerId) {
+      dispatchChatRemotePush({
+        recipientRole: 'buyer',
+        recipientId: activeOrder.customerId,
+        senderName: currentMerchantStore?.name || 'Pharmacist',
+        text: `📋 Pharmacist has issued your prescription invoice (₦${total.toLocaleString()}). Tap to review & pay.`,
+        orderId: activeOrder.id,
+      }).catch(() => { });
+    }
   };
 
   const handlePayPrescriptionBill = (prescription, order) => {
@@ -6141,7 +7637,7 @@ export default function App() {
             // 1. Update prescription message state to paid in active chat modal
             setChatMessages((prev) =>
               prev.map((m) => {
-                if (m.prescription && m.prescription.billId === prescription.billId) {
+                if (m.prescription && (!prescription.billId || !m.prescription.billId || m.prescription.billId === prescription.billId)) {
                   return {
                     ...m,
                     prescription: {
@@ -6155,12 +7651,13 @@ export default function App() {
               })
             );
 
-            // 2. Also update targetChatOrder's messages in orders array
+            // 2. Also update targetChatOrder's messages in orders array & local storage
+            let latestOrderMsgs = [];
             updateAndPersistOrders((prev) =>
               prev.map((o) => {
                 if (o.id === order.id) {
                   const updatedMsgs = (o.messages || []).map((m) =>
-                    m.prescription && m.prescription.billId === prescription.billId
+                    m.prescription && (!prescription.billId || !m.prescription.billId || m.prescription.billId === prescription.billId)
                       ? {
                           ...m,
                           prescription: {
@@ -6171,20 +7668,32 @@ export default function App() {
                         }
                       : m
                   );
+                  latestOrderMsgs = updatedMsgs;
                   return { ...o, messages: updatedMsgs };
                 }
                 return o;
               })
             );
 
+            if (latestOrderMsgs.length > 0) {
+              AsyncStorage.setItem(`getit_chat_messages_${order.id}`, JSON.stringify(latestOrderMsgs)).catch(() => {});
+              updateDatabaseOrderStatus(order.id, { messages: latestOrderMsgs }).catch(() => {});
+            }
+
+            broadcastLiveEvent('PRESCRIPTION_PAID', {
+              orderId: order.id,
+              billId: prescription.billId,
+              paidAt: paidTimestamp,
+            });
+
             // 3. Send paid receipt message over WebSocket so shop side flips to Paid immediately
             const paymentReceiptMsg = {
               id: `msg-paid-${Date.now()}`,
               orderId: order.id,
               storeId: prescription.storeId,
-              customerId: currentUser?.id,
+              customerId: currentUser?.id || order.customerId,
               senderRole: 'buyer',
-              senderName: currentUser?.fullName || currentUser?.name || 'Patient',
+              senderName: currentUser?.fullName || currentUser?.name || (order.customerName && order.customerName !== 'Patient' ? order.customerName : 'Customer'),
               text: `💳 Prescription Invoice Paid (${prescription.items.length} items • ₦${Number(prescription.total).toLocaleString()}). Delivery order generated!`,
               prescriptionBillPaid: true,
               paidBillId: prescription.billId,
@@ -6268,9 +7777,9 @@ export default function App() {
               subtotal: prescription.subtotal,
               deliveryFee: prescription.deliveryFee,
               total: prescription.total,
-              customerName: currentUser?.fullName || currentUser?.name || 'Patient',
-              customerId: currentUser?.id || 'patient-user',
-              customerPhone: currentUser?.phone || '08000000000',
+              customerName: currentUser?.fullName || currentUser?.name || (order.customerName && order.customerName !== 'Patient' ? order.customerName : 'Customer'),
+              customerId: currentUser?.id || order.customerId || 'buyer-user',
+              customerPhone: currentUser?.phone || order.customerPhone || '08000000000',
               customerAddress: destName,
               deliveryAddress: destName,
               deliveryLocation: {
@@ -6283,19 +7792,31 @@ export default function App() {
               dateStr: 'Today',
               timestamp: Date.now(),
               isPrescriptionOrder: true,
-              journeyAlert:
-                '💊 Pharmacy is preparing and tamper-sealing your prescribed medications.',
-              boltRider: null,
-              boltStatus: 'PENDING_STORE_READY',
+              status: 'On the Way',
+              boltStatus: 'IN_TRANSIT',
+              currentStopIndex: 0,
+              roadPointIndex: 0,
+              legStartedAt: Date.now(),
+              journeyAlert: `🛵 Courier Musa Ibrahim assigned! En route to ${prescription.storeName} for pickup.`,
+              boltRider: {
+                id: 'bolt-rider-01',
+                name: 'Musa Ibrahim',
+                phone: '+234 803 294 1194',
+                rating: '4.95',
+                trips: 1420,
+                vehicle: 'Bajaj Boxer 150 (Red)',
+                plate: 'ABJ-492-KW',
+                avatar: '🛵',
+              },
               riderOrigin: {
                 latitude: storeLat - 0.0090,
                 longitude: storeLng - 0.0080,
               },
               boltCoords: {
-                latitude: storeLat,
-                longitude: storeLng,
+                latitude: storeLat - 0.0090,
+                longitude: storeLng - 0.0080,
               },
-              eta: '15-25 mins',
+              eta: '15-20 mins (Courier En Route)',
             };
 
             setLastPlacedOrderId(prescriptionDeliveryOrder.id);
@@ -6315,14 +7836,11 @@ export default function App() {
               longitude: storeLng - 0.0080,
             };
 
-            calculateMultiStopRoadRoute(
-              defaultAssignedRider,
-              [{ latitude: storeLat, longitude: storeLng, storeId: prescription.storeId, storeName: prescription.storeName }],
+            fetchRealRoadDirections([
+              { latitude: defaultAssignedRider.latitude, longitude: defaultAssignedRider.longitude },
+              { latitude: storeLat, longitude: storeLng },
               { latitude: destLat, longitude: destLng },
-              REAL_ROAD_POINTS,
-              REAL_ROAD_WAYPOINTS,
-              REAL_ROAD_LEGS
-            ).then((result) => {
+            ]).then((result) => {
               if (result && result.roadPoints && result.roadPoints.length > 0) {
                 updateAndPersistOrders((prev) =>
                   prev.map((o) =>
@@ -6336,6 +7854,11 @@ export default function App() {
                       : o
                   )
                 );
+                updateDatabaseOrderStatus(prescriptionDeliveryOrder.id, {
+                  roadRouteCoordinates: result.roadPoints,
+                  roadLegs: result.legs,
+                  boltCoords: result.roadPoints[0],
+                }).catch(() => {});
               }
             }).catch(() => {});
 
@@ -6593,8 +8116,10 @@ export default function App() {
         `\n\nYour order has been sent to the shops. Once packaged, an available courier will be dispatched to pick up your provisions!`,
         [
           {
-            text: '💬 Message Seller',
-            onPress: () => openChatModal(masterOrder, 'merchant'),
+            text: '💬 Message Shops',
+            onPress: () => {
+              setActiveTab('messages');
+            },
           },
           {
             text: 'Track Order',
@@ -6704,7 +8229,11 @@ export default function App() {
       if (matchingStop.status && matchingStop.status !== 'On the Way') return matchingStop.status;
     }
     if (ord.status === 'Completed' || ord.status === 'Delivered') return 'Completed';
-    if (ord.status === 'Ready for Pickup' || ord.status === 'Looking for Courier' || ord.status === 'On the Way') return 'Ready for Pickup';
+    if (ord.currentStopIndex > 0 || (Array.isArray(ord.stops) && ord.stops.length > 0 && ord.stops.every((s) => s.pickupStatus === 'picked_up'))) {
+      return 'Completed';
+    }
+    if (ord.status === 'Ready for Pickup' || ord.status === 'Looking for Courier') return 'Ready for Pickup';
+    if (ord.status === 'On the Way') return 'Completed';
     if (ord.status === 'Preparing') return 'Preparing';
     return ord.status || 'New Order';
   };
@@ -6731,8 +8260,8 @@ export default function App() {
     }
   }, [appMode, pendingReplacementOrder]);
 
-  const merchantOrders = orders.filter((o) => {
-    if (!currentUser) return false;
+  const merchantOrders = useMemo(() => {
+    if (!currentUser) return [];
 
     // Find all store IDs owned by or assigned to this merchant
     const merchantPhoneDigits = (currentUser.phone || '').replace(/\D/g, '');
@@ -6747,47 +8276,90 @@ export default function App() {
 
     const activeStore = currentMerchantStore || myStores[0];
     if (!activeStore) {
-      return false;
+      return [];
     }
 
     const activeId = activeStore.id;
     const activeName = (activeStore.name || '').toLowerCase();
 
-    if (o.storeId === activeId || (o.storeName && o.storeName.toLowerCase() === activeName)) {
-      return true;
-    }
-    if (Array.isArray(o.stops) && o.stops.some((st) => st.storeId === activeId || (st.storeName && st.storeName.toLowerCase() === activeName))) {
-      return true;
-    }
-    return false;
-  });
+    const filtered = orders.filter((o) => {
+      if (o.storeId === activeId || (o.storeName && o.storeName.toLowerCase() === activeName)) {
+        return true;
+      }
+      if (Array.isArray(o.stops) && o.stops.some((st) => st.storeId === activeId || (st.storeName && st.storeName.toLowerCase() === activeName))) {
+        return true;
+      }
+      return false;
+    });
+
+    return filtered.sort((a, b) => {
+      const timeA = Math.max(a.timestamp || 0, getOrderLatestMessageTime(a));
+      const timeB = Math.max(b.timestamp || 0, getOrderLatestMessageTime(b));
+      return timeB - timeA;
+    });
+  }, [orders, currentUser, currentMerchantStore, storesList, getOrderLatestMessageTime]);
 
   useEffect(() => {
     merchantOrdersRef.current = merchantOrders;
   }, [merchantOrders]);
 
   const pharmacyConsultations = useMemo(() => {
+    if (!currentMerchantStore) return [];
+
+    const storeIdStr = String(currentMerchantStore.id);
+    const storeNameLower = (currentMerchantStore.name || '').trim().toLowerCase();
+
     const filtered = orders.filter((o) => {
-      const isMyStore =
-        !currentMerchantStore ||
-        (o.storeId && currentMerchantStore.id && String(o.storeId) === String(currentMerchantStore.id)) ||
-        (o.storeName && currentMerchantStore.name && o.storeName.toLowerCase() === currentMerchantStore.name.toLowerCase()) ||
-        o.storeType === 'pharmacy' ||
-        (o.id && String(o.id).startsWith('RX-'));
+      // 1. Direct match on master order
+      const isDirectStore =
+        (o.storeId && String(o.storeId) === storeIdStr) ||
+        (o.storeName && o.storeName.trim().toLowerCase() === storeNameLower);
+
+      // 2. Multi-store stop match
+      const isInStops = Array.isArray(o.stops) && o.stops.some((s) => {
+        return (
+          (s.storeId && String(s.storeId) === storeIdStr) ||
+          (s.storeName && s.storeName.trim().toLowerCase() === storeNameLower)
+        );
+      });
+
+      // 3. Line item match
+      const isInItems = Array.isArray(o.items) && o.items.some((i) => {
+        return (
+          (i.storeId && String(i.storeId) === storeIdStr) ||
+          (i.storeName && i.storeName.trim().toLowerCase() === storeNameLower)
+        );
+      });
+
+      // 4. Message tag match
+      const hasMyStoreMsg = Array.isArray(o.messages) && o.messages.some((m) => {
+        return (
+          (m.storeId && String(m.storeId) === storeIdStr) ||
+          (m.storeName && m.storeName.trim().toLowerCase() === storeNameLower)
+        );
+      });
+
+      const isMyStore = isDirectStore || isInStops || isInItems || hasMyStoreMsg;
+      if (!isMyStore) return false;
+
+      // Include if there are messages, consultations, doctor notes, or active customer inquiries
       const hasChat =
         (o.messages && o.messages.length > 0) ||
         o.status === 'Consultation' ||
         o.isPrescriptionOrder ||
-        Boolean(o.prescriptionImage);
-      return isMyStore && hasChat;
+        Boolean(o.prescriptionImage) ||
+        o.status === 'New Order' ||
+        o.status === 'Preparing';
+
+      return hasChat;
     });
 
     return filtered.sort((a, b) => {
-      const timeA = new Date(a.messages?.[a.messages.length - 1]?.createdAt || a.createdAt || 0).getTime();
-      const timeB = new Date(b.messages?.[b.messages.length - 1]?.createdAt || b.createdAt || 0).getTime();
+      const timeA = getOrderLatestMessageTime(a);
+      const timeB = getOrderLatestMessageTime(b);
       return timeB - timeA;
     });
-  }, [orders, currentMerchantStore]);
+  }, [orders, currentMerchantStore, getOrderLatestMessageTime]);
 
   const pharmacyCallLogs = useMemo(() => {
     const list = [
@@ -6799,7 +8371,9 @@ export default function App() {
       if (c.customerPhone && !list.some((l) => l.phone === c.customerPhone)) {
         list.push({
           id: `call-ord-${c.id}`,
-          patientName: c.customerName || 'Patient',
+          patientName: (c.customerName && c.customerName !== 'Patient')
+            ? c.customerName
+            : ((c.messages || []).find((m) => m.senderRole === 'buyer' && m.senderName && m.senderName !== 'Patient')?.senderName || 'Customer'),
           phone: c.customerPhone,
           time: c.createdAt ? new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today',
           type: 'incoming',
@@ -6810,42 +8384,23 @@ export default function App() {
     return list;
   }, [pharmacyConsultations]);
 
-  // Dynamic & persistent unread count derivation from order.messages + live unreadChatMap
+  // Dynamic & persistent unread count derivation from order.messages
   const getOrderUnreadCount = useCallback(
     (order, role) => {
       if (!order) return 0;
       const msgs = order.messages || [];
-      let count = 0;
-      if (Array.isArray(msgs)) {
-        count = msgs.filter((m) => {
+      if (Array.isArray(msgs) && msgs.length > 0) {
+        return msgs.filter((m) => {
           if (role === 'merchant') {
-            return (
-              (m.recipientRole === 'merchant' || m.senderRole === 'buyer') &&
-              !m.readByMerchant &&
-              m.senderRole !== 'merchant'
-            );
+            return !m.readByMerchant && m.senderRole !== 'merchant';
           } else {
-            return (
-              (m.recipientRole === 'buyer' ||
-                m.senderRole === 'merchant' ||
-                m.senderRole === 'courier') &&
-              !m.readByBuyer &&
-              m.senderRole !== 'buyer'
-            );
+            return !m.readByBuyer && m.senderRole !== 'buyer';
           }
         }).length;
       }
-      const partnerKey =
-        role === 'merchant' ? `${order.id}_buyer` : `${order.id}_merchant`;
-      const courierKey = `${order.id}_courier`;
-      const mapCount =
-        role === 'merchant'
-          ? Number(unreadChatMap[partnerKey]) || 0
-          : (Number(unreadChatMap[partnerKey]) || 0) +
-          (Number(unreadChatMap[courierKey]) || 0);
-      return Math.max(count, mapCount);
+      return 0;
     },
-    [unreadChatMap]
+    []
   );
 
   const customerUnreadCount = useMemo(() => {
@@ -6853,34 +8408,16 @@ export default function App() {
     (myCustomerOrders || []).forEach((ord) => {
       count += getOrderUnreadCount(ord, 'buyer');
     });
-    Object.entries(unreadChatMap).forEach(([key, val]) => {
-      if (
-        (key.endsWith('_merchant') || key.endsWith('_courier')) &&
-        (myCustomerOrders || []).some(
-          (o) => `${o.id}_merchant` === key || `${o.id}_courier` === key
-        )
-      ) {
-        count += Number(val) || 0;
-      }
-    });
     return count;
-  }, [myCustomerOrders, unreadChatMap, getOrderUnreadCount]);
+  }, [myCustomerOrders, getOrderUnreadCount]);
 
   const merchantUnreadCount = useMemo(() => {
     let count = 0;
     (merchantOrders || []).forEach((ord) => {
       count += getOrderUnreadCount(ord, 'merchant');
     });
-    Object.entries(unreadChatMap).forEach(([key, val]) => {
-      if (
-        key.endsWith('_buyer') &&
-        !merchantOrders.some((o) => `${o.id}_buyer` === key)
-      ) {
-        count += Number(val) || 0;
-      }
-    });
     return count;
-  }, [merchantOrders, unreadChatMap, getOrderUnreadCount]);
+  }, [merchantOrders, getOrderUnreadCount]);
 
   const merchantFilteredOrders = useMemo(() => {
     return [...merchantOrders]
@@ -7452,9 +8989,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
         if (stops.length > 0) {
           updatedStopsList = stops.map((st) => {
             const isTargetShop =
+              stops.length === 1 ||
               (targetStore && (
-                st.storeId === targetStore.id ||
-                st.storeId === merchantStoreId ||
+                String(st.storeId) === String(targetStore.id) ||
+                String(st.storeId) === String(merchantStoreId) ||
                 (st.storeName && targetStore.name && st.storeName.toLowerCase().trim() === targetStore.name.toLowerCase().trim())
               )) ||
               (!targetStore && !merchantStoreId);
@@ -7473,12 +9011,19 @@ Support: help@getit.ng | Abuja, Nigeria`;
           allStopsPickedUp = updatedStopsList.every((st) => st.pickupStatus === 'picked_up');
         } else {
           allStopsPickedUp = true;
+          updatedStopsList = [{
+            storeId: o.storeId || targetStore?.id || 'store-1',
+            storeName: o.storeName || merchantStoreName,
+            status: 'Completed',
+            pickupStatus: 'picked_up',
+            pickedUpAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          }];
         }
 
         // Snap rider coordinates to the handed-over store's location
         const storeCoords = {
-          latitude: Number(targetStore?.latitude) || 9.0882,
-          longitude: Number(targetStore?.longitude) || 7.4933,
+          latitude: Number(targetStore?.latitude) || Number(o.stops?.[0]?.latitude) || 9.0882,
+          longitude: Number(targetStore?.longitude) || Number(o.stops?.[0]?.longitude) || 7.4933,
         };
         newBoltCoords = storeCoords;
 
@@ -7488,9 +9033,20 @@ Support: help@getit.ng | Abuja, Nigeria`;
           const nextStoreName = updatedStopsList[firstPendingIdx].storeName || 'the next shop';
           newAlert = `🔔 Picked up from ${merchantStoreName}! Courier Musa Ibrahim is now riding to ${nextStoreName}.`;
         } else {
-          nextStopIndex = updatedStopsList.length;
+          nextStopIndex = Math.max(1, updatedStopsList.length);
           newAlert = `🎉 All packages collected! Courier Musa Ibrahim has departed ${merchantStoreName} and is now riding directly to your address.`;
         }
+
+        const assignedRider = o.boltRider || {
+          id: 'bolt-rider-01',
+          name: 'Musa Ibrahim',
+          phone: '+234 803 294 1194',
+          rating: '4.95',
+          trips: 1420,
+          vehicle: 'Bajaj Boxer 150 (Red)',
+          plate: 'ABJ-492-KW',
+          avatar: '🛵',
+        };
 
         const now = Date.now();
         return {
@@ -7502,6 +9058,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
           boltCoords: newBoltCoords,
           journeyAlert: newAlert,
           status: 'On the Way',
+          boltStatus: 'IN_TRANSIT',
+          boltRider: assignedRider,
         };
       })
     );
@@ -7510,6 +9068,17 @@ Support: help@getit.ng | Abuja, Nigeria`;
       'Handover Confirmed ✅',
       `Packages for ${merchantStoreName} have been handed over to courier Musa Ibrahim.`
     );
+
+    const defaultCourier = {
+      id: 'bolt-rider-01',
+      name: 'Musa Ibrahim',
+      phone: '+234 803 294 1194',
+      rating: '4.95',
+      trips: 1420,
+      vehicle: 'Bajaj Boxer 150 (Red)',
+      plate: 'ABJ-492-KW',
+      avatar: '🛵',
+    };
 
     const handoverTime = Date.now();
     updateDatabaseOrderStatus(orderId, {
@@ -7520,6 +9089,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
       boltCoords: newBoltCoords,
       journeyAlert: newAlert,
       status: 'On the Way',
+      boltStatus: 'IN_TRANSIT',
+      boltRider: defaultCourier,
     }).catch(() => { });
 
     broadcastLiveEvent('ORDER_UPDATE', {
@@ -7531,6 +9102,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
       legStartedAt: handoverTime,
       boltCoords: newBoltCoords,
       journeyAlert: newAlert,
+      boltStatus: 'IN_TRANSIT',
+      boltRider: defaultCourier,
     });
   };
 
@@ -10611,6 +12184,284 @@ Support: help@getit.ng | Abuja, Nigeria`;
     );
   }
 
+  const renderPrescribeMedicationContent = (onClose) => {
+    const targetPharmName = currentMerchantStore?.name || targetChatPartner?.name || 'Dispensary';
+    const patientDisplayName = (() => {
+      if (targetChatPartner?.name && targetChatPartner.name !== 'Patient') return targetChatPartner.name;
+      if (targetChatOrder?.customerName && targetChatOrder.customerName !== 'Patient') return targetChatOrder.customerName;
+      const buyerMsg = (targetChatOrder?.messages || []).find((m) => m.senderRole === 'buyer' && m.senderName && m.senderName !== 'Patient');
+      if (buyerMsg?.senderName) return buyerMsg.senderName;
+      return 'Customer';
+    })();
+
+    const storeProds = (currentMerchantStore?.products && Array.isArray(currentMerchantStore.products) && currentMerchantStore.products.length > 0)
+      ? currentMerchantStore.products
+      : [];
+    const masterList = (MASTER_PHARMACY_INVENTORY && Array.isArray(MASTER_PHARMACY_INVENTORY))
+      ? MASTER_PHARMACY_INVENTORY
+      : [];
+    const allDrugs = storeProds.length > 0
+      ? [...storeProds, ...masterList.filter((m) => !storeProds.some((p) => p.id === m.id))]
+      : masterList;
+
+    const filtered = allDrugs.filter((d) => {
+      const q = (prescribeSearchQuery || '').trim().toLowerCase();
+      const matchSearch = !q ||
+        (d.name && d.name.toLowerCase().includes(q)) ||
+        (d.category && d.category.toLowerCase().includes(q)) ||
+        (d.brand && d.brand.toLowerCase().includes(q)) ||
+        (d.description && d.description.toLowerCase().includes(q));
+
+      const matchCat = !prescribeCategoryFilter || prescribeCategoryFilter === 'all' ||
+        (d.category && d.category.toLowerCase() === prescribeCategoryFilter.toLowerCase());
+
+      return matchSearch && matchCat;
+    });
+
+    const drugsSubtotal = selectedPrescribeItems.reduce(
+      (s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 1),
+      0
+    );
+    const deliveryFee = 1200;
+    const totalPatientBill = drugsSubtotal > 0 ? drugsSubtotal + deliveryFee : 0;
+
+    return (
+      <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+        <View style={styles.rxBuilderHeader}>
+          <TouchableOpacity
+            style={styles.modalBackBtn}
+            onPress={onClose}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 20, color: '#FFFFFF', fontWeight: 'bold' }}>✕</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.rxBuilderTitle}>Prescribe Medications</Text>
+            <Text style={styles.rxBuilderSub} numberOfLines={1}>
+              Patient: {patientDisplayName} • {targetPharmName}
+            </Text>
+          </View>
+          <View style={styles.rxBuilderCountBadge}>
+            <Text style={styles.rxBuilderCountBadgeText}>
+              {selectedPrescribeItems.length} Selected
+            </Text>
+          </View>
+        </View>
+
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1, backgroundColor: '#F8FAFC' }}
+        >
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ padding: 16, paddingBottom: 130 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Search Drug Inventory */}
+            <View style={styles.rxSearchContainer}>
+              <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
+              <TextInput
+                style={styles.rxSearchInput}
+                placeholder="Search medications by name or category..."
+                placeholderTextColor="#94A3B8"
+                value={prescribeSearchQuery}
+                onChangeText={setPrescribeSearchQuery}
+              />
+              {prescribeSearchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setPrescribeSearchQuery('')}>
+                  <Text style={{ color: '#94A3B8', fontSize: 14 }}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Category Filter Horizontal Chips */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ marginBottom: 12 }}
+              contentContainerStyle={{ paddingVertical: 4, gap: 8 }}
+            >
+              {(PHARMACY_CATEGORIES || []).map((cat) => {
+                const isActive = (prescribeCategoryFilter || 'all') === cat.id;
+                return (
+                  <TouchableOpacity
+                    key={cat.id}
+                    style={[
+                      styles.rxCategoryFilterChip,
+                      isActive && styles.rxCategoryFilterChipActive,
+                    ]}
+                    onPress={() => setPrescribeCategoryFilter(cat.id)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 13, marginRight: 5 }}>{cat.icon}</Text>
+                    <Text
+                      style={[
+                        styles.rxCategoryFilterChipText,
+                        isActive && styles.rxCategoryFilterChipTextActive,
+                      ]}
+                    >
+                      {cat.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {/* Selected Medications Tray (if any selected) */}
+            {selectedPrescribeItems.length > 0 && (
+              <View style={styles.rxSelectedTrayCard}>
+                <Text style={styles.rxSelectedTrayTitle}>
+                  Prescription Basket ({selectedPrescribeItems.length} drugs)
+                </Text>
+                {selectedPrescribeItems.map((item) => (
+                  <View key={item.id} style={styles.rxSelectedTrayItem}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.rxSelectedTrayName}>{item.name}</Text>
+                      <Text style={styles.rxSelectedTrayPrice}>
+                        {formatNaira(item.price)} each • Total: {formatNaira((Number(item.price) || 0) * (Number(item.quantity) || 1))}
+                      </Text>
+                      {/* Dosage instructions input */}
+                      <TextInput
+                        style={styles.rxDosageInput}
+                        placeholder="Dosage (e.g. 1 tab morning & night after food)..."
+                        placeholderTextColor="#94A3B8"
+                        value={item.dosageInstruction}
+                        onChangeText={(txt) => handleUpdatePrescribeItemDosage(item.id, txt)}
+                      />
+                    </View>
+                    <View style={styles.rxQtyControlCluster}>
+                      <TouchableOpacity
+                        style={styles.rxQtyBtn}
+                        onPress={() => handleUpdatePrescribeItemQty(item.id, -1)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.rxQtyBtnText}>-</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.rxQtyNumberText}>{item.quantity || 1}</Text>
+                      <TouchableOpacity
+                        style={styles.rxQtyBtn}
+                        onPress={() => handleUpdatePrescribeItemQty(item.id, 1)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.rxQtyBtnText}>+</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => handleTogglePrescribeItem(item)}
+                        style={{ marginLeft: 6 }}
+                      >
+                        <Text style={{ fontSize: 16 }}>🗑️</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+
+                {/* Subtotal & Delivery Total */}
+                <View style={styles.rxBillCalculationCard}>
+                  <View style={styles.rxBillCalcRow}>
+                    <Text style={styles.rxBillCalcLabel}>Drugs Subtotal:</Text>
+                    <Text style={styles.rxBillCalcVal}>
+                      {formatNaira(drugsSubtotal)}
+                    </Text>
+                  </View>
+                  <View style={styles.rxBillCalcRow}>
+                    <Text style={styles.rxBillCalcLabel}>Discreet Delivery:</Text>
+                    <Text style={styles.rxBillCalcVal}>{formatNaira(deliveryFee)}</Text>
+                  </View>
+                  <View style={[styles.rxBillCalcRow, { borderTopWidth: 1, borderTopColor: '#CBD5E1', paddingTop: 6, marginTop: 4 }]}>
+                    <Text style={[styles.rxBillCalcLabel, { fontWeight: '800', color: '#0F172A' }]}>
+                      Total Patient Bill:
+                    </Text>
+                    <Text style={[styles.rxBillCalcVal, { fontWeight: '900', color: '#056B4B', fontSize: 16 }]}>
+                      {formatNaira(totalPatientBill)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Dispensary Catalogue Items */}
+            <Text style={styles.rxCatalogueSectionTitle}>
+              Dispensary Stock & Catalogue ({filtered.length} Medications)
+            </Text>
+            <Text style={styles.rxCatalogueSectionSub}>
+              Tap any medication to add to this patient prescription
+            </Text>
+
+            {filtered.length === 0 ? (
+              <View style={styles.rxEmptyCatalogCard}>
+                <Text style={{ fontSize: 28, marginBottom: 6 }}>🔍</Text>
+                <Text style={styles.rxEmptyCatalogTitle}>No Medications Found</Text>
+                <Text style={styles.rxEmptyCatalogSub}>
+                  No medications match "{prescribeSearchQuery}".
+                </Text>
+              </View>
+            ) : (
+              filtered.map((drug) => {
+                const isSelected = selectedPrescribeItems.some((p) => p.id === drug.id);
+                return (
+                  <TouchableOpacity
+                    key={drug.id}
+                    style={[
+                      styles.rxDrugCatalogCard,
+                      isSelected && styles.rxDrugCatalogCardSelected,
+                    ]}
+                    onPress={() => handleTogglePrescribeItem(drug)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.rxDrugIconCircle}>
+                      <Text style={{ fontSize: 22 }}>{drug.icon || '💊'}</Text>
+                    </View>
+                    <View style={{ flex: 1, marginHorizontal: 10 }}>
+                      <Text style={styles.rxDrugCardName}>{drug.name}</Text>
+                      <Text style={styles.rxDrugCardCategory}>
+                        {drug.brand ? `${drug.brand} • ` : ''}{drug.category || 'Medication'} • {drug.dosage || 'Prescription formulation'}
+                      </Text>
+                      <Text style={styles.rxDrugCardPrice}>{formatNaira(drug.price)}</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.rxAddSelectBtn,
+                        isSelected && styles.rxAddSelectBtnActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.rxAddSelectBtnText,
+                          isSelected && styles.rxAddSelectBtnTextActive,
+                        ]}
+                      >
+                        {isSelected ? '✓ Added' : '+ Add'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </ScrollView>
+
+          {/* Bottom floating send button */}
+          <View style={styles.rxFloatingFooter}>
+            <TouchableOpacity
+              style={[
+                styles.rxSendBillBtn,
+                selectedPrescribeItems.length === 0 && { opacity: 0.55, backgroundColor: '#94A3B8' },
+              ]}
+              onPress={handleSendPrescriptionBill}
+              disabled={selectedPrescribeItems.length === 0}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.rxSendBillBtnText}>
+                {selectedPrescribeItems.length === 0
+                  ? '💊 Select Medications Above to Prescribe'
+                  : `📤 Send Prescription Bill (${formatNaira(totalPatientBill)}) ➔`}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
@@ -11015,7 +12866,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
               {selectedMapStore ? (
                 <View style={styles.buyerMapSelectedStoreCard}>
                   <Image
-                    source={{ uri: selectedMapStore.image }}
+                    source={{
+                      uri: optimizeImageUrl(selectedMapStore.image, 200, 60),
+                      cache: 'force-cache',
+                    }}
                     style={styles.buyerMapStoreThumb}
                   />
                   <View style={{ flex: 1, marginLeft: 12 }}>
@@ -11095,8 +12949,20 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 >
                   {/* Store Image with Overlays */}
                   <View style={styles.storeImageContainer}>
+                    {/* Instant Placeholder Backdrop (Visible immediately while image loads) */}
+                    <View style={styles.storeImagePlaceholderBackdrop}>
+                      <Text style={{ fontSize: 44, opacity: 0.32 }}>
+                        {store.storeType === 'pharmacy' ? '💊' : (store.category === 'bakery' ? '🥐' : (store.category === 'cellar' ? '🍷' : (store.category === 'organic' ? '🌿' : '🛒')))}
+                      </Text>
+                      <Text style={styles.storeImagePlaceholderCategory}>
+                        {store.categoryLabel || store.name}
+                      </Text>
+                    </View>
                     <Image
-                      source={{ uri: store.image }}
+                      source={{
+                        uri: optimizeImageUrl(store.image, 500, 65),
+                        cache: 'force-cache',
+                      }}
                       style={styles.storeImage}
                       resizeMode="cover"
                     />
@@ -11258,7 +13124,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   {isRefreshingOrders ? '⏳ Syncing...' : '🔄 Sync'}
                 </Text>
               </TouchableOpacity>
-              {myCustomerOrders.length > 0 && (
+              {myPaidCustomerOrders.length > 0 && (
                 <TouchableOpacity
                   onPress={clearAllOrdersHistory}
                   style={styles.ordersClearHistoryBtn}
@@ -11286,7 +13152,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'active' && styles.ordersFilterTabTextActive]}>
-                🟢 Active ({myCustomerOrders.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled').length})
+                🟢 Active ({myPaidCustomerOrders.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled').length})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -11298,7 +13164,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'completed' && styles.ordersFilterTabTextActive]}>
-                ✅ Delivered ({myCustomerOrders.filter((o) => o.status === 'Delivered').length})
+                ✅ Delivered ({myPaidCustomerOrders.filter((o) => o.status === 'Delivered').length})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -11310,7 +13176,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'cancelled' && styles.ordersFilterTabTextActive]}>
-                ❌ Cancelled ({myCustomerOrders.filter((o) => o.status === 'Cancelled').length})
+                ❌ Cancelled ({myPaidCustomerOrders.filter((o) => o.status === 'Cancelled').length})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -11322,7 +13188,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
               activeOpacity={0.7}
             >
               <Text style={[styles.ordersFilterTabText, ordersFilterTab === 'all' && styles.ordersFilterTabTextActive]}>
-                📦 All ({myCustomerOrders.length})
+                📦 All ({myPaidCustomerOrders.length})
               </Text>
             </TouchableOpacity>
           </ScrollView>
@@ -11478,29 +13344,79 @@ Support: help@getit.ng | Abuja, Nigeria`;
                             </Text>
                           </TouchableOpacity>
                         ) : (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <TouchableOpacity
-                              style={{
-                                flex: 1,
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 6,
-                                backgroundColor: buyerUnread > 0 ? '#DC2626' : '#056B4B',
-                                paddingVertical: 8,
-                                paddingHorizontal: 12,
-                                borderRadius: 8,
-                              }}
-                              onPress={() => openChatModal(ord, 'merchant')}
-                              activeOpacity={0.8}
-                            >
-                              <Text style={{ fontSize: 13 }}>💬</Text>
-                              <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' }}>
-                                Message Seller{buyerUnread > 0 ? ` (${buyerUnread} New)` : ''}
+                          ord.isMultiStore && Array.isArray(ord.stops) && ord.stops.length > 1 ? (
+                            <View style={{ gap: 6, width: '100%' }}>
+                              <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#64748B' }}>
+                                MULTI-STORE • MESSAGE SHOPS INDEPENDENTLY:
                               </Text>
-                            </TouchableOpacity>
-
-                            {ord.boltRider && (
+                              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                {ord.stops.map((stop, sIdx) => {
+                                  const sUnread = (ord.messages || []).filter(
+                                    (m) =>
+                                      (!m.storeId || String(m.storeId) === String(stop.storeId)) &&
+                                      m.senderRole !== 'buyer' &&
+                                      !m.readByBuyer
+                                  ).length;
+                                  return (
+                                    <TouchableOpacity
+                                      key={stop.storeId || sIdx}
+                                      style={{
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        gap: 5,
+                                        backgroundColor: sUnread > 0 ? '#DC2626' : '#ECFDF5',
+                                        borderWidth: 1,
+                                        borderColor: sUnread > 0 ? '#DC2626' : '#A7F3D0',
+                                        paddingVertical: 7,
+                                        paddingHorizontal: 10,
+                                        borderRadius: 8,
+                                      }}
+                                      onPress={() => openChatModal(ord, 'merchant', stop)}
+                                      activeOpacity={0.8}
+                                    >
+                                      <Text style={{ fontSize: 12 }}>{stop.storeType === 'pharmacy' ? '🩺' : '🏪'}</Text>
+                                      <Text
+                                        style={{
+                                          fontSize: 11.5,
+                                          fontWeight: '800',
+                                          color: sUnread > 0 ? '#FFFFFF' : '#065F46',
+                                        }}
+                                        numberOfLines={1}
+                                      >
+                                        Chat: {stop.storeName}
+                                        {sUnread > 0 ? ` (${sUnread})` : ''}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                              </View>
+                              {ord.boltRider && (
+                                <TouchableOpacity
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 6,
+                                    backgroundColor: '#F0FDF4',
+                                    borderWidth: 1,
+                                    borderColor: '#BBF7D0',
+                                    paddingVertical: 7,
+                                    paddingHorizontal: 12,
+                                    borderRadius: 8,
+                                    marginTop: 2,
+                                  }}
+                                  onPress={() => openChatModal(ord, 'courier')}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={{ fontSize: 13 }}>🛵</Text>
+                                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
+                                    Message Courier Musa
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          ) : (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                               <TouchableOpacity
                                 style={{
                                   flex: 1,
@@ -11508,23 +13424,46 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                   alignItems: 'center',
                                   justifyContent: 'center',
                                   gap: 6,
-                                  backgroundColor: '#F0FDF4',
-                                  borderWidth: 1,
-                                  borderColor: '#BBF7D0',
+                                  backgroundColor: buyerUnread > 0 ? '#DC2626' : '#056B4B',
                                   paddingVertical: 8,
                                   paddingHorizontal: 12,
                                   borderRadius: 8,
                                 }}
-                                onPress={() => openChatModal(ord, 'courier')}
+                                onPress={() => openChatModal(ord, 'merchant')}
                                 activeOpacity={0.8}
                               >
-                                <Text style={{ fontSize: 13 }}>🛵</Text>
-                                <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#065F46' }}>
-                                  Message Courier
+                                <Text style={{ fontSize: 13 }}>💬</Text>
+                                <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' }}>
+                                  Message Seller{buyerUnread > 0 ? ` (${buyerUnread} New)` : ''}
                                 </Text>
                               </TouchableOpacity>
-                            )}
-                          </View>
+
+                              {ord.boltRider && (
+                                <TouchableOpacity
+                                  style={{
+                                    flex: 1,
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 6,
+                                    backgroundColor: '#F0FDF4',
+                                    borderWidth: 1,
+                                    borderColor: '#BBF7D0',
+                                    paddingVertical: 8,
+                                    paddingHorizontal: 12,
+                                    borderRadius: 8,
+                                  }}
+                                  onPress={() => openChatModal(ord, 'courier')}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={{ fontSize: 13 }}>🛵</Text>
+                                  <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#065F46' }}>
+                                    Message Courier
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          )
                         )}
 
                         {!isDeliveredOrPast && buyerUnread > 0 && latestMsg?.text && (
@@ -11581,38 +13520,79 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   {isExpanded && (
                     <View style={styles.orderExpandedBodyWrap}>
                       {/* Direct Concierge & Courier Live Chat Buttons */}
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                        <TouchableOpacity
-                          style={{
-                            flex: 1,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 6,
-                            backgroundColor: '#ECFDF5',
-                            paddingVertical: 9,
-                            paddingHorizontal: 12,
-                            borderRadius: 10,
-                            borderWidth: 1,
-                            borderColor: '#A7F3D0',
-                          }}
-                          onPress={() => openChatModal(ord, 'merchant')}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={{ fontSize: 13 }}>💬</Text>
-                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
-                            Chat with Store
+                      {ord.isMultiStore && Array.isArray(ord.stops) && ord.stops.length > 1 ? (
+                        <View style={{ gap: 6, marginBottom: 12 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B' }}>
+                            MULTI-STORE • MESSAGE SHOPS INDEPENDENTLY:
                           </Text>
-                          {unreadChatMap[`${ord.id}_merchant`] ? (
-                            <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
-                              <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
-                                {unreadChatMap[`${ord.id}_merchant`]}
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                            {ord.stops.map((stop, sIdx) => {
+                              const sUnread = (ord.messages || []).filter(
+                                (m) =>
+                                  (!m.storeId || String(m.storeId) === String(stop.storeId)) &&
+                                  m.senderRole !== 'buyer' &&
+                                  !m.readByBuyer
+                              ).length;
+                              return (
+                                <TouchableOpacity
+                                  key={stop.storeId || sIdx}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 5,
+                                    backgroundColor: sUnread > 0 ? '#DC2626' : '#ECFDF5',
+                                    borderWidth: 1,
+                                    borderColor: sUnread > 0 ? '#DC2626' : '#A7F3D0',
+                                    paddingVertical: 7,
+                                    paddingHorizontal: 10,
+                                    borderRadius: 8,
+                                  }}
+                                  onPress={() => openChatModal(ord, 'merchant', stop)}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={{ fontSize: 12 }}>{stop.storeType === 'pharmacy' ? '🩺' : '🏪'}</Text>
+                                  <Text
+                                    style={{
+                                      fontSize: 11.5,
+                                      fontWeight: '800',
+                                      color: sUnread > 0 ? '#FFFFFF' : '#065F46',
+                                    }}
+                                    numberOfLines={1}
+                                  >
+                                    Chat: {stop.storeName}
+                                    {sUnread > 0 ? ` (${sUnread})` : ''}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                          {ord.boltRider && (
+                            <TouchableOpacity
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 6,
+                                backgroundColor: '#F0FDF4',
+                                borderWidth: 1,
+                                borderColor: '#BBF7D0',
+                                paddingVertical: 8,
+                                paddingHorizontal: 12,
+                                borderRadius: 8,
+                                marginTop: 2,
+                              }}
+                              onPress={() => openChatModal(ord, 'courier')}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 13 }}>🛵</Text>
+                              <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
+                                Message Courier Musa
                               </Text>
-                            </View>
-                          ) : null}
-                        </TouchableOpacity>
-
-                        {ord.boltRider && (
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      ) : (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                           <TouchableOpacity
                             style={{
                               flex: 1,
@@ -11620,30 +13600,72 @@ Support: help@getit.ng | Abuja, Nigeria`;
                               alignItems: 'center',
                               justifyContent: 'center',
                               gap: 6,
-                              backgroundColor: '#F0FDF4',
+                              backgroundColor: '#ECFDF5',
                               paddingVertical: 9,
                               paddingHorizontal: 12,
                               borderRadius: 10,
                               borderWidth: 1,
-                              borderColor: '#BBF7D0',
+                              borderColor: '#A7F3D0',
                             }}
-                            onPress={() => openChatModal(ord, 'courier')}
+                            onPress={() => openChatModal(ord, 'merchant')}
                             activeOpacity={0.8}
                           >
-                            <Text style={{ fontSize: 13 }}>🛵</Text>
+                            <Text style={{ fontSize: 13 }}>💬</Text>
                             <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
-                              Chat with Musa
+                              Chat with Store
                             </Text>
-                            {unreadChatMap[`${ord.id}_courier`] ? (
-                              <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
-                                <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
-                                  {unreadChatMap[`${ord.id}_courier`]}
-                                </Text>
-                              </View>
-                            ) : null}
+                            {(() => {
+                              const storeUnread = (ord.messages || []).filter(
+                                (m) => m.senderRole !== 'buyer' && m.senderRole !== 'courier' && !m.readByBuyer
+                              ).length;
+                              return storeUnread > 0 ? (
+                                <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                                  <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                                    {storeUnread}
+                                  </Text>
+                                </View>
+                              ) : null;
+                            })()}
                           </TouchableOpacity>
-                        )}
-                      </View>
+
+                          {ord.boltRider && (
+                            <TouchableOpacity
+                              style={{
+                                flex: 1,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 6,
+                                backgroundColor: '#F0FDF4',
+                                paddingVertical: 9,
+                                paddingHorizontal: 12,
+                                borderRadius: 10,
+                                borderWidth: 1,
+                                borderColor: '#BBF7D0',
+                              }}
+                              onPress={() => openChatModal(ord, 'courier')}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 13 }}>🛵</Text>
+                              <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
+                                Chat with Musa
+                              </Text>
+                              {(() => {
+                                const courierUnread = (ord.messages || []).filter(
+                                  (m) => m.senderRole === 'courier' && !m.readByBuyer
+                                ).length;
+                                return courierUnread > 0 ? (
+                                  <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                                    <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                                      {courierUnread}
+                                    </Text>
+                                  </View>
+                                ) : null;
+                              })()}
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      )}
 
                       {/* Clean 1-Line Live Courier Progress (for multi-stop journeys) */}
                       {ord.journeyAlert && ord.status !== 'Cancelled' && ord.status !== 'Delivered' && (
@@ -12118,54 +14140,120 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       {/* --- LIVE COURIER ROUTE NAVIGATION MAP (ALWAYS SHOWN FOR ACTIVE ORDERS) --- */}
                       {ord.status !== 'Cancelled' && (
                         <View style={styles.boltTrackingSummaryCard}>
-                          {ord.boltRider && ord.boltRider.name ? (
-                            <View>
-                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                <View style={styles.boltRiderAvatarSmall}>
-                                  <Text style={{ fontSize: 16 }}>🛵</Text>
+                          {(ord.boltRider && ord.boltRider.name) || ord.status === 'On the Way' ? (
+                            (() => {
+                              const activeCourier = (ord.boltRider && ord.boltRider.name) ? ord.boltRider : {
+                                id: 'bolt-rider-01',
+                                name: 'Musa Ibrahim',
+                                phone: '+234 803 294 1194',
+                                rating: '4.95',
+                                trips: 1420,
+                                vehicle: 'Bajaj Boxer 150 (Red)',
+                                plate: 'ABJ-492-KW',
+                                avatar: '🛵',
+                              };
+                              return (
+                                <View>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <View style={styles.boltRiderAvatarSmall}>
+                                      <Text style={{ fontSize: 16 }}>🛵</Text>
+                                    </View>
+                                    <View style={{ flex: 1, marginLeft: 8 }}>
+                                      <Text style={styles.boltRiderNameSmall} numberOfLines={1}>
+                                        {activeCourier.name} (Courier)
+                                      </Text>
+                                      <Text style={styles.boltEtaPillTextSmall} numberOfLines={1}>
+                                        ⚡ Arrival: {ord.eta || '12 mins'} • {activeCourier.rating || '4.95'}★
+                                      </Text>
+                                    </View>
+                                  </View>
+                                  <View style={styles.boltSummaryActionRow}>
+                                    <TouchableOpacity
+                                      style={styles.boltToggleMapBtn}
+                                      onPress={() => toggleBoltMapCollapse(ord.id)}
+                                      activeOpacity={0.7}
+                                    >
+                                      <Text style={styles.boltToggleMapBtnText}>
+                                        {isBoltMapOpen ? '▲ Hide Map' : '🗺️ Live Map'}
+                                      </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={[
+                                        styles.boltCallBtnSmall,
+                                        { backgroundColor: '#056B4B', borderColor: '#047857' },
+                                      ]}
+                                      onPress={() => openChatModal(ord, 'courier')}
+                                      activeOpacity={0.8}
+                                    >
+                                      <Text style={[styles.boltCallBtnSmallText, { color: '#FFFFFF' }]}>
+                                        💬 Chat{(() => {
+                                          const cUnread = (ord.messages || []).filter((m) => m.senderRole === 'courier' && !m.readByBuyer).length;
+                                          return cUnread > 0 ? ` (${cUnread})` : '';
+                                        })()}
+                                      </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={styles.boltCallBtnSmall}
+                                      onPress={() =>
+                                        Linking.openURL(`tel:${activeCourier.phone || '+2348032941194'}`)
+                                      }
+                                      activeOpacity={0.8}
+                                    >
+                                      <Text style={styles.boltCallBtnSmallText}>📞 Call</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                  {ord.status === 'On the Way' && (
+                                    <View style={{ marginTop: 10 }}>
+                                      {ord.courierArrivedOutside ? (
+                                        <TouchableOpacity
+                                          style={{
+                                            backgroundColor: '#056B4B',
+                                            borderRadius: 12,
+                                            paddingVertical: 13,
+                                            paddingHorizontal: 16,
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            shadowColor: '#056B4B',
+                                            shadowOffset: { width: 0, height: 3 },
+                                            shadowOpacity: 0.35,
+                                            shadowRadius: 5,
+                                            elevation: 4,
+                                          }}
+                                          onPress={() => completeDeliveryHandover(ord.id)}
+                                          activeOpacity={0.85}
+                                        >
+                                          <Text style={{ fontSize: 16, marginRight: 8 }}>📦</Text>
+                                          <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 14 }}>
+                                            Confirm Handover & Receive Packages
+                                          </Text>
+                                        </TouchableOpacity>
+                                      ) : (
+                                        <TouchableOpacity
+                                          style={{
+                                            backgroundColor: '#F8FAFC',
+                                            borderColor: '#E2E8F0',
+                                            borderWidth: 1,
+                                            borderRadius: 10,
+                                            paddingVertical: 9,
+                                            paddingHorizontal: 12,
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                          }}
+                                          onPress={() => completeDeliveryHandover(ord.id)}
+                                          activeOpacity={0.8}
+                                        >
+                                          <Text style={{ color: '#64748B', fontWeight: '600', fontSize: 12 }}>
+                                            Courier at your door? Tap to confirm handover
+                                          </Text>
+                                        </TouchableOpacity>
+                                      )}
+                                    </View>
+                                  )}
                                 </View>
-                                <View style={{ flex: 1, marginLeft: 8 }}>
-                                  <Text style={styles.boltRiderNameSmall} numberOfLines={1}>
-                                    {ord.boltRider.name} (Courier)
-                                  </Text>
-                                  <Text style={styles.boltEtaPillTextSmall} numberOfLines={1}>
-                                    ⚡ Arrival: {ord.eta || '12 mins'} • {ord.boltRider.rating || '4.95'}★
-                                  </Text>
-                                </View>
-                              </View>
-                              <View style={styles.boltSummaryActionRow}>
-                                <TouchableOpacity
-                                  style={styles.boltToggleMapBtn}
-                                  onPress={() => toggleBoltMapCollapse(ord.id)}
-                                  activeOpacity={0.7}
-                                >
-                                  <Text style={styles.boltToggleMapBtnText}>
-                                    {isBoltMapOpen ? '▲ Hide Map' : '🗺️ Live Map'}
-                                  </Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                  style={[
-                                    styles.boltCallBtnSmall,
-                                    { backgroundColor: '#056B4B', borderColor: '#047857' },
-                                  ]}
-                                  onPress={() => openChatModal(ord, 'courier')}
-                                  activeOpacity={0.8}
-                                >
-                                  <Text style={[styles.boltCallBtnSmallText, { color: '#FFFFFF' }]}>
-                                    💬 Chat{unreadChatMap[`${ord.id}_courier`] ? ` (${unreadChatMap[`${ord.id}_courier`]})` : ''}
-                                  </Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                  style={styles.boltCallBtnSmall}
-                                  onPress={() =>
-                                    Linking.openURL(`tel:${ord.boltRider.phone || '+2348032941194'}`)
-                                  }
-                                  activeOpacity={0.8}
-                                >
-                                  <Text style={styles.boltCallBtnSmallText}>📞 Call</Text>
-                                </TouchableOpacity>
-                              </View>
-                            </View>
+                              );
+                            })()
                           ) : ord.status === 'Looking for Courier' ? (
                             <View>
                               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -12205,6 +14293,33 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                   </Text>
                                   <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
                                     Provisions being freshly sorted • Courier dispatch when ready
+                                  </Text>
+                                </View>
+                              </View>
+                              <View style={styles.boltSummaryActionRow}>
+                                <TouchableOpacity
+                                  style={styles.boltToggleMapBtn}
+                                  onPress={() => toggleBoltMapCollapse(ord.id)}
+                                  activeOpacity={0.7}
+                                >
+                                  <Text style={styles.boltToggleMapBtnText}>
+                                    {isBoltMapOpen ? '▲ Hide Map' : '🗺️ View Hubs'}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          ) : ord.status === 'Ready for Pickup' ? (
+                            <View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={[styles.boltRiderAvatarSmall, { backgroundColor: '#DCFCE7' }]}>
+                                  <Text style={{ fontSize: 16 }}>📦</Text>
+                                </View>
+                                <View style={{ flex: 1, marginLeft: 8 }}>
+                                  <Text style={[styles.boltRiderNameSmall, { color: '#047857' }]} numberOfLines={1}>
+                                    Package Ready for Pickup
+                                  </Text>
+                                  <Text style={styles.boltEtaPillTextSmall} numberOfLines={2}>
+                                    Store has packaged items • Dispatching courier fleet
                                   </Text>
                                 </View>
                               </View>
@@ -12271,7 +14386,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                   const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
                                   const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
                                   const firstStore = (ord.stops && ord.stops[0]) || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
+                                  const riderStart = ord.riderOrigin || {
+                                    latitude: Number(firstStore.latitude || 9.0882) - 0.0090,
+                                    longitude: Number(firstStore.longitude || 7.4933) - 0.0080,
+                                  };
                                   const wps = [
+                                    riderStart,
                                     ...(ord.stops && Array.isArray(ord.stops) && ord.stops.length > 0
                                       ? ord.stops.map((s) => ({
                                         latitude: Number(s.latitude) || 9.0882,
@@ -12292,9 +14412,11 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                       ord.roadLegs[currentStopIdx] &&
                                       ord.roadLegs[currentStopIdx].length > 1
                                       ? ord.roadLegs[currentStopIdx]
-                                      : fullRoutePoints.length > 1
-                                        ? fullRoutePoints
-                                        : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
+                                      : (ord.roadLegs && ord.roadLegs.length > 0)
+                                        ? ord.roadLegs[ord.roadLegs.length - 1]
+                                        : fullRoutePoints.length > 1
+                                          ? fullRoutePoints
+                                          : directFallback.legs[currentStopIdx] || directFallback.legs[directFallback.legs.length - 1] || [];
 
                                   return (
                                     <>
@@ -12440,6 +14562,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                   const currentStopIdx = ord.currentStopIndex || 0;
                                   const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
                                   const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
+                                  const targetHomeCoord = {
+                                    latitude: ord.snappedDeliveryLocation?.latitude || homeLat,
+                                    longitude: ord.snappedDeliveryLocation?.longitude || homeLng,
+                                  };
                                   const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
                                   const riderStart = ord.riderOrigin || {
                                     latitude: Number(firstStore.latitude || 9.0882) - 0.0090,
@@ -12462,21 +14588,25 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                       ord.roadLegs[currentStopIdx] &&
                                       ord.roadLegs[currentStopIdx].length > 1
                                       ? ord.roadLegs[currentStopIdx]
-                                      : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
+                                      : (ord.roadLegs && ord.roadLegs.length > 0)
+                                        ? ord.roadLegs[ord.roadLegs.length - 1]
+                                        : directFallback.legs[currentStopIdx] || directFallback.legs[directFallback.legs.length - 1] || [];
 
-                                  const elapsedBuyerMapIdx = ord.legStartedAt
-                                    ? Math.min(activeRoadPts.length - 1, Math.floor((Date.now() - ord.legStartedAt) / 3000))
-                                    : (ord.roadPointIndex || 0);
-                                  const pointIdx = Math.min(Math.max(elapsedBuyerMapIdx, ord.roadPointIndex || 0), Math.max(0, activeRoadPts.length - 1));
+                                  const pointIdx = Math.min(
+                                    Math.max(ord.roadPointIndex || 0, 0),
+                                    Math.max(0, activeRoadPts.length - 1)
+                                  );
                                   const firstStoreCoord = {
                                     latitude: Number(firstStore.latitude) || 9.0882,
                                     longitude: Number(firstStore.longitude) || 7.4933,
                                   };
-                                  const riderOnBlueLine =
-                                    activeRoadPts[pointIdx] ||
-                                    (ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude) ? ord.boltCoords : firstStoreCoord);
+                                  const riderOnBlueLine = (ord.courierArrivedOutside || ord.status === 'Delivered')
+                                    ? (ord.snappedDeliveryLocation || targetHomeCoord)
+                                    : (ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
+                                      ? ord.boltCoords
+                                      : (activeRoadPts[pointIdx] || firstStoreCoord));
 
-                                  return Boolean(ord.boltRider && ord.boltRider.name) ? (
+                                  return Boolean((ord.boltRider && ord.boltRider.name) || ord.status === 'On the Way' || ord.courierArrivedOutside) ? (
                                     <Marker
                                       coordinate={riderOnBlueLine}
                                       title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Courier)`}
@@ -12488,7 +14618,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                         <View style={styles.googleMapsRiderBadge}>
                                           <View style={styles.googleMapsLiveBeaconDot} />
                                           <Text style={styles.googleMapsRiderBadgeName}>
-                                            {ord.boltRider?.name?.split(' ')[0] || 'Musa'}
+                                            {(ord.boltRider?.name || 'Musa Ibrahim').split(' ')[0] || 'Musa'}
                                           </Text>
                                         </View>
 
@@ -12573,6 +14703,164 @@ Support: help@getit.ng | Abuja, Nigeria`;
               );
             })
           )}
+        </ScrollView>
+      )}
+
+      {/* --- CUSTOMER MESSAGES TAB --- */}
+      {activeTab === 'messages' && (
+        <ScrollView
+          style={styles.mainScrollView}
+          contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshingOrders}
+              onRefresh={() => syncOrdersFromCloud(true)}
+              tintColor={COLORS.emeraldPrimary}
+              colors={[COLORS.emeraldPrimary]}
+            />
+          }
+        >
+          {/* Top Title */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <View>
+              <Text style={styles.sectionHeading}>Messages</Text>
+              <Text style={styles.sectionSubheading}>Direct line with Pharmacists, Stores & Couriers</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => syncOrdersFromCloud(true)}
+              style={[styles.ordersClearHistoryBtn, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.ordersClearHistoryBtnText, { color: '#065F46' }]}>
+                {isRefreshingOrders ? '⏳ Syncing...' : '🔄 Refresh'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Filter Pills */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.ordersFilterTabBar}
+            style={{ marginBottom: 14 }}
+          >
+            <TouchableOpacity
+              style={[styles.ordersFilterTabBtn, customerMessagesFilter === 'all' && styles.ordersFilterTabBtnActive]}
+              onPress={() => setCustomerMessagesFilter('all')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.ordersFilterTabText, customerMessagesFilter === 'all' && styles.ordersFilterTabTextActive]}>
+                💬 All ({customerConversations.length})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.ordersFilterTabBtn, customerMessagesFilter === 'pharmacy' && styles.ordersFilterTabBtnActive]}
+              onPress={() => setCustomerMessagesFilter('pharmacy')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.ordersFilterTabText, customerMessagesFilter === 'pharmacy' && styles.ordersFilterTabTextActive]}>
+                🩺 Pharmacists ({customerConversations.filter((c) => c.storeType === 'pharmacy' || c.isPrescriptionOrder).length})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.ordersFilterTabBtn, customerMessagesFilter === 'stores' && styles.ordersFilterTabBtnActive]}
+              onPress={() => setCustomerMessagesFilter('stores')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.ordersFilterTabText, customerMessagesFilter === 'stores' && styles.ordersFilterTabTextActive]}>
+                🏪 Stores & Couriers ({customerConversations.filter((c) => c.storeType !== 'pharmacy' && !c.isPrescriptionOrder).length})
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+
+          {/* Conversations List */}
+          {(() => {
+            const filteredConvs = customerConversations.filter((c) => {
+              if (customerMessagesFilter === 'pharmacy') return c.storeType === 'pharmacy' || c.isPrescriptionOrder;
+              if (customerMessagesFilter === 'stores') return c.storeType !== 'pharmacy' && !c.isPrescriptionOrder;
+              return true;
+            });
+
+            if (filteredConvs.length === 0) {
+              return (
+                <View style={styles.ordersEmptyBox}>
+                  <Text style={{ fontSize: 44, marginBottom: 10 }}>💬</Text>
+                  <Text style={styles.ordersEmptyTitle}>No Conversations Yet</Text>
+                  <Text style={styles.ordersEmptySub}>
+                    When you consult a licensed pharmacist, upload doctor prescriptions, or message a merchant about your order, your conversations will appear here.
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, { marginTop: 16 }]}
+                    onPress={() => {
+                      setActiveVertical('pharmacy');
+                      setActiveTab('home');
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.primaryActionBtnText}>🩺 Consult a Pharmacist</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            }
+
+            return filteredConvs.map((conv) => {
+              const lastMsg = conv.lastMsg || conv.messages?.[conv.messages.length - 1];
+              const isPharm = conv.storeType === 'pharmacy';
+              const isCourier = conv.isCourier;
+              const unreadCount = (conv.messages || []).filter((m) => m.senderRole !== 'buyer' && !m.readByBuyer).length;
+              const partnerName = conv.storeName || (isPharm ? 'Pharmacy Dispensary' : 'Merchant Store');
+              const hasPrescription = conv.hasPrescription;
+
+              return (
+                <TouchableOpacity
+                  key={conv.id}
+                  style={styles.customerConvCard}
+                  onPress={() => openChatModal(conv.order || conv, conv.partnerRole || 'merchant', conv.targetStore || null)}
+                  activeOpacity={0.85}
+                >
+                  <View style={[styles.customerConvAvatar, { backgroundColor: isCourier ? '#F0FDF4' : isPharm ? '#EFF6FF' : '#ECFDF5' }]}>
+                    <Text style={{ fontSize: 24 }}>{isCourier ? '🛵' : isPharm ? '🩺' : '🏪'}</Text>
+                  </View>
+
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                      <Text style={styles.customerConvTitle} numberOfLines={1}>
+                        {partnerName}
+                      </Text>
+                      <Text style={styles.customerConvTime}>
+                        {lastMsg?.createdAt
+                          ? new Date(lastMsg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                          : 'Recent'}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap', gap: 4 }}>
+                      <View style={[styles.customerConvTag, { backgroundColor: conv.orderStatus === 'Consultation' ? '#EFF6FF' : '#F1F5F9' }]}>
+                        <Text style={[styles.customerConvTagText, { color: conv.orderStatus === 'Consultation' ? '#2563EB' : '#475569' }]}>
+                          {conv.tagLabel || (conv.orderStatus === 'Consultation' ? '🩺 Pharmacist Consultation' : `📦 Order #${(conv.orderId || conv.id).replace('RX-', '').slice(-5)}`)}
+                        </Text>
+                      </View>
+                      {hasPrescription && unreadCount > 0 && (
+                        <View style={[styles.customerConvTag, { backgroundColor: '#FEF3C7' }]}>
+                          <Text style={[styles.customerConvTagText, { color: '#B45309' }]}>Rx Attached</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <Text style={styles.customerConvSnippet} numberOfLines={1}>
+                      {lastMsg?.text || (hasPrescription ? '📷 Prescription photo attached' : 'Tap to open chat...')}
+                    </Text>
+                  </View>
+
+                  {unreadCount > 0 && (
+                    <View style={styles.customerConvUnreadBadge}>
+                      <Text style={styles.customerConvUnreadBadgeText}>{unreadCount}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            });
+          })()}
         </ScrollView>
       )}
 
@@ -12848,7 +15136,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 })()
               ) : (
                 <Image
-                  source={{ uri: selectedStore.image }}
+                  source={{
+                    uri: optimizeImageUrl(selectedStore.image, 650, 70),
+                    cache: 'force-cache',
+                  }}
                   style={styles.storeModalBannerImage}
                 />
               )}
@@ -12980,7 +15271,13 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
                         <TouchableOpacity
                           style={[styles.pharmacyActionCardSecondary, { flex: 1, marginHorizontal: 0, padding: 12 }]}
-                          onPress={() => handleConsultPharmacist(selectedStore)}
+                          onPress={() => {
+                            if (currentUser?.fullName || currentUser?.name) {
+                              handleConsultPharmacist(selectedStore);
+                            } else {
+                              handleOpenPrescriptionModal(selectedStore);
+                            }
+                          }}
                           activeOpacity={0.88}
                         >
                           <View style={[styles.pharmacyActionIconCircle, { width: 36, height: 36, backgroundColor: '#ECFDF5' }]}>
@@ -14854,48 +17151,30 @@ Support: help@getit.ng | Abuja, Nigeria`;
         </SafeAreaView>
       </Modal>
 
-      {/* --- CLASSY BOTTOM NAVIGATION --- */}
+      {/* --- CLASSY BOTTOM NAVIGATION: ORDERS, BASKET, CENTER STORES, MESSAGES, ACCOUNT --- */}
       <View style={styles.bottomNav}>
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => setActiveTab('home')}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.navIcon, activeTab === 'home' && styles.navIconActive]}>
-            🏛️
-          </Text>
-          <Text style={[styles.navText, activeTab === 'home' && styles.navTextActive]}>
-            Stores
-          </Text>
-        </TouchableOpacity>
-
+        {/* Left 1: Orders */}
         <TouchableOpacity
           style={styles.navItem}
           onPress={() => {
             setActiveTab('orders');
             setExpandedOrderId(null);
           }}
-          activeOpacity={0.8}
+          activeOpacity={0.75}
         >
-          <View>
-            <Text style={[styles.navIcon, activeTab === 'orders' && styles.navIconActive]}>
-              📦
-            </Text>
-            {customerUnreadCount > 0 && (
-              <View style={styles.navChatUnreadBadge}>
-                <Text style={styles.navChatUnreadBadgeText}>{customerUnreadCount}</Text>
-              </View>
-            )}
-          </View>
-          <Text style={[styles.navText, activeTab === 'orders' && styles.navTextActive]}>
+          <Text style={[styles.navIcon, activeTab === 'orders' && styles.navIconActive]}>
+            📦
+          </Text>
+          <Text style={[styles.navText, activeTab === 'orders' && styles.navTextActive]} numberOfLines={1}>
             Orders
           </Text>
         </TouchableOpacity>
 
+        {/* Left 2: Basket */}
         <TouchableOpacity
           style={styles.navItem}
           onPress={() => setCartModalVisible(true)}
-          activeOpacity={0.8}
+          activeOpacity={0.75}
         >
           <View>
             <Text style={styles.navIcon}>🛍️</Text>
@@ -14907,18 +17186,56 @@ Support: help@getit.ng | Abuja, Nigeria`;
               </View>
             )}
           </View>
-          <Text style={styles.navText}>Basket</Text>
+          <Text style={styles.navText} numberOfLines={1}>
+            Basket
+          </Text>
         </TouchableOpacity>
 
+        {/* Middle: Featured Center Stores Button */}
+        <TouchableOpacity
+          style={styles.navCenterItem}
+          onPress={() => setActiveTab('home')}
+          activeOpacity={0.85}
+        >
+          <View style={[styles.navCenterButton, activeTab === 'home' && styles.navCenterButtonActive]}>
+            <Text style={{ fontSize: 22 }}>🏛️</Text>
+          </View>
+          <Text style={[styles.navCenterText, activeTab === 'home' && styles.navCenterTextActive]} numberOfLines={1}>
+            Stores
+          </Text>
+        </TouchableOpacity>
+
+        {/* Right 1: Messages */}
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={() => setActiveTab('messages')}
+          activeOpacity={0.75}
+        >
+          <View>
+            <Text style={[styles.navIcon, activeTab === 'messages' && styles.navIconActive]}>
+              💬
+            </Text>
+            {customerUnreadCount > 0 && (
+              <View style={styles.navBadge}>
+                <Text style={styles.navBadgeText}>{customerUnreadCount}</Text>
+              </View>
+            )}
+          </View>
+          <Text style={[styles.navText, activeTab === 'messages' && styles.navTextActive]} numberOfLines={1}>
+            Messages
+          </Text>
+        </TouchableOpacity>
+
+        {/* Right 2: Account */}
         <TouchableOpacity
           style={styles.navItem}
           onPress={() => setActiveTab('profile')}
-          activeOpacity={0.8}
+          activeOpacity={0.75}
         >
           <Text style={[styles.navIcon, activeTab === 'profile' && styles.navIconActive]}>
             👤
           </Text>
-          <Text style={[styles.navText, activeTab === 'profile' && styles.navTextActive]}>
+          <Text style={[styles.navText, activeTab === 'profile' && styles.navTextActive]} numberOfLines={1}>
             Account
           </Text>
         </TouchableOpacity>
@@ -15058,7 +17375,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 {currentMerchantStore?.storeType === 'pharmacy' && (
                   <TouchableOpacity
                     style={styles.pharmacyMerchantPrescribeBanner}
-                    onPress={handleOpenPrescribeMedicationModal}
+                    onPress={() => handleOpenPrescribeMedicationModal()}
                     activeOpacity={0.88}
                   >
                     <View style={styles.pharmacyMerchantPrescribeIconCircle}>
@@ -15311,7 +17628,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                   </TouchableOpacity>
                                 )}
 
-                                {ord.customerPhone ? (
+                                {ord.customerPhone && currentMerchantStore?.storeType !== 'pharmacy' && ord.storeType !== 'pharmacy' && !ord.isPrescriptionOrder ? (
                                   <TouchableOpacity
                                     style={{
                                       flex: showCustomerChat ? undefined : 1,
@@ -15921,15 +18238,25 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       </View>
                     ) : (
                       pharmacyConsultations.map((c) => {
-                        const lastMsg = c.messages?.[c.messages.length - 1];
-                        const unreadCount = Number(unreadChatMap[`${c.id}_merchant`]) || 0;
-                        const hasPrescription = c.prescriptionImage || c.messages?.some((m) => m.prescriptionImage);
+                        const myStoreMsgs = (c.messages || []).filter((m) => {
+                          if (!currentMerchantStore) return true;
+                          const sId = String(currentMerchantStore.id);
+                          const sName = (currentMerchantStore.name || '').trim().toLowerCase();
+                          return !m.storeId || String(m.storeId) === sId || (m.storeName && m.storeName.trim().toLowerCase() === sName);
+                        });
+                        const lastMsg = myStoreMsgs[myStoreMsgs.length - 1];
+                        const unreadCount = myStoreMsgs.filter((m) => m.senderRole !== 'merchant' && !m.readByMerchant).length;
+                        const hasPrescription = Boolean(c.prescriptionImage || myStoreMsgs.some((m) => m.prescriptionImage || m.imageUri));
+                        const hasUnreadDoctorNote =
+                          hasPrescription &&
+                          !c.prescriptionRead &&
+                          (unreadCount > 0 || myStoreMsgs.some((m) => (m.prescriptionImage || m.imageUri) && !m.readByMerchant));
 
                         return (
                           <TouchableOpacity
                             key={c.id}
                             style={styles.patientConsultCard}
-                            onPress={() => openChatModal(c, 'buyer')}
+                            onPress={() => openChatModal(c, 'buyer', currentMerchantStore)}
                             activeOpacity={0.85}
                           >
                             <View style={styles.patientConsultAvatarCircle}>
@@ -15938,7 +18265,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
                             <View style={{ flex: 1, marginHorizontal: 10 }}>
                               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <Text style={styles.patientConsultName} numberOfLines={1}>
-                                  {c.customerName || 'Patient'}
+                                  {(() => {
+                                    if (c.customerName && c.customerName !== 'Patient') return c.customerName;
+                                    const buyerMsg = (c.messages || []).find((m) => m.senderRole === 'buyer' && m.senderName && m.senderName !== 'Patient');
+                                    if (buyerMsg?.senderName) return buyerMsg.senderName;
+                                    return 'Customer';
+                                  })()}
                                 </Text>
                                 <Text style={styles.patientConsultTime}>
                                   {lastMsg?.createdAt
@@ -15947,36 +18279,52 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                 </Text>
                               </View>
                               <Text style={styles.patientConsultPhone}>
-                                📞 {c.customerPhone || 'Direct App User'}
+                                💬 Direct In-App Chat{c.isMultiStore ? ` • Stop at ${currentMerchantStore?.name}` : ''}
                               </Text>
                               <Text style={styles.patientConsultPreview} numberOfLines={1}>
                                 {lastMsg?.text || (hasPrescription ? '📷 Prescription Uploaded' : 'Started consultation')}
                               </Text>
-                              {hasPrescription && (
+                              {hasUnreadDoctorNote && (
                                 <View style={styles.rxBadgeTag}>
                                   <Text style={styles.rxBadgeTagText}>📷 Doctor Note Attached</Text>
                                 </View>
                               )}
                             </View>
-                            <View style={{ alignItems: 'flex-end', justifyContent: 'center', gap: 6 }}>
+                            <View style={{ alignItems: 'flex-end', justifyContent: 'center', minWidth: 42 }}>
                               {unreadCount > 0 && (
-                                <View style={styles.merchantUnreadDot}>
-                                  <Text style={styles.merchantUnreadDotText}>{unreadCount}</Text>
+                                <View
+                                  style={{
+                                    backgroundColor: '#EF4444',
+                                    borderRadius: 10,
+                                    minWidth: 20,
+                                    height: 20,
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    paddingHorizontal: 6,
+                                    marginBottom: 6,
+                                  }}
+                                >
+                                  <Text style={{ color: '#FFFFFF', fontSize: 10.5, fontWeight: '900' }}>
+                                    {unreadCount}
+                                  </Text>
                                 </View>
                               )}
-                              <TouchableOpacity
-                                style={styles.quickCallCircleBtn}
-                                onPress={() => {
-                                  if (c.customerPhone) {
-                                    Linking.openURL(`tel:${c.customerPhone}`);
-                                  } else {
-                                    Alert.alert('Patient Phone', 'No phone number provided on file.');
-                                  }
-                                }}
-                                activeOpacity={0.8}
-                              >
-                                <Text style={{ fontSize: 15 }}>📞</Text>
-                              </TouchableOpacity>
+                              <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                                <TouchableOpacity
+                                  style={[styles.quickCallCircleBtn, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', borderWidth: 1 }]}
+                                  onPress={() => startInAppCall(c, { id: c.customerId, name: c.customerName, role: 'buyer' })}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={{ fontSize: 14 }}>📞</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={styles.quickCallCircleBtn}
+                                  onPress={() => openChatModal(c, 'buyer')}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={{ fontSize: 14 }}>💬</Text>
+                                </TouchableOpacity>
+                              </View>
                             </View>
                           </TouchableOpacity>
                         );
@@ -16001,16 +18349,35 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           </View>
                           <View style={{ flex: 1, marginHorizontal: 10 }}>
                             <Text style={styles.callLogPatientName}>{log.patientName}</Text>
-                            <Text style={styles.callLogPatientPhone}>{log.phone}</Text>
+                            <Text style={styles.callLogPatientPhone}>🛡️ Secure In-App Audio Consultation</Text>
                             <Text style={styles.callLogTimeText}>{log.time} • {log.status}</Text>
                           </View>
-                          <TouchableOpacity
-                            style={styles.callBackActionBtn}
-                            onPress={() => Linking.openURL(`tel:${log.phone}`)}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={styles.callBackActionBtnText}>📞 Call</Text>
-                          </TouchableOpacity>
+                          <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                            <TouchableOpacity
+                              style={[styles.callBackActionBtn, { backgroundColor: '#056B4B', borderColor: '#056B4B' }]}
+                              onPress={() => {
+                                const matchOrd = pharmacyConsultations.find((c) => c.customerPhone === log.phone || c.id === log.id.replace('call-ord-', ''));
+                                startInAppCall(matchOrd || { id: log.id, customerName: log.patientName, storeType: 'pharmacy' }, { id: log.id, name: log.patientName, role: 'buyer' });
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={[styles.callBackActionBtnText, { color: '#FFFFFF' }]}>📞 Call</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.callBackActionBtn}
+                              onPress={() => {
+                                const matchOrd = pharmacyConsultations.find((c) => c.customerPhone === log.phone || c.id === log.id.replace('call-ord-', ''));
+                                if (matchOrd) {
+                                  openChatModal(matchOrd, 'buyer');
+                                } else {
+                                  openChatModal({ id: log.id, customerName: log.patientName, storeType: 'pharmacy', messages: [] }, 'buyer');
+                                }
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={styles.callBackActionBtnText}>💬</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       ))
                     )}
@@ -16197,7 +18564,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   {/* Banner with Cover Image & Floating Actions */}
                   <View style={styles.heroStoreBannerWrap}>
                     <Image
-                      source={{ uri: currentMerchantStore?.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=1200&q=80' }}
+                      source={{
+                        uri: optimizeImageUrl(currentMerchantStore?.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=500&q=65', 500, 65),
+                        cache: 'force-cache',
+                      }}
                       style={styles.heroStoreBannerImg}
                       resizeMode="cover"
                     />
@@ -16478,7 +18848,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           activeOpacity={0.85}
                         >
                           <Image
-                            source={{ uri: st.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=400&q=80' }}
+                            source={{
+                              uri: optimizeImageUrl(st.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=300&q=60', 300, 60),
+                              cache: 'force-cache',
+                            }}
                             style={styles.branchImageThumb}
                           />
                           <View style={{ flex: 1 }}>
@@ -16513,83 +18886,112 @@ Support: help@getit.ng | Abuja, Nigeria`;
               </ScrollView>
             )}
 
-            {/* Merchant Bottom Navigation Bar */}
-            <View style={styles.merchantBottomNav}>
+            {/* Merchant Bottom Navigation Bar: Meds/Catalog, Consults/Messages, Center Orders, Finances, Profile */}
+            <View style={styles.bottomNav}>
+              {/* Left 1: Meds (Pharmacy) / Catalog (Groceries) */}
               <TouchableOpacity
-                style={styles.merchantNavItem}
-                onPress={() => setMerchantTab('orders')}
+                style={styles.navItem}
+                onPress={() => setMerchantTab('inventory')}
+                activeOpacity={0.75}
+              >
+                <Text style={[styles.navIcon, merchantTab === 'inventory' && styles.navIconActive]}>
+                  {currentMerchantStore?.storeType === 'pharmacy' ? '💊' : '📦'}
+                </Text>
+                <Text style={[styles.navText, merchantTab === 'inventory' && styles.navTextActive]} numberOfLines={1}>
+                  {currentMerchantStore?.storeType === 'pharmacy' ? 'Meds' : 'Catalog'}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Left 2: Consults (Pharmacy) / Messages (Groceries) */}
+              <TouchableOpacity
+                style={styles.navItem}
+                onPress={() => setMerchantTab('messages')}
+                activeOpacity={0.75}
               >
                 <View>
-                  <Text style={[styles.merchantNavIcon, merchantTab === 'orders' && styles.merchantNavIconActive]}>
-                    🔔
-                  </Text>
-                  {(merchantOrders.filter((o) => o.status === 'New Order').length > 0 || merchantUnreadCount > 0) && (
-                    <View style={[styles.merchantUnreadDot, merchantUnreadCount > 0 && { backgroundColor: '#EF4444' }]}>
-                      <Text style={styles.merchantUnreadDotText}>
-                        {merchantUnreadCount > 0
-                          ? `💬 ${merchantUnreadCount}`
-                          : merchantOrders.filter((o) => o.status === 'New Order').length}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={[styles.merchantNavText, merchantTab === 'orders' && styles.merchantNavTextActive]}>
-                  Orders
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.merchantNavItem}
-                onPress={() => setMerchantTab('inventory')}
-              >
-                <Text style={[styles.merchantNavIcon, merchantTab === 'inventory' && styles.merchantNavIconActive]}>
-                  📦
-                </Text>
-                <Text style={[styles.merchantNavText, merchantTab === 'inventory' && styles.merchantNavTextActive]}>
-                  {currentMerchantStore?.storeType === 'pharmacy' ? 'Medications' : 'Catalog'}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.merchantNavItem}
-                onPress={() => setMerchantTab('messages')}
-              >
-                <View style={{ position: 'relative' }}>
-                  <Text style={[styles.merchantNavIcon, merchantTab === 'messages' && styles.merchantNavIconActive]}>
+                  <Text style={[styles.navIcon, merchantTab === 'messages' && styles.navIconActive]}>
                     💬
                   </Text>
                   {merchantUnreadCount > 0 && (
-                    <View style={styles.merchantUnreadDot}>
-                      <Text style={styles.merchantUnreadDotText}>{merchantUnreadCount}</Text>
+                    <View style={styles.navBadge}>
+                      <Text style={styles.navBadgeText}>{merchantUnreadCount}</Text>
                     </View>
                   )}
                 </View>
-                <Text style={[styles.merchantNavText, merchantTab === 'messages' && styles.merchantNavTextActive]}>
+                <Text style={[styles.navText, merchantTab === 'messages' && styles.navTextActive]} numberOfLines={1}>
                   {currentMerchantStore?.storeType === 'pharmacy' ? 'Consults' : 'Messages'}
                 </Text>
               </TouchableOpacity>
 
+              {/* Middle: Featured Center Orders Button (Elevated Floating Center Button) */}
               <TouchableOpacity
-                style={styles.merchantNavItem}
-                onPress={() => setMerchantTab('finances')}
+                style={styles.navCenterItem}
+                onPress={() => setMerchantTab('orders')}
+                activeOpacity={0.85}
               >
-                <Text style={[styles.merchantNavIcon, merchantTab === 'finances' && styles.merchantNavIconActive]}>
+                <View
+                  style={[
+                    styles.navCenterButton,
+                    currentMerchantStore?.storeType === 'pharmacy' && {
+                      backgroundColor: '#1E3A8A',
+                      shadowColor: '#1E3A8A',
+                    },
+                    merchantTab === 'orders' && (
+                      currentMerchantStore?.storeType === 'pharmacy'
+                        ? { backgroundColor: '#172554', borderColor: '#BFDBFE', transform: [{ scale: 1.05 }] }
+                        : styles.navCenterButtonActive
+                    ),
+                  ]}
+                >
+                  <Text style={{ fontSize: 22 }}>🔔</Text>
+                  {merchantOrders.filter((o) => o.status === 'New Order').length > 0 && (
+                    <View style={styles.navCenterBadge}>
+                      <Text style={styles.navCenterBadgeText}>
+                        {merchantOrders.filter((o) => o.status === 'New Order').length}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text
+                  style={[
+                    styles.navCenterText,
+                    merchantTab === 'orders' && (
+                      currentMerchantStore?.storeType === 'pharmacy'
+                        ? { color: '#1E3A8A', fontWeight: '800' }
+                        : styles.navCenterTextActive
+                    ),
+                  ]}
+                  numberOfLines={1}
+                >
+                  Orders
+                </Text>
+              </TouchableOpacity>
+
+              {/* Right 1: Finances */}
+              <TouchableOpacity
+                style={styles.navItem}
+                onPress={() => setMerchantTab('finances')}
+                activeOpacity={0.75}
+              >
+                <Text style={[styles.navIcon, merchantTab === 'finances' && styles.navIconActive]}>
                   💰
                 </Text>
-                <Text style={[styles.merchantNavText, merchantTab === 'finances' && styles.merchantNavTextActive]}>
+                <Text style={[styles.navText, merchantTab === 'finances' && styles.navTextActive]} numberOfLines={1}>
                   Finances
                 </Text>
               </TouchableOpacity>
 
+              {/* Right 2: Store Profile */}
               <TouchableOpacity
-                style={styles.merchantNavItem}
+                style={styles.navItem}
                 onPress={() => setMerchantTab('store')}
+                activeOpacity={0.75}
               >
-                <Text style={[styles.merchantNavIcon, merchantTab === 'store' && styles.merchantNavIconActive]}>
+                <Text style={[styles.navIcon, merchantTab === 'store' && styles.navIconActive]}>
                   🏪
                 </Text>
-                <Text style={[styles.merchantNavText, merchantTab === 'store' && styles.merchantNavTextActive]}>
-                  Store Profile
+                <Text style={[styles.navText, merchantTab === 'store' && styles.navTextActive]} numberOfLines={1}>
+                  Profile
                 </Text>
               </TouchableOpacity>
             </View>
@@ -18638,7 +21040,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
             <Text style={styles.modalSectionHeading}>Live Store Photo Preview</Text>
             <View style={styles.photoModalPreviewCard}>
               <Image
-                source={{ uri: customStoreImageUrl || currentMerchantStore?.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=1200&q=80' }}
+                source={{
+                  uri: optimizeImageUrl(customStoreImageUrl || currentMerchantStore?.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=500&q=65', 500, 65),
+                  cache: 'force-cache',
+                }}
                 style={styles.photoModalPreviewImg}
                 resizeMode="cover"
               />
@@ -20195,19 +22600,28 @@ Support: help@getit.ng | Abuja, Nigeria`;
         visible={chatModalVisible}
         animationType="slide"
         transparent={false}
-        onRequestClose={() => setChatModalVisible(false)}
+        onRequestClose={() => {
+          setPrescribeMedicationModalVisible(false);
+          setChatModalVisible(false);
+        }}
       >
         <SafeAreaView style={styles.modalSafeArea}>
           <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
-          <KeyboardAvoidingView
-            style={{ flex: 1, backgroundColor: COLORS.beigeBg }}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          >
+          {prescribeMedicationModalVisible ? (
+            renderPrescribeMedicationContent(() => setPrescribeMedicationModalVisible(false))
+          ) : (
+            <KeyboardAvoidingView
+              style={{ flex: 1, backgroundColor: COLORS.beigeBg }}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            >
             {/* Header */}
             <View style={styles.chatModalHeader}>
               <TouchableOpacity
                 style={styles.modalBackBtn}
-                onPress={() => setChatModalVisible(false)}
+                onPress={() => {
+                  setPrescribeMedicationModalVisible(false);
+                  setChatModalVisible(false);
+                }}
                 activeOpacity={0.7}
               >
                 <Text style={styles.modalBackBtnText}>✕ Close</Text>
@@ -20215,34 +22629,51 @@ Support: help@getit.ng | Abuja, Nigeria`;
               <View style={{ alignItems: 'center', flex: 1, marginHorizontal: 8 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <Text style={styles.chatHeaderTitle} numberOfLines={1}>
-                    {targetChatPartner?.name || 'Chat Concierge'}
+                    {(() => {
+                      if (targetChatPartner?.name && targetChatPartner.name !== 'Patient') return targetChatPartner.name;
+                      if (targetChatOrder?.customerName && targetChatOrder.customerName !== 'Patient') return targetChatOrder.customerName;
+                      const buyerMsg = (targetChatOrder?.messages || []).find((m) => m.senderRole === 'buyer' && m.senderName && m.senderName !== 'Patient');
+                      if (buyerMsg?.senderName) return buyerMsg.senderName;
+                      return targetChatPartner?.role === 'buyer' ? 'Customer' : 'Chat Concierge';
+                    })()}
                   </Text>
                   <View style={styles.chatOnlineDot} />
                 </View>
-                <Text style={styles.chatHeaderSubtitle}>
-                  {targetChatPartner?.roleLabel || 'Concierge'} • Order #{targetChatOrder?.id}
-                </Text>
+                {isPartnerTyping ? (
+                  <Text style={{ fontSize: 12, color: '#10B981', fontWeight: '700', fontStyle: 'italic' }}>
+                    typing...
+                  </Text>
+                ) : (
+                  <Text style={styles.chatHeaderSubtitle}>
+                    {targetChatPartner?.roleLabel || 'Concierge'} • Order #{targetChatOrder?.id}
+                  </Text>
+                )}
               </View>
               {(() => {
-                const partnerPhone =
-                  targetChatPartner?.phone ||
-                  targetChatOrder?.storePhone ||
-                  targetChatOrder?.phone ||
-                  (targetChatPartner?.role === 'merchant'
-                    ? storesList.find((s) => s.id === targetChatOrder?.storeId)?.phone
-                    : null) ||
-                  (targetChatOrder?.storeType === 'pharmacy' ? '0545802140' : null);
+                const isCourierChat = targetChatPartner?.role === 'courier';
+                const courierPhone = isCourierChat
+                  ? (targetChatPartner?.phone || targetChatOrder?.boltRider?.phone || '+2348032941194')
+                  : null;
 
+                if (isCourierChat && courierPhone) {
+                  return (
+                    <TouchableOpacity
+                      style={[styles.chatHeaderPhoneBtn, { backgroundColor: '#10B981' }]}
+                      onPress={() => {
+                        Linking.openURL(`tel:${courierPhone}`);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 16 }}>📞</Text>
+                    </TouchableOpacity>
+                  );
+                }
+
+                // In-App Secure Voice Call for Pharmacy & Customer Tele-Consultations
                 return (
                   <TouchableOpacity
-                    style={[styles.chatHeaderPhoneBtn, { backgroundColor: '#10B981' }]}
-                    onPress={() => {
-                      if (partnerPhone) {
-                        Linking.openURL(`tel:${partnerPhone}`);
-                      } else {
-                        Alert.alert('Phone Call', 'Calling concierge hotline...');
-                      }
-                    }}
+                    style={[styles.chatHeaderPhoneBtn, { backgroundColor: '#056B4B' }]}
+                    onPress={() => startInAppCall(targetChatOrder, targetChatPartner)}
                     activeOpacity={0.8}
                   >
                     <Text style={{ fontSize: 16 }}>📞</Text>
@@ -20318,7 +22749,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
               ref={chatScrollRef}
               style={styles.chatMessagesScroll}
               contentContainerStyle={{ padding: 16, paddingBottom: 24, width: '100%' }}
-              onContentSizeChange={() => chatScrollRef.current?.scrollToEnd({ animated: true })}
+              onContentSizeChange={() => chatScrollRef.current?.scrollToEnd({ animated: false })}
             >
               {chatMessages.length === 0 ? (
                 <View style={styles.chatEmptyState}>
@@ -20330,10 +22761,44 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 </View>
               ) : (
                 chatMessages.map((msg, mIdx) => {
-                  const isMine =
-                    (appMode === 'merchant' && (msg.senderRole === 'merchant' || msg.senderRole === 'seller')) ||
-                    (appMode === 'customer' && (msg.senderRole === 'buyer' || msg.senderRole === 'customer' || msg.senderRole === 'patient')) ||
-                    (!msg.senderRole && msg.senderId && currentUser?.id && String(msg.senderId) === String(currentUser.id));
+                  const isMine = (() => {
+                    const partnerRole = (targetChatPartner?.role || '').toLowerCase();
+                    const sRole = (
+                      msg.senderRole ||
+                      (msg.prescription ? 'merchant' : (msg.prescriptionImage ? 'buyer' : ''))
+                    ).toLowerCase();
+
+                    // 1. If chatting with a Merchant:
+                    // Messages from merchant/seller/dispensary are THEIRS (left side).
+                    // Messages from buyer/customer/patient are MINE (right side).
+                    if (partnerRole === 'merchant') {
+                      if (sRole === 'merchant' || sRole === 'seller' || sRole === 'dispensary') return false;
+                      if (sRole === 'buyer' || sRole === 'customer' || sRole === 'patient') return true;
+                      return appMode !== 'merchant';
+                    }
+
+                    // 2. If chatting with a Buyer/Patient:
+                    // Messages from buyer/customer/patient are THEIRS (left side).
+                    // Messages from merchant/seller/dispensary are MINE (right side).
+                    if (partnerRole === 'buyer') {
+                      if (sRole === 'buyer' || sRole === 'customer' || sRole === 'patient') return false;
+                      if (sRole === 'merchant' || sRole === 'seller' || sRole === 'dispensary') return true;
+                      return appMode === 'merchant';
+                    }
+
+                    // 3. If chatting with a Courier:
+                    // Messages from courier/rider are THEIRS (left side).
+                    if (partnerRole === 'courier') {
+                      if (sRole === 'courier' || sRole === 'rider') return false;
+                      return true;
+                    }
+
+                    // 4. Fallback based on appMode:
+                    if (appMode === 'merchant') {
+                      return sRole === 'merchant' || sRole === 'seller';
+                    }
+                    return sRole === 'buyer' || sRole === 'customer' || sRole === 'patient';
+                  })();
 
                   return (
                     <View
@@ -20357,7 +22822,15 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         ]}
                       >
                         {!isMine && (
-                          <Text style={styles.chatSenderNameText}>{msg.senderName}</Text>
+                          <Text style={styles.chatSenderNameText}>
+                            {msg.senderName && msg.senderName !== 'Patient'
+                              ? msg.senderName
+                              : (targetChatPartner?.role === 'buyer' && targetChatPartner.name && targetChatPartner.name !== 'Patient'
+                                  ? targetChatPartner.name
+                                  : (targetChatOrder?.customerName && targetChatOrder.customerName !== 'Patient'
+                                      ? targetChatOrder.customerName
+                                      : 'Customer'))}
+                          </Text>
                         )}
                         {msg.prescription ? (
                           <View style={styles.chatRxCard}>
@@ -20401,27 +22874,55 @@ Support: help@getit.ng | Abuja, Nigeria`;
                               </Text>
                             </View>
 
-                            {msg.prescription.paid ? (
-                              <View style={styles.chatRxPaidTag}>
-                                <Text style={styles.chatRxPaidTagText}>✅ Paid • Transferred to Active Orders</Text>
-                              </View>
-                            ) : appMode === 'customer' ? (
-                              <TouchableOpacity
-                                style={styles.chatRxPayButton}
-                                onPress={() => handlePayPrescriptionBill(msg.prescription, targetChatOrder)}
-                                activeOpacity={0.85}
-                              >
-                                <Text style={styles.chatRxPayButtonText}>
-                                  💳 Accept & Pay {formatNaira(msg.prescription.total)} ➔
-                                </Text>
-                              </TouchableOpacity>
-                            ) : (
-                              <View style={styles.chatRxPendingTag}>
-                                <Text style={styles.chatRxPendingTagText}>⏳ Awaiting Patient Payment</Text>
-                              </View>
-                            )}
+                            {(() => {
+                              const isRxPaid =
+                                Boolean(msg.prescription?.paid) ||
+                                chatMessages.some(
+                                  (cm) =>
+                                    cm.prescriptionBillPaid &&
+                                    (!cm.paidBillId || !msg.prescription.billId || cm.paidBillId === msg.prescription.billId)
+                                ) ||
+                                (targetChatOrder?.messages || []).some(
+                                  (cm) =>
+                                    cm.prescriptionBillPaid &&
+                                    (!cm.paidBillId || !msg.prescription.billId || cm.paidBillId === msg.prescription.billId)
+                                ) ||
+                                orders.some(
+                                  (o) =>
+                                    (o.isPrescriptionOrder || o.id?.startsWith('RX-')) &&
+                                    (String(o.storeId) === String(msg.prescription.storeId) || o.storeName === msg.prescription.storeName)
+                                );
+
+                              if (isRxPaid) {
+                                return (
+                                  <View style={styles.chatRxPaidTag}>
+                                    <Text style={styles.chatRxPaidTagText}>✅ Paid • Transferred to Active Orders</Text>
+                                  </View>
+                                );
+                              }
+
+                              if (appMode === 'customer') {
+                                return (
+                                  <TouchableOpacity
+                                    style={styles.chatRxPayButton}
+                                    onPress={() => handlePayPrescriptionBill(msg.prescription, targetChatOrder)}
+                                    activeOpacity={0.85}
+                                  >
+                                    <Text style={styles.chatRxPayButtonText}>
+                                      💳 Accept & Pay {formatNaira(msg.prescription.total)} ➔
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              }
+
+                              return (
+                                <View style={styles.chatRxPendingTag}>
+                                  <Text style={styles.chatRxPendingTagText}>⏳ Awaiting Patient Payment</Text>
+                                </View>
+                              );
+                            })()}
                           </View>
-                        ) : msg.voiceNoteDuration ? (
+                        ) : (msg.voiceNoteDuration || msg.voiceNoteUri || msg.voiceNoteBase64 || (msg.text && msg.text.includes('Voice Note'))) ? (
                           <View style={styles.voiceNoteBubbleRow}>
                             <TouchableOpacity
                               style={[
@@ -20450,7 +22951,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                 ))}
                               </View>
                               <Text style={[styles.voiceDurationText, isMine && { color: 'rgba(255, 255, 255, 0.85)' }]}>
-                                {msg.voiceNoteDuration} {activePlayingVoiceId === msg.id ? '• Playing' : ''}
+                                {msg.voiceNoteDuration || (msg.text && msg.text.match(/\(([^)]+)\)/)?.[1]) || '0:03'} {activePlayingVoiceId === msg.id ? '• Playing' : ''}
                               </Text>
                             </View>
                           </View>
@@ -20468,7 +22969,32 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                 </View>
                               </View>
                             ) : null}
-                            {msg.text ? (
+                            {msg.isMissedCall || (msg.text && msg.text.includes('Missed Voice Call')) ? (
+                              <View style={styles.chatMissedCallBox}>
+                                <View style={styles.chatMissedCallTop}>
+                                  <View style={styles.chatMissedCallIconCircle}>
+                                    <Text style={{ fontSize: 16 }}>📞</Text>
+                                  </View>
+                                  <View style={{ flex: 1, marginLeft: 8 }}>
+                                    <Text style={styles.chatMissedCallTitle}>
+                                      Missed Voice Call
+                                    </Text>
+                                    <Text style={styles.chatMissedCallSub}>
+                                      {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+                                    </Text>
+                                  </View>
+                                </View>
+                                {!isMine && (
+                                  <TouchableOpacity
+                                    style={styles.chatCallBackBtn}
+                                    onPress={() => startInAppCall(targetChatOrder, targetChatPartner)}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Text style={styles.chatCallBackBtnText}>📞 Call Back</Text>
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            ) : msg.text ? (
                               <Text style={[styles.chatBubbleText, isMine ? styles.chatBubbleTextMine : styles.chatBubbleTextTheirs]}>
                                 {msg.text}
                               </Text>
@@ -20481,7 +23007,26 @@ Support: help@getit.ng | Abuja, Nigeria`;
                               ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                               : 'Just now'}
                           </Text>
-                          {isMine && <Text style={{ fontSize: 10, color: 'rgba(255, 255, 255, 0.7)', marginLeft: 3 }}>✓✓</Text>}
+                          {isMine && (() => {
+                            const isRead =
+                              msg.status === 'read' ||
+                              msg.read ||
+                              (appMode === 'customer' && msg.readByMerchant) ||
+                              (appMode === 'merchant' && msg.readByBuyer);
+                            const isDelivered = msg.status === 'delivered' || msg.delivered || isRead;
+                            const isSending = msg.status === 'sending';
+
+                            if (isSending) {
+                              return <Text style={styles.chatStatusClock}>🕒</Text>;
+                            }
+                            if (isRead) {
+                              return <Text style={styles.chatStatusDoubleCheckRead}>✓✓</Text>;
+                            }
+                            if (isDelivered) {
+                              return <Text style={styles.chatStatusDoubleCheckDelivered}>✓✓</Text>;
+                            }
+                            return <Text style={styles.chatStatusSingleCheckSent}>✓</Text>;
+                          })()}
                         </View>
                       </View>
                     </View>
@@ -20491,11 +23036,11 @@ Support: help@getit.ng | Abuja, Nigeria`;
             </ScrollView>
 
             {/* Pharmacist Prescribe Medication Bar Button */}
-            {appMode === 'merchant' && (
+            {(appMode === 'merchant' || targetChatPartner?.role === 'buyer') && (
               <View style={styles.chatPrescribeActionBar}>
                 <TouchableOpacity
                   style={styles.chatPrescribeActionBtn}
-                  onPress={handleOpenPrescribeMedicationModal}
+                  onPress={() => handleOpenPrescribeMedicationModal()}
                   activeOpacity={0.85}
                 >
                   <Text style={styles.chatPrescribeActionBtnIcon}>💊</Text>
@@ -20531,20 +23076,32 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 </TouchableOpacity>
               </View>
             ) : (
-              <View style={styles.chatComposerRow}>
-                <TextInput
-                  style={styles.chatTextInput}
-                  placeholder={
-                    targetChatOrder?.storeType === 'pharmacy'
-                      ? 'Ask pharmacist about drugs, dosages...'
-                      : 'Type a message...'
-                  }
-                  placeholderTextColor="#94A3B8"
-                  value={chatInputText}
-                  onChangeText={setChatInputText}
-                  onSubmitEditing={() => handleSendChatMessage()}
-                  returnKeyType="send"
-                />
+              <View>
+                {isPartnerTyping && (
+                  <View style={styles.chatTypingBar}>
+                    <Text style={styles.chatTypingDot}>💬</Text>
+                    <Text style={styles.chatTypingText}>
+                      {(targetChatPartner?.name && targetChatPartner.name !== 'Patient' ? targetChatPartner.name : 'Partner')} is typing...
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.chatComposerRow}>
+                  <TextInput
+                    style={styles.chatTextInput}
+                    placeholder={
+                      targetChatOrder?.storeType === 'pharmacy'
+                        ? 'Ask pharmacist about drugs, dosages...'
+                        : 'Type a message...'
+                    }
+                    placeholderTextColor="#94A3B8"
+                    value={chatInputText}
+                    onChangeText={(val) => {
+                      setChatInputText(val);
+                      handleTypingIndicator(val);
+                    }}
+                    onSubmitEditing={() => handleSendChatMessage()}
+                    returnKeyType="send"
+                  />
                 <TouchableOpacity
                   style={styles.chatPhotoBtn}
                   onPress={() => {
@@ -20581,251 +23138,23 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   <Text style={styles.chatSendBtnText}>➤</Text>
                 </TouchableOpacity>
               </View>
-            )}
+            </View>
+          )}
           </KeyboardAvoidingView>
+          )}
         </SafeAreaView>
       </Modal>
 
-      {/* =========================================================================
-          PHARMACIST PRESCRIBE MEDICATION & BILL PATIENT MODAL
-          ========================================================================= */}
+      {/* Standalone Fallback Modal for Prescribing from Merchant Tab when chat is not open */}
       <Modal
-        visible={prescribeMedicationModalVisible}
+        visible={prescribeMedicationModalVisible && !chatModalVisible}
         animationType="slide"
         transparent={false}
         onRequestClose={() => setPrescribeMedicationModalVisible(false)}
       >
         <SafeAreaView style={styles.modalSafeArea}>
           <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
-          <View style={styles.rxBuilderHeader}>
-            <TouchableOpacity
-              style={styles.modalBackBtn}
-              onPress={() => setPrescribeMedicationModalVisible(false)}
-              activeOpacity={0.7}
-            >
-              <Text style={{ fontSize: 20, color: '#FFFFFF', fontWeight: 'bold' }}>✕</Text>
-            </TouchableOpacity>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.rxBuilderTitle}>Prescribe Medications</Text>
-              <Text style={styles.rxBuilderSub} numberOfLines={1}>
-                Patient: {targetChatPartner?.name || 'Customer'} • {currentMerchantStore?.name || 'Dispensary'}
-              </Text>
-            </View>
-            <View style={styles.rxBuilderCountBadge}>
-              <Text style={styles.rxBuilderCountBadgeText}>
-                {selectedPrescribeItems.length} Selected
-              </Text>
-            </View>
-          </View>
-
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ flex: 1, backgroundColor: '#F8FAFC' }}
-          >
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {/* Search Drug Inventory */}
-              <View style={styles.rxSearchContainer}>
-                <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
-                <TextInput
-                  style={styles.rxSearchInput}
-                  placeholder="Search medications by name or category..."
-                  placeholderTextColor="#94A3B8"
-                  value={prescribeSearchQuery}
-                  onChangeText={setPrescribeSearchQuery}
-                />
-                {prescribeSearchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setPrescribeSearchQuery('')}>
-                    <Text style={{ color: '#94A3B8', fontSize: 14 }}>✕</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {/* Selected Medications Tray (if any selected) */}
-              {selectedPrescribeItems.length > 0 && (
-                <View style={styles.rxSelectedTrayCard}>
-                  <Text style={styles.rxSelectedTrayTitle}>
-                    Prescription Basket ({selectedPrescribeItems.length} drugs)
-                  </Text>
-                  {selectedPrescribeItems.map((item) => (
-                    <View key={item.id} style={styles.rxSelectedTrayItem}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.rxSelectedTrayName}>{item.name}</Text>
-                        <Text style={styles.rxSelectedTrayPrice}>
-                          {formatNaira(item.price)} each • Total: {formatNaira((Number(item.price) || 0) * (Number(item.quantity) || 1))}
-                        </Text>
-                        {/* Dosage instructions input */}
-                        <TextInput
-                          style={styles.rxDosageInput}
-                          placeholder="Dosage (e.g. 1 tab morning & night after food)..."
-                          placeholderTextColor="#94A3B8"
-                          value={item.dosageInstruction}
-                          onChangeText={(txt) => handleUpdatePrescribeItemDosage(item.id, txt)}
-                        />
-                      </View>
-                      <View style={styles.rxQtyControlCluster}>
-                        <TouchableOpacity
-                          style={styles.rxQtyBtn}
-                          onPress={() => handleUpdatePrescribeItemQty(item.id, -1)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={styles.rxQtyBtnText}>-</Text>
-                        </TouchableOpacity>
-                        <Text style={styles.rxQtyNumberText}>{item.quantity || 1}</Text>
-                        <TouchableOpacity
-                          style={styles.rxQtyBtn}
-                          onPress={() => handleUpdatePrescribeItemQty(item.id, 1)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={styles.rxQtyBtnText}>+</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={() => handleTogglePrescribeItem(item)}
-                          style={{ marginLeft: 6 }}
-                        >
-                          <Text style={{ fontSize: 16 }}>🗑️</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  ))}
-
-                  {/* Subtotal & Delivery Total */}
-                  <View style={styles.rxBillCalculationCard}>
-                    <View style={styles.rxBillCalcRow}>
-                      <Text style={styles.rxBillCalcLabel}>Drugs Subtotal:</Text>
-                      <Text style={styles.rxBillCalcVal}>
-                        {formatNaira(
-                          selectedPrescribeItems.reduce(
-                            (s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 1),
-                            0
-                          )
-                        )}
-                      </Text>
-                    </View>
-                    <View style={styles.rxBillCalcRow}>
-                      <Text style={styles.rxBillCalcLabel}>Discreet Delivery:</Text>
-                      <Text style={styles.rxBillCalcVal}>{formatNaira(1200)}</Text>
-                    </View>
-                    <View style={[styles.rxBillCalcRow, { borderTopWidth: 1, borderTopColor: '#CBD5E1', paddingTop: 6, marginTop: 4 }]}>
-                      <Text style={[styles.rxBillCalcLabel, { fontWeight: '800', color: '#0F172A' }]}>
-                        Total Patient Bill:
-                      </Text>
-                      <Text style={[styles.rxBillCalcVal, { fontWeight: '900', color: '#056B4B', fontSize: 16 }]}>
-                        {formatNaira(
-                          selectedPrescribeItems.reduce(
-                            (s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 1),
-                            0
-                          ) + 1200
-                        )}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              )}
-
-              {/* Dispensary Catalogue Items */}
-              <Text style={styles.rxCatalogueSectionTitle}>
-                Dispensary Stock & Catalogue
-              </Text>
-              <Text style={styles.rxCatalogueSectionSub}>
-                Tap any medication to add to this patient prescription
-              </Text>
-
-              {(() => {
-                const storeProds = currentMerchantStore?.products || [];
-                const fallbackDrugs = INITIAL_PHARMACY_STORES[0]?.products || [];
-                const allDrugs = storeProds.length > 0 ? storeProds : fallbackDrugs;
-
-                const filtered = prescribeSearchQuery.trim()
-                  ? allDrugs.filter(
-                      (d) =>
-                        d.name.toLowerCase().includes(prescribeSearchQuery.toLowerCase()) ||
-                        (d.category && d.category.toLowerCase().includes(prescribeSearchQuery.toLowerCase()))
-                    )
-                  : allDrugs;
-
-                if (filtered.length === 0) {
-                  return (
-                    <View style={styles.rxEmptyCatalogCard}>
-                      <Text style={{ fontSize: 28, marginBottom: 6 }}>🔍</Text>
-                      <Text style={styles.rxEmptyCatalogTitle}>No Medications Found</Text>
-                      <Text style={styles.rxEmptyCatalogSub}>
-                        No medications match "{prescribeSearchQuery}".
-                      </Text>
-                    </View>
-                  );
-                }
-
-                return filtered.map((drug) => {
-                  const isSelected = selectedPrescribeItems.some((p) => p.id === drug.id);
-                  return (
-                    <TouchableOpacity
-                      key={drug.id}
-                      style={[
-                        styles.rxDrugCatalogCard,
-                        isSelected && styles.rxDrugCatalogCardSelected,
-                      ]}
-                      onPress={() => handleTogglePrescribeItem(drug)}
-                      activeOpacity={0.8}
-                    >
-                      <View style={styles.rxDrugIconCircle}>
-                        <Text style={{ fontSize: 22 }}>{drug.icon || '💊'}</Text>
-                      </View>
-                      <View style={{ flex: 1, marginHorizontal: 10 }}>
-                        <Text style={styles.rxDrugCardName}>{drug.name}</Text>
-                        <Text style={styles.rxDrugCardCategory}>
-                          {drug.category || 'Medication'} • {drug.dosage || 'Prescription formulation'}
-                        </Text>
-                        <Text style={styles.rxDrugCardPrice}>{formatNaira(drug.price)}</Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.rxAddSelectBtn,
-                          isSelected && styles.rxAddSelectBtnActive,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.rxAddSelectBtnText,
-                            isSelected && styles.rxAddSelectBtnTextActive,
-                          ]}
-                        >
-                          {isSelected ? '✓ Added' : '+ Add'}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                });
-              })()}
-            </ScrollView>
-
-            {/* Bottom floating send button */}
-            <View style={styles.rxFloatingFooter}>
-              <TouchableOpacity
-                style={[
-                  styles.rxSendBillBtn,
-                  selectedPrescribeItems.length === 0 && { opacity: 0.5, backgroundColor: '#94A3B8' },
-                ]}
-                onPress={handleSendPrescriptionBill}
-                disabled={selectedPrescribeItems.length === 0}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.rxSendBillBtnText}>
-                  📤 Send Prescription Bill (
-                  {formatNaira(
-                    selectedPrescribeItems.reduce(
-                      (s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 1),
-                      0
-                    ) + 1200
-                  )}
-                  ) ➔
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
+          {renderPrescribeMedicationContent(() => setPrescribeMedicationModalVisible(false))}
         </SafeAreaView>
       </Modal>
 
@@ -21419,6 +23748,19 @@ Support: help@getit.ng | Abuja, Nigeria`;
               />
             </View>
 
+            {/* Patient Full Name */}
+            <View style={styles.rxInputSection}>
+              <Text style={styles.rxSectionHeading}>PATIENT FULL NAME *</Text>
+              <TextInput
+                style={styles.rxTextInputPhone}
+                placeholder="e.g. Abdulrahman Bello"
+                placeholderTextColor="#94A3B8"
+                value={prescriptionPatientName}
+                onChangeText={setPrescriptionPatientName}
+                autoCapitalize="words"
+              />
+            </View>
+
             {/* Patient WhatsApp / Contact Phone */}
             <View style={styles.rxInputSection}>
               <Text style={styles.rxSectionHeading}>PATIENT CONTACT NUMBER *</Text>
@@ -21449,12 +23791,687 @@ Support: help@getit.ng | Abuja, Nigeria`;
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      {/* --- FLOATING MINIMIZED IN-APP CALL BAR --- */}
+      {activeCall && isCallMinimized && (
+        <TouchableOpacity
+          style={styles.minimizedCallBar}
+          onPress={() => setIsCallMinimized(false)}
+          activeOpacity={0.9}
+        >
+          <View style={styles.minimizedCallLeft}>
+            <View style={[styles.minimizedCallDot, activeCall.status === 'connected' && { backgroundColor: '#10B981' }]} />
+            <Text style={styles.minimizedCallTitle} numberOfLines={1}>
+              {activeCall.status === 'ringing'
+                ? (activeCall.direction === 'outgoing' ? 'Calling dispensary...' : 'Incoming Voice Call...')
+                : `📞 ${formatCallDuration(activeCall.durationSec)} • ${activeCall.partnerName || 'Consultation'}`}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.minimizedCallEndBtn}
+            onPress={() => endInAppCall('user_ended')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.minimizedCallEndBtnText}>End</Text>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      )}
+
+      {/* --- IN-APP SECURE VOICE CALL FULL-SCREEN OVERLAY (LUXURY WHATSAPP STYLE) --- */}
+      {isCallModalVisible && activeCall && !isCallMinimized && (
+        <View style={styles.callModalFullScreenOverlay}>
+          <SafeAreaView style={styles.callModalSafeArea}>
+            <StatusBar barStyle="light-content" backgroundColor="#021B13" />
+
+            {/* Top Bar: Luxury Encryption Shield Badge + Minimize Button */}
+            <View style={styles.callTopHeader}>
+              <View style={styles.callSecurityBadge}>
+                <Text style={styles.callSecurityIcon}>🔒</Text>
+                <Text style={styles.callSecurityText}>256-BIT ENCRYPTED HD VOICE</Text>
+              </View>
+              {activeCall?.status === 'connected' && (
+                <TouchableOpacity
+                  style={styles.callMinimizeBtn}
+                  onPress={() => setIsCallMinimized(true)}
+                  activeOpacity={0.75}
+                >
+                  <Text style={styles.callMinimizeBtnText}>▼ Minimize</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Main Call Identity Area */}
+            <View style={styles.callMainBody}>
+              {/* Animated Dual Pulsating Radar Ring Wrapper */}
+              <View style={styles.callAvatarOuterWrapper}>
+                <Animated.View
+                  style={[
+                    styles.callPulseRingOuter,
+                    {
+                      transform: [{ scale: callRippleAnim }],
+                      opacity: (activeCall?.status === 'calling' || activeCall?.status === 'ringing' || isCallRecording || activeCall?.isRemoteSpeaking) ? 0.25 : 0,
+                    },
+                  ]}
+                />
+                <Animated.View
+                  style={[
+                    styles.callPulseRing,
+                    {
+                      transform: [{ scale: callRippleAnim }],
+                      opacity: (activeCall?.status === 'calling' || activeCall?.status === 'ringing' || isCallRecording || activeCall?.isRemoteSpeaking) ? 0.45 : 0,
+                    },
+                  ]}
+                />
+                <View style={styles.callAvatarCircle}>
+                  <Text style={{ fontSize: 46 }}>
+                    {activeCall?.partnerRole === 'merchant'
+                      ? '🩺'
+                      : (activeCall?.partnerRole === 'courier' ? '🛵' : '👤')}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Partner Name & Role Badge */}
+              <Text style={styles.callPartnerName} numberOfLines={1}>
+                {activeCall?.partnerName || 'Tele-Consultation'}
+              </Text>
+              <View style={styles.callPartnerRoleBadge}>
+                <Text style={styles.callPartnerRoleText}>
+                  {activeCall?.storeName || (activeCall?.partnerRole === 'merchant' ? 'Licensed Pharmacy Dispensary' : 'Verified Patient')}
+                </Text>
+              </View>
+
+              {/* Live Status / Duration Indicator */}
+              <View style={styles.callStatusBadge}>
+                {activeCall?.status === 'calling' ? (
+                  <Text style={styles.callStatusTextCalling}>
+                    Calling...
+                  </Text>
+                ) : activeCall?.status === 'ringing' ? (
+                  <Text style={styles.callStatusTextRinging}>
+                    {activeCall.direction === 'outgoing' ? '🔔 Ringing...' : '📲 Incoming Voice Call...'}
+                  </Text>
+                ) : activeCall?.status === 'connected' ? (
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={styles.callStatusTextConnected}>
+                      🟢 HD Audio Connected • {formatCallDuration(activeCall?.durationSec || 0)}
+                    </Text>
+                    {activeCall?.isRemoteSpeaking && (
+                      <Text style={styles.callSpeakingIndicator}>🔊 Partner is speaking...</Text>
+                    )}
+                  </View>
+                ) : (
+                  <Text style={styles.callStatusTextEnded}>
+                    Call Ended {activeCall?.endReason ? `(${activeCall.endReason})` : ''}
+                  </Text>
+                )}
+              </View>
+
+              {/* Live Continuous Hands-Free Audio Waves (Just Like WhatsApp Call) */}
+              {activeCall?.status === 'connected' && (
+                <View style={styles.callLiveConnectedInfo}>
+                  <View style={styles.callWaveContainer}>
+                    {[0.4, 0.9, 0.6, 1.0, 0.7, 0.85, 0.45].map((hRatio, i) => (
+                      <Animated.View
+                        key={i}
+                        style={[
+                          styles.callWaveBar,
+                          {
+                            transform: [
+                              {
+                                scaleY: activeCall?.isRemoteSpeaking || isCallRecording ? callRippleAnim : 0.35,
+                              },
+                            ],
+                            opacity: activeCall?.isMuted ? 0.25 : 1,
+                          },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <Text style={styles.callLiveConnectedSub}>
+                    {activeCall?.isMuted
+                      ? '🔇 Microphone is Muted'
+                      : (activeCall?.isRemoteSpeaking
+                          ? '🔊 Connected • Partner is speaking...'
+                          : '🎙️ Continuous Live Audio • Speak naturally')}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Bottom Actions Row */}
+            <View style={styles.callBottomActions}>
+              {activeCall?.status === 'ringing' && activeCall?.direction === 'incoming' ? (
+                // Incoming Call Actions: Decline / Accept
+                <View style={styles.callIncomingActionsRow}>
+                  {/* Decline Column */}
+                  <View style={styles.callActionButtonCol}>
+                    <TouchableOpacity
+                      style={[styles.callActionCircleBtn, { backgroundColor: '#DC2626' }]}
+                      onPress={() => endInAppCall('declined')}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={{ fontSize: 26, color: '#FFFFFF', transform: [{ rotate: '135deg' }] }}>📞</Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.callActionLabel, { color: '#F87171' }]}>Decline</Text>
+                  </View>
+
+                  {/* Accept Column */}
+                  <View style={styles.callActionButtonCol}>
+                    <TouchableOpacity
+                      style={[styles.callActionCircleBtn, { backgroundColor: '#10B981' }]}
+                      onPress={acceptInAppCall}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={{ fontSize: 26, color: '#FFFFFF' }}>📞</Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.callActionLabel, { color: '#34D399' }]}>Accept</Text>
+                  </View>
+                </View>
+              ) : (
+                // Connected or Outgoing Calling/Ringing Actions
+                <View style={styles.callConnectedActionsRow}>
+                  {/* Mute Button Column */}
+                  <View style={styles.callActionButtonCol}>
+                    <TouchableOpacity
+                      style={[
+                        styles.callControlCircleBtn,
+                        activeCall?.isMuted && styles.callControlCircleBtnMuted,
+                      ]}
+                      onPress={toggleCallMute}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 24 }}>{activeCall?.isMuted ? '🔇' : '🎙️'}</Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.callControlLabel, activeCall?.isMuted && { color: '#EF4444' }]}>
+                      {activeCall?.isMuted ? 'Muted' : 'Mute'}
+                    </Text>
+                  </View>
+
+                  {/* End Call Button Column */}
+                  <View style={styles.callActionButtonCol}>
+                    <TouchableOpacity
+                      style={styles.callEndCallCircleBtn}
+                      onPress={() => endInAppCall('user_ended')}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={{ fontSize: 28, color: '#FFFFFF', transform: [{ rotate: '135deg' }] }}>📞</Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.callControlLabel, { color: '#F87171' }]}>End Call</Text>
+                  </View>
+
+                  {/* Speaker Button Column */}
+                  <View style={styles.callActionButtonCol}>
+                    <TouchableOpacity
+                      style={[
+                        styles.callControlCircleBtn,
+                        activeCall?.isSpeaker && styles.callControlCircleBtnSpeaker,
+                      ]}
+                      onPress={toggleCallSpeaker}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 24 }}>{activeCall?.isSpeaker ? '🔊' : '🔈'}</Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.callControlLabel, activeCall?.isSpeaker && { color: '#10B981' }]}>
+                      {activeCall?.isSpeaker ? 'Speaker' : 'Ear'}
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </View>
+          </SafeAreaView>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
 
 // --- High Luxury Stylesheet ---
 const styles = StyleSheet.create({
+  // --- IN-APP SECURE VOICE CALLING (OPTION 1) STYLES ---
+  callModalFullScreenOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 999999,
+    elevation: 999999,
+    backgroundColor: '#021B13',
+  },
+  minimizedCallBar: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 48 : 28,
+    left: 16,
+    right: 16,
+    backgroundColor: '#062C20',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    zIndex: 9999,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 10,
+    borderWidth: 1.5,
+    borderColor: '#10B981',
+  },
+  minimizedCallLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  minimizedCallDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#F59E0B',
+    marginRight: 8,
+  },
+  minimizedCallTitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+    flex: 1,
+  },
+  minimizedCallEndBtn: {
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    marginLeft: 8,
+  },
+  minimizedCallEndBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  callModalSafeArea: {
+    flex: 1,
+    backgroundColor: '#021B13',
+    justifyContent: 'space-between',
+  },
+  callTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 18 : 10,
+    paddingBottom: 12,
+  },
+  callSecurityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+  },
+  callSecurityIcon: {
+    fontSize: 12,
+    marginRight: 6,
+  },
+  callSecurityText: {
+    color: '#A7F3D0',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  callMinimizeBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  callMinimizeBtnText: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  callMainBody: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  callAvatarOuterWrapper: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+    width: 170,
+    height: 170,
+  },
+  callPulseRing: {
+    position: 'absolute',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: '#10B981',
+  },
+  callPulseRingOuter: {
+    position: 'absolute',
+    width: 170,
+    height: 170,
+    borderRadius: 85,
+    backgroundColor: 'rgba(16, 185, 129, 0.25)',
+  },
+  callAvatarCircle: {
+    width: 108,
+    height: 108,
+    borderRadius: 54,
+    backgroundColor: '#062C20',
+    borderWidth: 3,
+    borderColor: '#10B981',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 18,
+    elevation: 12,
+  },
+  callPartnerName: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: 6,
+    letterSpacing: 0.3,
+  },
+  callPartnerRoleBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    marginBottom: 16,
+  },
+  callPartnerRoleText: {
+    fontSize: 12.5,
+    color: '#6EE7B7',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  callStatusBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    marginBottom: 24,
+  },
+  callStatusTextCalling: {
+    color: '#FDE047',
+    fontSize: 13.5,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  callStatusTextRinging: {
+    color: '#34D399',
+    fontSize: 13.5,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  callStatusTextConnected: {
+    color: '#34D399',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  callSpeakingIndicator: {
+    color: '#FBBF24',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  callStatusTextEnded: {
+    color: '#F87171',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  callLiveConnectedInfo: {
+    alignItems: 'center',
+    marginTop: 20,
+    width: '100%',
+  },
+  callWaveContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 48,
+    marginBottom: 12,
+  },
+  callWaveBar: {
+    width: 6,
+    height: 38,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  callLiveConnectedSub: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  callBottomActions: {
+    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+    paddingHorizontal: 24,
+  },
+  callIncomingActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  callConnectedActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  callActionButtonCol: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 76,
+  },
+  callControlCircleBtn: {
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  callControlCircleBtnMuted: {
+    backgroundColor: '#DC2626',
+    borderColor: '#EF4444',
+    shadowColor: '#DC2626',
+    shadowOpacity: 0.45,
+  },
+  callControlCircleBtnSpeaker: {
+    backgroundColor: '#10B981',
+    borderColor: '#34D399',
+    shadowColor: '#10B981',
+    shadowOpacity: 0.45,
+  },
+  callEndCallCircleBtn: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#DC2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  callControlLabel: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  callActionCircleBtn: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  callActionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  chatMissedCallBox: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 14,
+    padding: 12,
+    minWidth: 200,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  chatMissedCallTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  chatMissedCallIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatMissedCallTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#991B1B',
+  },
+  chatMissedCallSub: {
+    fontSize: 11,
+    color: '#B91C1C',
+    marginTop: 2,
+  },
+  chatCallBackBtn: {
+    backgroundColor: '#056B4B',
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  chatCallBackBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '800',
+  },
+  chatTypingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: '#F1F5F9',
+  },
+  chatTypingDot: {
+    fontSize: 14,
+    marginRight: 6,
+  },
+  chatTypingText: {
+    fontSize: 12,
+    color: '#056B4B',
+    fontWeight: '700',
+    fontStyle: 'italic',
+  },
+  // Customer Messages & Inquiries Tab Styles
+  customerConvCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  customerConvAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customerConvTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+    flex: 1,
+  },
+  customerConvTime: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+    marginLeft: 8,
+  },
+  customerConvTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  customerConvTagText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  customerConvSnippet: {
+    fontSize: 13,
+    color: '#64748B',
+  },
+  customerConvUnreadBadge: {
+    backgroundColor: '#10B981',
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    marginLeft: 8,
+  },
+  customerConvUnreadBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
   // In-Store Pharmacy Hub & Prescription Styles
   storePharmacyHubCard: {
     backgroundColor: '#EFF6FF',
@@ -21840,6 +24857,29 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#94A3B8',
     fontWeight: '600',
+  },
+  chatStatusClock: {
+    fontSize: 9,
+    color: 'rgba(255, 255, 255, 0.75)',
+    marginLeft: 4,
+  },
+  chatStatusSingleCheckSent: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontWeight: '700',
+    marginLeft: 3,
+  },
+  chatStatusDoubleCheckDelivered: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontWeight: '700',
+    marginLeft: 3,
+  },
+  chatStatusDoubleCheckRead: {
+    fontSize: 11,
+    color: '#38BDF8',
+    fontWeight: '800',
+    marginLeft: 3,
   },
   chatComposerRow: {
     flexDirection: 'row',
@@ -22464,6 +25504,28 @@ const styles = StyleSheet.create({
     marginTop: 2,
     marginBottom: 10,
   },
+  rxCategoryFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  rxCategoryFilterChipActive: {
+    backgroundColor: '#056B4B',
+    borderColor: '#056B4B',
+  },
+  rxCategoryFilterChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  rxCategoryFilterChipTextActive: {
+    color: '#FFFFFF',
+  },
   rxEmptyCatalogCard: {
     alignItems: 'center',
     padding: 30,
@@ -22892,7 +25954,22 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 175,
     position: 'relative',
-    backgroundColor: '#EDE8E1',
+    backgroundColor: '#F1F5F9',
+  },
+  storeImagePlaceholderBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  storeImagePlaceholderCategory: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    marginTop: 6,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
   storeImage: {
     width: '100%',
@@ -26073,27 +29150,29 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  // Bottom Navigation
+  // Bottom Navigation: Symmetrical 2 + Center + 2
   bottomNav: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: 72,
+    height: Platform.OS === 'ios' ? 84 : 70,
     backgroundColor: '#FFFFFF',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
     borderTopWidth: 1,
-    borderTopColor: COLORS.borderBeige,
-    paddingBottom: 8,
+    borderTopColor: '#E2E8F0',
+    paddingBottom: Platform.OS === 'ios' ? 20 : 6,
+    paddingHorizontal: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 10,
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 12,
   },
   navItem: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 4,
@@ -26101,19 +29180,77 @@ const styles = StyleSheet.create({
   navIcon: {
     fontSize: 20,
     marginBottom: 2,
-    opacity: 0.6,
+    opacity: 0.55,
   },
   navIconActive: {
     opacity: 1,
   },
   navText: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '600',
-    color: COLORS.textMuted,
+    color: '#64748B',
+    textAlign: 'center',
   },
   navTextActive: {
     color: COLORS.emeraldDeep,
     fontWeight: '800',
+  },
+  navCenterItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -16,
+  },
+  navCenterButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#056B4B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#056B4B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 2.5,
+    borderColor: '#FFFFFF',
+  },
+  navCenterButtonActive: {
+    backgroundColor: '#034530',
+    borderColor: '#D1FAE5',
+    shadowOpacity: 0.5,
+    transform: [{ scale: 1.05 }],
+  },
+  navCenterText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  navCenterTextActive: {
+    color: COLORS.emeraldDeep,
+    fontWeight: '800',
+  },
+  navCenterBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: '#EF4444',
+    borderRadius: 9,
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  navCenterBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '900',
   },
   navBadge: {
     position: 'absolute',

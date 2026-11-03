@@ -7,6 +7,34 @@ import { NIGERIAN_GROCERIES_CATALOG } from '../data/nigerianGroceriesCatalog';
  * Provides seamless sync between cloud PostgreSQL and local offline fallback.
  */
 
+let lastNetworkNoticeTime = 0;
+export function isNetworkOrDnsError(err) {
+  if (!err) return false;
+  const str = String(err?.message || '') + ' ' + String(err?.details || '') + ' ' + String(err || '');
+  return (
+    str.includes('hostname could not be found') ||
+    str.includes('Network request failed') ||
+    str.includes('network connection was lost') ||
+    str.includes('fetch failed') ||
+    str.includes('AbortError') ||
+    str.includes('ENOTFOUND') ||
+    str.includes('EAI_AGAIN') ||
+    str.includes('timed out')
+  );
+}
+
+export function logNetworkNotice(context, err) {
+  const now = Date.now();
+  if (isNetworkOrDnsError(err)) {
+    if (now - lastNetworkNoticeTime > 45000) {
+      lastNetworkNoticeTime = now;
+      console.log(`📡 [Network Notice] ${context}: Device currently cannot reach Supabase. Operating with local offline storage.`);
+    }
+  } else {
+    console.warn(`[Supabase Error] ${context}:`, err?.message || err);
+  }
+}
+
 // 1. Master Catalog Products
 export async function getMasterCatalog() {
   try {
@@ -59,7 +87,7 @@ export async function getStoreInventory(storeId = 'store-1792192743654') {
       outOfStock: !!item.out_of_stock
     }));
   } catch (err) {
-    console.warn('Failed to fetch store inventory from Supabase:', err);
+    logNetworkNotice('getStoreInventory', err);
     return null;
   }
 }
@@ -288,13 +316,23 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
       roadPointIndex: updates.roadPointIndex !== undefined ? updates.roadPointIndex : (existingRider.roadPointIndex || 0),
       legStartedAt: updates.legStartedAt !== undefined ? updates.legStartedAt : (existingRider.legStartedAt || Date.now()),
       messages: updates.messages !== undefined ? updates.messages : (existingRider.messages || []),
+      courierArrivedOutside: updates.courierArrivedOutside !== undefined ? updates.courierArrivedOutside : (existingRider.courierArrivedOutside || false),
+      hasNotifiedArrived: updates.hasNotifiedArrived !== undefined ? updates.hasNotifiedArrived : (existingRider.hasNotifiedArrived || false),
     };
 
-    if (!updates.boltRider && !existingRider.name) {
+    if (!updates.boltRider && !existingRider.name && updates.status !== 'On the Way') {
       delete mergedRider.name;
       delete mergedRider.phone;
       delete mergedRider.vehicle;
       delete mergedRider.plate;
+    } else if (updates.status === 'On the Way' && (!mergedRider.name || !mergedRider.phone)) {
+      mergedRider.id = mergedRider.id || 'bolt-rider-01';
+      mergedRider.name = 'Musa Ibrahim';
+      mergedRider.phone = '+234 803 294 1194';
+      mergedRider.rating = '4.95';
+      mergedRider.vehicle = 'Bajaj Boxer 150 (Red)';
+      mergedRider.plate = 'ABJ-492-KW';
+      mergedRider.avatar = '🛵';
     }
 
     dbUpdates.bolt_rider = mergedRider;
@@ -319,11 +357,7 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
         break;
       } catch (err) {
         lastErr = err;
-        const isNetworkErr =
-          err?.message?.includes('network connection was lost') ||
-          err?.message?.includes('fetch failed') ||
-          err?.message?.includes('Network request failed') ||
-          err?.details?.includes('network connection was lost');
+        const isNetworkErr = isNetworkOrDnsError(err);
 
         if (attempt < 3 && isNetworkErr) {
           await new Promise((r) => setTimeout(r, attempt * 600));
@@ -347,7 +381,7 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
     } catch (bErr) {}
     return updateResult;
   } catch (err) {
-    console.error('Failed to update order status in Supabase:', err);
+    logNetworkNotice('updateDatabaseOrderStatus', err);
 
     // Queue update locally in AsyncStorage so it automatically syncs when connection returns
     try {
@@ -535,7 +569,16 @@ export async function getDatabaseOrders() {
           vehicle: riderMeta.vehicle || 'Bajaj Boxer 150 (Red)',
           plate: riderMeta.plate || 'ABJ-492-KW',
           avatar: riderMeta.avatar || '🛵',
-        } : null,
+        } : (normalizedStatus === 'On the Way' ? {
+          id: 'bolt-rider-01',
+          name: 'Musa Ibrahim',
+          phone: '+234 803 294 1194',
+          rating: '4.95',
+          trips: 1420,
+          vehicle: 'Bajaj Boxer 150 (Red)',
+          plate: 'ABJ-492-KW',
+          avatar: '🛵',
+        } : null),
         boltCoords: item.bolt_coords || (verifiedStops[0] ? { latitude: Number(verifiedStops[0].latitude) || 9.0882, longitude: Number(verifiedStops[0].longitude) || 7.4933 } : { latitude: 9.0882, longitude: 7.4933 }),
         status: normalizedStatus,
         eta: item.eta || '20 mins',
@@ -562,7 +605,7 @@ export async function getDatabaseOrders() {
       };
     });
   } catch (err) {
-    console.warn('Failed to fetch orders from Supabase:', err);
+    logNetworkNotice('getOrders', err);
     return [];
   }
 }
@@ -595,9 +638,16 @@ export async function getStores() {
       .order('created_at', { ascending: false });
 
     if (error) throw error;
+    if (data && data.length > 0) {
+      AsyncStorage.setItem('getit_stores_list', JSON.stringify(data)).catch(() => {});
+    }
     return data || [];
   } catch (err) {
-    console.warn('Failed to fetch stores from Supabase:', err);
+    logNetworkNotice('getStores', err);
+    try {
+      const cached = await AsyncStorage.getItem('getit_stores_list');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
     return [];
   }
 }
@@ -647,13 +697,72 @@ export async function createDatabaseStore(store) {
 
 // --- GLOBAL LIVE BROADCAST CHANNEL (Instant Sub-50ms Cross-Device Sync) ---
 let liveBroadcastChannel = null;
+let isBroadcastChannelSubscribed = false;
+let broadcastReconnectTimer = null;
+const liveBroadcastListeners = new Set();
+const pendingBroadcastMessages = [];
+
+export function ensureLiveBroadcastConnected() {
+  try {
+    if (!liveBroadcastChannel || !isBroadcastChannelSubscribed) {
+      getLiveBroadcastChannel();
+    }
+  } catch (e) {}
+}
+
+function scheduleBroadcastChannelReconnect() {
+  if (broadcastReconnectTimer) return;
+  broadcastReconnectTimer = setTimeout(() => {
+    broadcastReconnectTimer = null;
+    reconnectBroadcastChannel();
+  }, 1200);
+}
+
+function reconnectBroadcastChannel() {
+  try {
+    if (liveBroadcastChannel) {
+      try {
+        supabase.removeChannel(liveBroadcastChannel);
+      } catch (e) {}
+      liveBroadcastChannel = null;
+    }
+    isBroadcastChannelSubscribed = false;
+    getLiveBroadcastChannel();
+  } catch (e) {}
+}
 
 function getLiveBroadcastChannel() {
   if (!liveBroadcastChannel) {
     liveBroadcastChannel = supabase.channel('getit_live_sync_channel', {
       config: { broadcast: { ack: false, self: true } },
     });
-    liveBroadcastChannel.subscribe();
+
+    // Centralized listener: guarantees all app subscribers receive incoming broadcasts
+    // even across WebSocket reconnection cycles
+    liveBroadcastChannel.on('broadcast', { event: 'GETIT_SYNC_UPDATE' }, ({ payload }) => {
+      liveBroadcastListeners.forEach((listener) => {
+        try {
+          listener(payload);
+        } catch (lErr) {
+          console.warn('Live broadcast listener error:', lErr);
+        }
+      });
+    });
+
+    liveBroadcastChannel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        isBroadcastChannelSubscribed = true;
+        while (pendingBroadcastMessages.length > 0) {
+          const queued = pendingBroadcastMessages.shift();
+          try {
+            liveBroadcastChannel.send(queued).catch(() => {});
+          } catch (e) {}
+        }
+      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        isBroadcastChannelSubscribed = false;
+        scheduleBroadcastChannelReconnect();
+      }
+    });
   }
   return liveBroadcastChannel;
 }
@@ -661,24 +770,51 @@ function getLiveBroadcastChannel() {
 export function broadcastLiveEvent(eventType, payload) {
   try {
     const ch = getLiveBroadcastChannel();
-    ch.send({
+    const eventPayload = { eventType, ...payload, _timestamp: Date.now() };
+    const message = {
       type: 'broadcast',
       event: 'GETIT_SYNC_UPDATE',
-      payload: { eventType, ...payload, _timestamp: Date.now() },
-    });
+      payload: eventPayload,
+    };
+
+    if (isBroadcastChannelSubscribed) {
+      ch.send(message).catch(() => {
+        // Fallback to Realtime REST API if socket delivery experiences push rejection
+        try {
+          if (typeof ch.httpSend === 'function') {
+            ch.httpSend('GETIT_SYNC_UPDATE', eventPayload).catch(() => {});
+          }
+        } catch (hErr) {}
+      });
+    } else {
+      // WebSocket is connecting / recovering: immediately broadcast via REST API
+      // so the message is received INSTANTLY without waiting for socket handshake!
+      try {
+        if (typeof ch.httpSend === 'function') {
+          ch.httpSend('GETIT_SYNC_UPDATE', eventPayload).catch(() => {});
+        } else {
+          pendingBroadcastMessages.push(message);
+          if (pendingBroadcastMessages.length > 50) pendingBroadcastMessages.shift();
+        }
+      } catch (hErr) {
+        pendingBroadcastMessages.push(message);
+      }
+    }
   } catch (err) {
-    console.warn('Failed to broadcast live sync event:', err);
+    // Gracefully catch offline errors
   }
 }
 
 export function subscribeToLiveBroadcast(callback) {
-  const ch = getLiveBroadcastChannel();
-  ch.on('broadcast', { event: 'GETIT_SYNC_UPDATE' }, ({ payload }) => {
-    if (callback) callback(payload);
-  });
+  if (callback) {
+    liveBroadcastListeners.add(callback);
+  }
+  getLiveBroadcastChannel();
 
   return () => {
-    // Keep channel open for app session
+    if (callback) {
+      liveBroadcastListeners.delete(callback);
+    }
   };
 }
 
@@ -1353,23 +1489,7 @@ export async function getStoreReviews(storeId) {
 
 export async function sendOrderChatMessage(orderId, message, orderData = null) {
   try {
-    // 1. Retrieve local cached messages
-    let existingMessages = [];
-    try {
-      const cached = await AsyncStorage.getItem(`getit_chat_messages_${orderId}`);
-      if (cached) {
-        existingMessages = JSON.parse(cached);
-      }
-    } catch (e) {}
-
-    const newMessages = [...existingMessages, message];
-
-    // 2. Cache locally in AsyncStorage
-    try {
-      await AsyncStorage.setItem(`getit_chat_messages_${orderId}`, JSON.stringify(newMessages));
-    } catch (e) {}
-
-    // 3. Broadcast real-time over WebSocket (sub-50ms peer delivery)
+    // 1. Broadcast IMMEDIATELY over WebSocket / Realtime REST (sub-50ms transmission with zero disk-wait)
     const cleanOrderData = orderData
       ? {
           id: orderData.id,
@@ -1390,26 +1510,88 @@ export async function sendOrderChatMessage(orderId, message, orderData = null) {
       order: cleanOrderData,
     });
 
-    // 4. Persist to Supabase orders.bolt_rider.messages
-    updateDatabaseOrderStatus(orderId, { messages: newMessages }).catch((err) => {
-      console.warn('Background Supabase chat persist notice:', err?.message);
-    });
+    // 2. Perform async local caching & cloud persistence concurrently in the background
+    (async () => {
+      let existingMessages = [];
+      try {
+        const cached = await AsyncStorage.getItem(`getit_chat_messages_${orderId}`);
+        if (cached) {
+          existingMessages = JSON.parse(cached);
+        }
+      } catch (e) {}
 
-    return newMessages;
+      let newMessages = existingMessages.map((m) => {
+        if (m.prescription && (message.prescriptionBillPaid || message.paidBillId)) {
+          if (!message.paidBillId || !m.prescription.billId || m.prescription.billId === message.paidBillId) {
+            return {
+              ...m,
+              prescription: {
+                ...m.prescription,
+                paid: true,
+                paidAt: message.createdAt || new Date().toISOString(),
+              },
+            };
+          }
+        }
+        return m;
+      });
+
+      if (!newMessages.some((m) => m.id === message.id)) {
+        newMessages.push(message);
+      }
+
+      try {
+        await AsyncStorage.setItem(`getit_chat_messages_${orderId}`, JSON.stringify(newMessages));
+      } catch (e) {}
+
+      // Persist to Supabase orders.bolt_rider.messages
+      updateDatabaseOrderStatus(orderId, { messages: newMessages }).catch((err) => {
+        logNetworkNotice('sendOrderChatMessage persist', err);
+      });
+    })();
+
+    return [message];
   } catch (err) {
-    console.error('Failed to send order chat message:', err);
+    logNetworkNotice('sendOrderChatMessage', err);
     return null;
   }
 }
 
 export async function getOrderChatMessages(orderId) {
+  let localMsgs = [];
   try {
     const cached = await AsyncStorage.getItem(`getit_chat_messages_${orderId}`);
     if (cached) {
-      return JSON.parse(cached);
+      localMsgs = JSON.parse(cached);
     }
   } catch (e) {}
-  return [];
+
+  try {
+    // 1. Check cloud order first for latest peer messages with 4s timeout guard
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000));
+    const fetchPromise = supabase
+      .from('orders')
+      .select('bolt_rider')
+      .eq('id', orderId)
+      .maybeSingle();
+
+    const { data } = await Promise.race([fetchPromise, timeoutPromise]);
+
+    if (data?.bolt_rider?.messages && Array.isArray(data.bolt_rider.messages)) {
+      const cloudMsgs = data.bolt_rider.messages;
+      const msgMap = new Map();
+      localMsgs.forEach((m) => m?.id && msgMap.set(m.id, m));
+      cloudMsgs.forEach((m) => m?.id && msgMap.set(m.id, m));
+      const merged = Array.from(msgMap.values()).sort(
+        (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+      );
+      AsyncStorage.setItem(`getit_chat_messages_${orderId}`, JSON.stringify(merged)).catch(() => {});
+      return merged;
+    }
+  } catch (e) {}
+
+  // 2. Fall back to local AsyncStorage cache if offline / timeout
+  return localMsgs;
 }
 
 

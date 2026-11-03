@@ -2,6 +2,7 @@
   "expo": {
     "name": "GETIT Nigeria",
     "slug": "getit-nigeria",
+    "owner": "basitlab50",
     "scheme": "getit",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -57,10 +58,6 @@
         }
       ]
     ],
-    "extra": {
-      "eas": {
-        "projectId": "getit-nigeria-app"
-      }
-    }
+    "extra": {}
   }
 }

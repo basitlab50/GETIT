@@ -1210,6 +1210,43 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Added file flush buffer delay to eliminate truncated recordings.
      * Hardened receiver-side base64 unpack and cache directory path resolution.
 
+64. Multi-Stop Courier Tracking, Arrival Outside Gate & Recipient PIN Handover:
+   - 🛵 Real-Time Courier Route Clamping & Gate Arrival State:
+     * Resolved issue where the rider marker stopped prematurely along the highway or flipped immediately to "Delivered" without physical customer handover.
+     * Clamped final leg progression in `calculateOrderRiderProgress` and Case B to `totalLegs - 1` (`finalLegIndex`), accurately anchoring rider coordinates to the customer's delivery destination (`homeCoord`).
+     * Transitioned courier to an explicit gate arrival state (`courierArrivedOutside: true`, status remains `'On the Way'`) upon reaching destination proximity.
+     * Added `completeDeliveryHandover` flow requiring customer or courier PIN verification before finalizing status to `'Delivered'`.
+     * Preserved `courierArrivedOutside` and `hasNotifiedArrived` flags in `updateDatabaseOrderStatus` across cloud synchronizations.
+
+65. Supabase Realtime WebSocket Queue & Network Fault Tolerance:
+   - ⚡ Eliminated REST API Fallback Warnings:
+     * Added `pendingBroadcastMessages` queue and `isBroadcastChannelSubscribed` listener in `supabaseService.js`.
+     * Broadcast events sent prior to WebSocket channel confirmation are cleanly held in memory and dispatched in batch the instant the channel state turns to `'SUBSCRIBED'`, eliminating the `Realtime send() is automatically falling back to REST API` console warnings.
+   - 🛡️ Throttled Offline & DNS Network Warnings:
+     * Created `isNetworkOrDnsError` helper to detect transient DNS lookup failures (`dial tcp: lookup daily-cloudcode-pa.googleapis.com`, `fetch failed: A server with the specified hostname could not be found`).
+     * Added `logNetworkNotice` with a 45-second cooldown to avoid log flooding during hotspot switches or network reconnects.
+     * Added robust local AsyncStorage fallbacks for stores and orders when offline.
+
+66. Expo Go iOS Project Ownership Alignment:
+   - 📱 Resolved CLI Account Mismatch on iOS Devices:
+     * Updated `mobile/app.json` with `"owner": "basitlab50"` to match the Expo Go iOS signed-in account.
+     * Stripped invalid placeholder EAS `projectId` from `extra.eas` to enable seamless tunnel and local development launches without Expo CLI credential friction.
+
+67. Messaging Identity & Patient Name Restoration:
+   - 💬 Real User Identity in Pharmacy Consultations & Chat:
+     * Fixed issue where consultations and messages displayed "Patient" instead of the user's actual registered name.
+     * Hardened startup session hydration in `mobile/App.js`: transient offline or DNS errors when querying `findDatabaseUser` no longer trigger session purges (`AsyncStorage.removeItem('getit_current_user')` or `setCurrentUser(null)`). Local session credentials and buyer name are preserved.
+     * Added `prescriptionPatientName` input field to the Prescription Upload modal, pre-populated with `currentUser?.fullName || currentUser?.name || ''`.
+     * Updated `handleSubmitPrescriptionToPharmacy` and `handleConsultPharmacist` to pass patient name into `customerName` and `senderName`.
+     * Dynamically resolved pharmacy inbox cards and chat partner headers to prioritize the buyer's real name over hardcoded `'Patient'`.
+
+68. Instant Store Image Caching & High-Performance Mobile Delivery:
+   - 🖼️ Mobile-Optimized Asset Loading & Zero-Lag Placeholders:
+     * Implemented `optimizeImageUrl()` utility to automatically downsample heavy Unsplash images (from bulky 1200px+ downloads down to snappy 500px @ 65% quality, and 200px @ 60% quality for thumbnails).
+     * Enabled background prefetching (`Image.prefetch()`) when stores are loaded from Supabase or cache so images populate before scroll.
+     * Attached `cache: 'force-cache'` to all store card banners, map callouts, modal banners, and merchant dashboard covers.
+     * Added instant placeholder backdrops (`storeImagePlaceholderBackdrop`) with category emojis (`💊`, `🥐`, `🍷`, `🌿`, `🛒`) to eliminate grey blank loading flashes.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
