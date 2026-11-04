@@ -7473,13 +7473,28 @@ export default function App() {
   };
 
   const handleOpenPrescribeMedicationModal = (order = null) => {
+    const isPharmacy =
+      currentMerchantStore?.storeType === 'pharmacy' ||
+      currentMerchantStore?.category === 'pharmacy' ||
+      targetChatOrder?.storeType === 'pharmacy' ||
+      targetChatOrder?.isPrescriptionOrder ||
+      (order && (order.storeType === 'pharmacy' || order.isPrescriptionOrder));
+
+    if (!isPharmacy) {
+      Alert.alert(
+        'Pharmacy Only Feature',
+        'Prescribing medication and clinical invoicing is strictly reserved for registered pharmacy dispensaries.'
+      );
+      return;
+    }
+
     // If order is an event (e.g. from onPress={handleOpenPrescribeMedicationModal}), ignore it!
     const validOrder = (order && order.id && typeof order.id === 'string' && !order.nativeEvent) ? order : null;
     const activeOrder = validOrder || targetChatOrder || orders.find(
       (o) =>
         (o.storeId === currentMerchantStore?.id || o.storeName === currentMerchantStore?.name) &&
         (o.storeType === 'pharmacy' || (o.messages && o.messages.length > 0))
-    ) || orders[0];
+    ) || orders.find((o) => o.storeType === 'pharmacy') || orders[0];
 
     if (activeOrder && (!targetChatOrder || targetChatOrder.id !== activeOrder.id)) {
       setTargetChatOrder(activeOrder);
@@ -23040,8 +23055,13 @@ Support: help@getit.ng | Abuja, Nigeria`;
               )}
             </ScrollView>
 
-            {/* Pharmacist Prescribe Medication Bar Button */}
-            {(appMode === 'merchant' || targetChatPartner?.role === 'buyer') && (
+            {/* Pharmacist Prescribe Medication Bar Button (Strictly for Pharmacy Merchants chatting with Patients) */}
+            {appMode === 'merchant' &&
+              (currentMerchantStore?.storeType === 'pharmacy' ||
+                currentMerchantStore?.category === 'pharmacy' ||
+                targetChatOrder?.storeType === 'pharmacy' ||
+                targetChatOrder?.isPrescriptionOrder) &&
+              targetChatPartner?.role !== 'courier' && (
               <View style={styles.chatPrescribeActionBar}>
                 <TouchableOpacity
                   style={styles.chatPrescribeActionBtn}

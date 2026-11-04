@@ -1257,7 +1257,16 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Updated `openChatModal` to extract specific `paidBillIds` (`new Set(mergedAll.filter(m => m.prescriptionBillPaid && m.paidBillId).map(m => m.paidBillId))`). Only prescriptions whose explicit `billId` is in `paidBillIds` are reconciled as paid.
      * Overhauled `isRxPaid` render check: strictly checks `Boolean(msg.prescription?.paid)` OR checks for an explicit payment receipt message matching the unique `billId` (`cm.prescriptionBillPaid && cm.paidBillId === curBillId`), or an active order tied to that exact `prescriptionBillId === curBillId`.
      * Tied `prescriptionDeliveryOrder` explicitly to `prescriptionBillId: prescription.billId`.
-     * Hardened `PRESCRIPTION_PAID` event handler, `CHAT_MESSAGE` handler in `App.js`, and `sendOrderChatMessage` in `supabaseService.js` to strictly require `m.prescription.billId === targetBillId`.
+70. Chat Action Bar Store-Type Scoping (Prescribe Medication Button):
+   - 🔒 Strict Pharmacy Merchant Guard for Prescribe Action:
+     * Fixed issue where "💊 Prescribe Medication & Bill Patient" button appeared in mart, grocery, cellar, and non-pharmacy messaging threads.
+     * Root Cause: Line 23044 previously had loose condition `{(appMode === 'merchant' || targetChatPartner?.role === 'buyer') && (`, which triggered for ANY merchant chatting with a buyer, or any buyer chat view.
+     * Resolution in `mobile/App.js`:
+       - Scoped chat action bar to strictly verify:
+         1) `appMode === 'merchant'`
+         2) `currentMerchantStore?.storeType === 'pharmacy' || currentMerchantStore?.category === 'pharmacy' || targetChatOrder?.storeType === 'pharmacy' || targetChatOrder?.isPrescriptionOrder`
+         3) `targetChatPartner?.role !== 'courier'`
+       - Added safety check inside `handleOpenPrescribeMedicationModal` to prevent non-pharmacy stores from opening the clinical prescribe modal.
 
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
