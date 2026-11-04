@@ -3680,8 +3680,11 @@ export default function App() {
               targetChatOrderIdRef.current === orderId ||
               (targetChatOrderRef.current && (
                 targetChatOrderRef.current.id === orderId ||
-                (message.storeId && String(targetChatOrderRef.current.storeId) === String(message.storeId)) ||
-                (incomingOrder?.id && targetChatOrderRef.current.id === incomingOrder.id)
+                (incomingOrder?.id && targetChatOrderRef.current.id === incomingOrder.id) ||
+                (message.storeId &&
+                  targetChatOrderRef.current.storeId &&
+                  String(targetChatOrderRef.current.storeId) === String(message.storeId) &&
+                  (targetChatOrderRef.current.storeName || '').trim().toLowerCase() === (message.storeName || '').trim().toLowerCase())
               ))
             );
 
@@ -5380,7 +5383,9 @@ export default function App() {
       const storeKey = (c.storeName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
       const groupKey = c.isCourier
         ? `courier_${c.orderId}`
-        : (c.storeId ? `store_${c.storeId}` : `storename_${storeKey}`);
+        : (c.isMultiStore && c.targetStore
+            ? `store_${c.targetStore.storeId || c.targetStore.id}_${storeKey}`
+            : (storeKey ? `storename_${storeKey}` : `store_${c.storeId || c.orderId}`));
 
       if (!groupedMap.has(groupKey)) {
         groupedMap.set(groupKey, { ...c });
@@ -6099,9 +6104,24 @@ export default function App() {
       partnerName = resolvedBuyerName;
       partnerId = order.customerId || 'buyer';
       partnerPhone = order.customerPhone || '';
-      if (currentMerchantStore) {
+      if (order.storeName) {
+        resolvedStoreName = order.storeName;
+        resolvedStoreId = order.storeId || resolvedStoreId;
+      } else if (currentMerchantStore) {
         resolvedStoreId = currentMerchantStore.id;
         resolvedStoreName = currentMerchantStore.name;
+      }
+
+      // Automatically align active merchant store if the merchant owns the store of this order
+      if (order.storeId || order.storeName) {
+        const matchingOwnerStore = merchantOwnedStores.find(
+          (st) =>
+            (order.storeId && String(st.id) === String(order.storeId)) ||
+            (order.storeName && (st.name || '').trim().toLowerCase() === order.storeName.trim().toLowerCase())
+        );
+        if (matchingOwnerStore && matchingOwnerStore.id !== merchantStoreId) {
+          setMerchantStoreId(matchingOwnerStore.id);
+        }
       }
     }
 
@@ -6146,7 +6166,10 @@ export default function App() {
       }
       if (viewerRole === 'merchant') {
         if (o.id === order.id) return true;
-        if (order.customerId && o.customerId === order.customerId) return true;
+        const sameStore =
+          (o.storeId && targetStoreId && String(o.storeId) === targetStoreId) ||
+          (o.storeName && targetStoreName && (o.storeName || '').trim().toLowerCase() === targetStoreName);
+        if (sameStore && order.customerId && o.customerId === order.customerId) return true;
         return false;
       }
       return o.id === order.id;
@@ -6344,20 +6367,21 @@ export default function App() {
     handleTypingIndicator('');
 
     const myRole = appMode === 'merchant' ? 'merchant' : 'buyer';
-    const myName =
-      appMode === 'merchant'
-        ? (currentMerchantStore?.name || 'Store')
-        : (currentUser?.fullName || currentUser?.name || 'Customer');
-
     const targetStoreId =
-      myRole === 'merchant'
-        ? (currentMerchantStore?.id || targetChatPartner?.storeId || targetChatOrder.storeId)
-        : (targetChatPartner?.storeId || targetChatPartner?.id || targetChatOrder.storeId);
+      targetChatOrder.storeId ||
+      targetChatPartner?.storeId ||
+      currentMerchantStore?.id;
 
     const targetStoreName =
+      targetChatOrder.storeName ||
+      targetChatPartner?.storeName ||
+      currentMerchantStore?.name ||
+      'Store';
+
+    const myName =
       myRole === 'merchant'
-        ? (currentMerchantStore?.name || targetChatPartner?.storeName || targetChatOrder.storeName)
-        : (targetChatPartner?.storeName || targetChatPartner?.name || targetChatOrder.storeName);
+        ? targetStoreName
+        : (currentUser?.fullName || currentUser?.name || 'Customer');
 
     const newMsg = {
       id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -6565,16 +6589,27 @@ export default function App() {
     const durStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 
     const myRole = appMode === 'merchant' ? 'merchant' : 'buyer';
+    const targetStoreId =
+      targetChatOrder.storeId ||
+      targetChatPartner?.storeId ||
+      currentMerchantStore?.id;
+
+    const targetStoreName =
+      targetChatOrder.storeName ||
+      targetChatPartner?.storeName ||
+      currentMerchantStore?.name ||
+      'Store';
+
     const myName =
-      appMode === 'merchant'
-        ? (currentMerchantStore?.name || 'Store')
+      myRole === 'merchant'
+        ? targetStoreName
         : (currentUser?.fullName || currentUser?.name || 'Customer');
 
     const voiceMsg = {
       id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       orderId: targetChatOrder.id,
-      storeId: targetChatOrder.storeId || targetChatOrder.store_id || currentMerchantStore?.id,
-      storeName: targetChatOrder.storeName || currentMerchantStore?.name || 'Store',
+      storeId: targetStoreId,
+      storeName: targetStoreName,
       customerId: targetChatOrder.customerId || targetChatOrder.customer_id || currentUser?.id,
       customerName: targetChatOrder.customerName || (myRole === 'buyer' ? myName : 'Customer'),
       customerPhone: targetChatOrder.customerPhone || (myRole === 'buyer' ? currentUser?.phone : '') || '',
@@ -7220,16 +7255,27 @@ export default function App() {
           }
         }
         const myRole = appMode === 'merchant' ? 'merchant' : 'buyer';
+        const targetStoreId =
+          targetChatOrder.storeId ||
+          targetChatPartner?.storeId ||
+          currentMerchantStore?.id;
+
+        const targetStoreName =
+          targetChatOrder.storeName ||
+          targetChatPartner?.storeName ||
+          currentMerchantStore?.name ||
+          'Store';
+
         const myName =
-          appMode === 'merchant'
-            ? (currentMerchantStore?.name || 'Store')
+          myRole === 'merchant'
+            ? targetStoreName
             : (currentUser?.fullName || currentUser?.name || 'Customer');
 
         const newPhotoMsg = {
           id: `msg-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
           orderId: targetChatOrder.id,
-          storeId: targetChatOrder.storeId || currentMerchantStore?.id,
-          storeName: targetChatOrder.storeName || currentMerchantStore?.name || 'Store',
+          storeId: targetStoreId,
+          storeName: targetStoreName,
           customerId: targetChatOrder.customerId || currentUser?.id,
           customerName: targetChatOrder.customerName || (myRole === 'buyer' ? myName : 'Customer'),
           customerPhone: targetChatOrder.customerPhone || (myRole === 'buyer' ? currentUser?.phone : '') || '',
@@ -7573,8 +7619,8 @@ export default function App() {
       qualification:
         currentMerchantStore?.pharmacist?.qualification || 'Consultant Clinical Pharmacist',
       licenseNo: currentMerchantStore?.pharmacist?.licenseNo || 'PCN-REG-84920',
-      storeName: currentMerchantStore?.name || targetChatPartner?.name || 'Pharmacy',
-      storeId: currentMerchantStore?.id || targetChatOrder?.storeId || 'pharmacy',
+      storeName: targetChatOrder?.storeName || currentMerchantStore?.name || targetChatPartner?.name || 'Pharmacy',
+      storeId: targetChatOrder?.storeId || currentMerchantStore?.id || 'pharmacy',
       items: selectedPrescribeItems,
       subtotal,
       deliveryFee,

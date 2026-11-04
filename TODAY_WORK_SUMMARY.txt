@@ -1268,6 +1268,20 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
          3) `targetChatPartner?.role !== 'courier'`
        - Added safety check inside `handleOpenPrescribeMedicationModal` to prevent non-pharmacy stores from opening the clinical prescribe modal.
 
+71. Cross-Store Chat Thread & Sender Isolation (Basit Pharm vs Fati Fresh Mart):
+   - 🔍 Root Cause Analysis:
+     * When a merchant owned multiple stores (e.g. Basit Pharm and Fati Fresh Mart), sending a message or viewing messages leaked names between stores.
+     * Root Cause 1 (Sender Name in `handleSendChatMessage`, `handleSendVoiceNote`, `handleSendPhotoPrescription`): Line 6348 resolved `myName` and `targetStoreName` from `currentMerchantStore?.name`. If merchant mode was currently switched to Fati Fresh Mart, sending a message from Basit Pharm's thread branded the message with `senderName: 'Fati Fresh Mart'`!
+     * Root Cause 2 (Conversation deduplication in `customerConversations`): Line 5383 used `c.storeId ? 'store_' + c.storeId : 'storename_' + storeKey`. If orders had identical or fallback store IDs (`'s1'`, `'store-1'`, `'store-gourmet'`), Basit Pharm and Fati Fresh Mart collapsed into the exact same thread, merging their messages together!
+     * Root Cause 3 (`openChatModal` merchant partner resolution): Overwrote `resolvedStoreName` and `resolvedStoreId` with `currentMerchantStore`, ignoring `order.storeName`.
+     * Root Cause 4 (`doesOrderMatchThread`): In merchant mode, matched any order with `order.customerId === o.customerId`, leaking sync between different stores of the same customer.
+     * Root Cause 5 (Realtime `isActivelyViewingChat`): Checked `message.storeId === targetChatOrder.storeId` without verifying store name.
+   - 🛠️ Resolution & Strict Isolation:
+     * Prioritized `targetChatOrder.storeName` and `targetChatOrder.storeId` in `handleSendChatMessage`, `handleSendVoiceNote`, and `handleSendPhotoPrescription` so messages are always branded by the specific order's store.
+     * Updated `customerConversations` grouping key to isolate by unique `storeKey` (`storename_${storeKey}`), ensuring distinct store conversations never merge.
+     * Updated `openChatModal` to preserve `order.storeName` and automatically align `merchantStoreId` if the merchant owns that store.
+     * Hardened `doesOrderMatchThread` and `isActivelyViewingChat` to require matching store name and store ID.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
