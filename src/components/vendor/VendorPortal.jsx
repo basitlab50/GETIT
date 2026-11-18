@@ -16,7 +16,12 @@ import {
   Edit2,
   Check,
   RefreshCw,
-  Search
+  Search,
+  ExternalLink,
+  FileText,
+  Building2,
+  Users,
+  X,
 } from 'lucide-react';
 import ProductMedia from '../common/ProductMedia';
 
@@ -36,8 +41,10 @@ export default function VendorPortal() {
     addNewProduct,
   } = usePlatform();
 
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'inventory' | 'finance'
+  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'inventory' | 'finance' | 'profile'
   const [filterStatus, setFilterStatus] = useState('ALL');
+  const [viewingCacModal, setViewingCacModal] = useState(false);
+  const [viewingNinModal, setViewingNinModal] = useState(false);
   
   // New Product Modal State
   const [showAddProduct, setShowAddProduct] = useState(false);
@@ -53,6 +60,16 @@ export default function VendorPortal() {
   const [stockAvailableQty, setStockAvailableQty] = useState(1);
 
   const currentVendor = vendors.find((v) => v.id === selectedVendorId) || vendors[0];
+
+  const merchantCacNumber = currentVendor.id === 'vendor-1' ? 'RC-1849204' : currentVendor.id === 'vendor-2' ? 'BN-3928174' : currentVendor.id === 'vendor-3' ? 'RC-1920481' : 'BN-2849102';
+  const directorName = currentVendor.id === 'vendor-1' ? 'Chief Emmanuel Okonkwo' : currentVendor.id === 'vendor-2' ? 'Hajiya Fatima Kassim' : currentVendor.id === 'vendor-3' ? 'Pharm. Kalu Ndukwe' : 'Alhaji Musa Garba';
+  const directorNIN = currentVendor.id === 'vendor-1' ? '6194-8201-948' : currentVendor.id === 'vendor-2' ? '5820-9184-726' : currentVendor.id === 'vendor-3' ? '7201-4829-103' : '8192-3019-482';
+  const taxId = `FIRS-TIN-284910${currentVendor.id.slice(-1)}-0001`;
+  const nafdacPermit = 'NAFDAC-FS-2024-9182 (Food & Grocery Hygiene Compliant)';
+  const pcnLicense = String(currentVendor.category || '').toLowerCase().includes('pharmacy') ? 'PCN-FCT-2025-4412 (Premises Verified)' : 'Not Applicable (Grocery Retailer)';
+  const gpsCoords = '9.0820° N, 7.4891° E (Abuja Fulfillment Corridor)';
+  const bankName = currentVendor.id === 'vendor-2' ? 'Zenith Bank PLC' : currentVendor.id === 'vendor-3' ? 'First Bank of Nigeria' : 'Guaranty Trust Bank (GTBank)';
+  const bankAccount = currentVendor.id === 'vendor-2' ? '1018492041' : currentVendor.id === 'vendor-3' ? '2049182940' : '0284719284';
 
   // Orders for this vendor
   const vendorOrders = orders.filter((o) => o.vendorId === currentVendor.id);
@@ -291,6 +308,24 @@ export default function VendorPortal() {
           }}
         >
           Financial Settlements (7% Commission)
+        </button>
+
+        <button
+          onClick={() => setActiveTab('profile')}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '10px',
+            fontSize: '0.85rem',
+            fontWeight: 700,
+            background: activeTab === 'profile' ? '#008751' : 'transparent',
+            color: activeTab === 'profile' ? '#FFFFFF' : '#94A3B8',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}
+        >
+          <span>🏢 Business Profile & CAC / NIN</span>
+          <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '4px', background: 'rgba(16, 185, 129, 0.25)', color: '#34D399', fontWeight: 800 }}>VERIFIED ✓</span>
         </button>
       </div>
 
@@ -697,6 +732,212 @@ export default function VendorPortal() {
         </div>
       )}
 
+      {/* Business Profile & CAC / NIN Legal Tab */}
+      {activeTab === 'profile' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {/* Header Banner */}
+          <div
+            style={{
+              background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
+              border: '1px solid #334155',
+              borderRadius: '16px',
+              padding: '1.5rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '1rem',
+            }}
+          >
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>{currentVendor.name} Legal Business Profile</h3>
+                <span
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                    background: 'rgba(16, 185, 129, 0.2)',
+                    color: '#34D399',
+                    fontWeight: 700,
+                  }}
+                >
+                  ● CAC REGISTERED & NIMC VERIFIED
+                </span>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: '#94A3B8', marginTop: '4px' }}>
+                Corporate Affairs Commission Registration: <strong>{merchantCacNumber}</strong> • Tax ID: <strong>{taxId}</strong>
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setViewingCacModal(true)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  background: '#008751',
+                  color: '#FFFFFF',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>📄 View CAC Certificate</span>
+                <ExternalLink size={13} />
+              </button>
+              <button
+                onClick={() => setViewingNinModal(true)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  background: '#334155',
+                  color: '#FFFFFF',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  border: '1px solid #475569',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>🪪 Inspect Director NIN</span>
+                <ExternalLink size={13} />
+              </button>
+            </div>
+          </div>
+
+          {/* Details Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#38BDF8', marginBottom: '12px' }}>
+                ⚖️ Corporate Affairs & Statutory Registration
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>CAC Number:</span> <strong>{merchantCacNumber}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Business Entity:</span> Private Enterprise / Limited Liability</div>
+                <div><span style={{ color: '#94A3B8' }}>FIRS Tax ID (TIN):</span> <strong>{taxId}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>NAFDAC Grocery Permit:</span> {nafdacPermit}</div>
+                <div><span style={{ color: '#94A3B8' }}>PCN Pharmacy License:</span> {pcnLicense}</div>
+              </div>
+            </div>
+
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#FBBF24', marginBottom: '12px' }}>
+                👤 Director & Managing Desk Identity
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>Proprietor / Director:</span> <strong>{directorName}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Director NIN:</span> <strong style={{ color: '#34D399', fontFamily: 'monospace' }}>{directorNIN}</strong> (NIMC ✓)</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Hotline:</span> {currentVendor.phone}</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Category:</span> {currentVendor.category}</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Address:</span> {currentVendor.address}</div>
+                <div><span style={{ color: '#94A3B8' }}>GPS Coordinates:</span> <span style={{ fontFamily: 'monospace' }}>{gpsCoords}</span></div>
+              </div>
+            </div>
+
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#34D399', marginBottom: '12px' }}>
+                🏦 Settlement Banking & CBN Escrow Coordinates
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>Bank Name:</span> <strong>{bankName}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>NUBAN Account:</span> <strong style={{ fontFamily: 'monospace' }}>{bankAccount}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Account Beneficiary:</span> {currentVendor.name} Operations Account</div>
+                <div><span style={{ color: '#94A3B8' }}>Platform Take:</span> {currentVendor.commissionRate}% Contract Commission</div>
+                <div><span style={{ color: '#94A3B8' }}>Payout SLA:</span> Daily T+1 Dispatch Automated Release</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CAC Certificate Modal */}
+      {viewingCacModal && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-content" style={{ maxWidth: '600px', background: '#FFFDF9', color: '#1F2937', border: '5px double #0B4D2C', padding: '2rem', textAlign: 'center', position: 'relative' }}>
+            <button
+              onClick={() => setViewingCacModal(false)}
+              style={{ position: 'absolute', top: '14px', right: '14px', background: 'transparent', border: 'none', cursor: 'pointer', color: '#6B7280' }}
+            >
+              <X size={20} />
+            </button>
+            <div style={{ fontSize: '32px' }}>🇳🇬</div>
+            <div style={{ fontSize: '0.8rem', fontWeight: 900, color: '#0B4D2C', letterSpacing: '1.5px' }}>FEDERAL REPUBLIC OF NIGERIA</div>
+            <div style={{ fontSize: '1rem', fontWeight: 900, color: '#1F2937', marginTop: '2px' }}>CORPORATE AFFAIRS COMMISSION</div>
+            <div style={{ margin: '14px auto', padding: '6px 18px', background: '#0B4D2C', color: '#E5A93C', borderRadius: '6px', display: 'inline-block', fontSize: '0.88rem', fontWeight: 900 }}>
+              CERTIFICATE OF REGISTRATION
+            </div>
+            <div style={{ fontSize: '0.9rem', fontWeight: 800, marginBottom: '12px' }}>
+              RC / BN No: <span style={{ color: '#0B4D2C', fontFamily: 'monospace' }}>{merchantCacNumber}</span>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: '#374151', lineHeight: 1.6 }}>
+              I hereby certify that <strong>{currentVendor.name}</strong> is registered under the Companies and Allied Matters Act 2020 as a verified retail enterprise.
+            </p>
+            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed #D1D5DB', paddingTop: '14px' }}>
+              <span style={{ fontSize: '0.75rem', color: '#065F46', fontWeight: 700 }}>● VERIFIED IN CAC REGISTRY</span>
+              <button
+                onClick={() => setViewingCacModal(false)}
+                style={{ padding: '6px 14px', borderRadius: '6px', background: '#0B4D2C', color: 'white', fontWeight: 700, border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Director NIN Modal */}
+      {viewingNinModal && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-content" style={{ maxWidth: '500px', background: '#FFFFFF', color: '#0F172A', border: '2px solid #008751', padding: '0', overflow: 'hidden', position: 'relative' }}>
+            <div style={{ background: '#008751', padding: '12px 18px', color: '#FFFFFF', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '20px' }}>🇳🇬</span>
+                <div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 900 }}>FEDERAL REPUBLIC OF NIGERIA</div>
+                  <div style={{ fontSize: '0.68rem', opacity: 0.9 }}>NATIONAL IDENTITY MANAGEMENT COMMISSION</div>
+                </div>
+              </div>
+              <button onClick={() => setViewingNinModal(false)} style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '1.5rem' }}>
+              <div style={{ textAlign: 'center', padding: '10px', background: '#ECFDF5', borderRadius: '10px', border: '1.5px dashed #10B981', marginBottom: '16px' }}>
+                <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#065F46' }}>DIRECTOR NATIONAL IDENTIFICATION NUMBER</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#047857', fontFamily: 'monospace', letterSpacing: '2px', marginTop: '2px' }}>
+                  {directorNIN}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+                <div style={{ width: '80px', height: '90px', borderRadius: '8px', background: '#F1F5F9', border: '1px solid #CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px' }}>
+                  👤
+                </div>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem' }}>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>DIRECTOR FULL NAME</span><strong>{directorName}</strong></div>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>REPRESENTING STORE</span><strong>{currentVendor.name}</strong></div>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>STATUS</span><strong style={{ color: '#059669' }}>● NIMC CITIZEN VERIFIED ✓</strong></div>
+                </div>
+              </div>
+              <div style={{ marginTop: '1.25rem', paddingTop: '12px', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => setViewingNinModal(false)}
+                  style={{ padding: '6px 16px', borderRadius: '6px', background: '#0F172A', color: 'white', fontWeight: 700, border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Financial Settlements Tab (Spec Section 15, 36, 42) */}
       {activeTab === 'finance' && (
         <div>
@@ -778,6 +1019,212 @@ export default function VendorPortal() {
         </div>
       )}
 
+      {/* Business Profile & CAC / NIN Legal Tab */}
+      {activeTab === 'profile' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {/* Header Banner */}
+          <div
+            style={{
+              background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
+              border: '1px solid #334155',
+              borderRadius: '16px',
+              padding: '1.5rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '1rem',
+            }}
+          >
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>{currentVendor.name} Legal Business Profile</h3>
+                <span
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                    background: 'rgba(16, 185, 129, 0.2)',
+                    color: '#34D399',
+                    fontWeight: 700,
+                  }}
+                >
+                  ● CAC REGISTERED & NIMC VERIFIED
+                </span>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: '#94A3B8', marginTop: '4px' }}>
+                Corporate Affairs Commission Registration: <strong>{merchantCacNumber}</strong> • Tax ID: <strong>{taxId}</strong>
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setViewingCacModal(true)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  background: '#008751',
+                  color: '#FFFFFF',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>📄 View CAC Certificate</span>
+                <ExternalLink size={13} />
+              </button>
+              <button
+                onClick={() => setViewingNinModal(true)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  background: '#334155',
+                  color: '#FFFFFF',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  border: '1px solid #475569',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>🪪 Inspect Director NIN</span>
+                <ExternalLink size={13} />
+              </button>
+            </div>
+          </div>
+
+          {/* Details Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#38BDF8', marginBottom: '12px' }}>
+                ⚖️ Corporate Affairs & Statutory Registration
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>CAC Number:</span> <strong>{merchantCacNumber}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Business Entity:</span> Private Enterprise / Limited Liability</div>
+                <div><span style={{ color: '#94A3B8' }}>FIRS Tax ID (TIN):</span> <strong>{taxId}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>NAFDAC Grocery Permit:</span> {nafdacPermit}</div>
+                <div><span style={{ color: '#94A3B8' }}>PCN Pharmacy License:</span> {pcnLicense}</div>
+              </div>
+            </div>
+
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#FBBF24', marginBottom: '12px' }}>
+                👤 Director & Managing Desk Identity
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>Proprietor / Director:</span> <strong>{directorName}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Director NIN:</span> <strong style={{ color: '#34D399', fontFamily: 'monospace' }}>{directorNIN}</strong> (NIMC ✓)</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Hotline:</span> {currentVendor.phone}</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Category:</span> {currentVendor.category}</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Address:</span> {currentVendor.address}</div>
+                <div><span style={{ color: '#94A3B8' }}>GPS Coordinates:</span> <span style={{ fontFamily: 'monospace' }}>{gpsCoords}</span></div>
+              </div>
+            </div>
+
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#34D399', marginBottom: '12px' }}>
+                🏦 Settlement Banking & CBN Escrow Coordinates
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>Bank Name:</span> <strong>{bankName}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>NUBAN Account:</span> <strong style={{ fontFamily: 'monospace' }}>{bankAccount}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Account Beneficiary:</span> {currentVendor.name} Operations Account</div>
+                <div><span style={{ color: '#94A3B8' }}>Platform Take:</span> {currentVendor.commissionRate}% Contract Commission</div>
+                <div><span style={{ color: '#94A3B8' }}>Payout SLA:</span> Daily T+1 Dispatch Automated Release</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CAC Certificate Modal */}
+      {viewingCacModal && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-content" style={{ maxWidth: '600px', background: '#FFFDF9', color: '#1F2937', border: '5px double #0B4D2C', padding: '2rem', textAlign: 'center', position: 'relative' }}>
+            <button
+              onClick={() => setViewingCacModal(false)}
+              style={{ position: 'absolute', top: '14px', right: '14px', background: 'transparent', border: 'none', cursor: 'pointer', color: '#6B7280' }}
+            >
+              <X size={20} />
+            </button>
+            <div style={{ fontSize: '32px' }}>🇳🇬</div>
+            <div style={{ fontSize: '0.8rem', fontWeight: 900, color: '#0B4D2C', letterSpacing: '1.5px' }}>FEDERAL REPUBLIC OF NIGERIA</div>
+            <div style={{ fontSize: '1rem', fontWeight: 900, color: '#1F2937', marginTop: '2px' }}>CORPORATE AFFAIRS COMMISSION</div>
+            <div style={{ margin: '14px auto', padding: '6px 18px', background: '#0B4D2C', color: '#E5A93C', borderRadius: '6px', display: 'inline-block', fontSize: '0.88rem', fontWeight: 900 }}>
+              CERTIFICATE OF REGISTRATION
+            </div>
+            <div style={{ fontSize: '0.9rem', fontWeight: 800, marginBottom: '12px' }}>
+              RC / BN No: <span style={{ color: '#0B4D2C', fontFamily: 'monospace' }}>{merchantCacNumber}</span>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: '#374151', lineHeight: 1.6 }}>
+              I hereby certify that <strong>{currentVendor.name}</strong> is registered under the Companies and Allied Matters Act 2020 as a verified retail enterprise.
+            </p>
+            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed #D1D5DB', paddingTop: '14px' }}>
+              <span style={{ fontSize: '0.75rem', color: '#065F46', fontWeight: 700 }}>● VERIFIED IN CAC REGISTRY</span>
+              <button
+                onClick={() => setViewingCacModal(false)}
+                style={{ padding: '6px 14px', borderRadius: '6px', background: '#0B4D2C', color: 'white', fontWeight: 700, border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Director NIN Modal */}
+      {viewingNinModal && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-content" style={{ maxWidth: '500px', background: '#FFFFFF', color: '#0F172A', border: '2px solid #008751', padding: '0', overflow: 'hidden', position: 'relative' }}>
+            <div style={{ background: '#008751', padding: '12px 18px', color: '#FFFFFF', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '20px' }}>🇳🇬</span>
+                <div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 900 }}>FEDERAL REPUBLIC OF NIGERIA</div>
+                  <div style={{ fontSize: '0.68rem', opacity: 0.9 }}>NATIONAL IDENTITY MANAGEMENT COMMISSION</div>
+                </div>
+              </div>
+              <button onClick={() => setViewingNinModal(false)} style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '1.5rem' }}>
+              <div style={{ textAlign: 'center', padding: '10px', background: '#ECFDF5', borderRadius: '10px', border: '1.5px dashed #10B981', marginBottom: '16px' }}>
+                <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#065F46' }}>DIRECTOR NATIONAL IDENTIFICATION NUMBER</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#047857', fontFamily: 'monospace', letterSpacing: '2px', marginTop: '2px' }}>
+                  {directorNIN}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+                <div style={{ width: '80px', height: '90px', borderRadius: '8px', background: '#F1F5F9', border: '1px solid #CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px' }}>
+                  👤
+                </div>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem' }}>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>DIRECTOR FULL NAME</span><strong>{directorName}</strong></div>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>REPRESENTING STORE</span><strong>{currentVendor.name}</strong></div>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>STATUS</span><strong style={{ color: '#059669' }}>● NIMC CITIZEN VERIFIED ✓</strong></div>
+                </div>
+              </div>
+              <div style={{ marginTop: '1.25rem', paddingTop: '12px', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => setViewingNinModal(false)}
+                  style={{ padding: '6px 16px', borderRadius: '6px', background: '#0F172A', color: 'white', fontWeight: 700, border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Out-Of-Stock Quantity Modal (Spec Section 32) */}
       {stockModalOrder && stockModalItem && (
         <div className="modal-overlay">
@@ -850,6 +1297,212 @@ export default function VendorPortal() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Business Profile & CAC / NIN Legal Tab */}
+      {activeTab === 'profile' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {/* Header Banner */}
+          <div
+            style={{
+              background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
+              border: '1px solid #334155',
+              borderRadius: '16px',
+              padding: '1.5rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '1rem',
+            }}
+          >
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>{currentVendor.name} Legal Business Profile</h3>
+                <span
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                    background: 'rgba(16, 185, 129, 0.2)',
+                    color: '#34D399',
+                    fontWeight: 700,
+                  }}
+                >
+                  ● CAC REGISTERED & NIMC VERIFIED
+                </span>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: '#94A3B8', marginTop: '4px' }}>
+                Corporate Affairs Commission Registration: <strong>{merchantCacNumber}</strong> • Tax ID: <strong>{taxId}</strong>
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setViewingCacModal(true)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  background: '#008751',
+                  color: '#FFFFFF',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>📄 View CAC Certificate</span>
+                <ExternalLink size={13} />
+              </button>
+              <button
+                onClick={() => setViewingNinModal(true)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  background: '#334155',
+                  color: '#FFFFFF',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  border: '1px solid #475569',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>🪪 Inspect Director NIN</span>
+                <ExternalLink size={13} />
+              </button>
+            </div>
+          </div>
+
+          {/* Details Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#38BDF8', marginBottom: '12px' }}>
+                ⚖️ Corporate Affairs & Statutory Registration
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>CAC Number:</span> <strong>{merchantCacNumber}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Business Entity:</span> Private Enterprise / Limited Liability</div>
+                <div><span style={{ color: '#94A3B8' }}>FIRS Tax ID (TIN):</span> <strong>{taxId}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>NAFDAC Grocery Permit:</span> {nafdacPermit}</div>
+                <div><span style={{ color: '#94A3B8' }}>PCN Pharmacy License:</span> {pcnLicense}</div>
+              </div>
+            </div>
+
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#FBBF24', marginBottom: '12px' }}>
+                👤 Director & Managing Desk Identity
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>Proprietor / Director:</span> <strong>{directorName}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Director NIN:</span> <strong style={{ color: '#34D399', fontFamily: 'monospace' }}>{directorNIN}</strong> (NIMC ✓)</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Hotline:</span> {currentVendor.phone}</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Category:</span> {currentVendor.category}</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Address:</span> {currentVendor.address}</div>
+                <div><span style={{ color: '#94A3B8' }}>GPS Coordinates:</span> <span style={{ fontFamily: 'monospace' }}>{gpsCoords}</span></div>
+              </div>
+            </div>
+
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#34D399', marginBottom: '12px' }}>
+                🏦 Settlement Banking & CBN Escrow Coordinates
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>Bank Name:</span> <strong>{bankName}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>NUBAN Account:</span> <strong style={{ fontFamily: 'monospace' }}>{bankAccount}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Account Beneficiary:</span> {currentVendor.name} Operations Account</div>
+                <div><span style={{ color: '#94A3B8' }}>Platform Take:</span> {currentVendor.commissionRate}% Contract Commission</div>
+                <div><span style={{ color: '#94A3B8' }}>Payout SLA:</span> Daily T+1 Dispatch Automated Release</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CAC Certificate Modal */}
+      {viewingCacModal && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-content" style={{ maxWidth: '600px', background: '#FFFDF9', color: '#1F2937', border: '5px double #0B4D2C', padding: '2rem', textAlign: 'center', position: 'relative' }}>
+            <button
+              onClick={() => setViewingCacModal(false)}
+              style={{ position: 'absolute', top: '14px', right: '14px', background: 'transparent', border: 'none', cursor: 'pointer', color: '#6B7280' }}
+            >
+              <X size={20} />
+            </button>
+            <div style={{ fontSize: '32px' }}>🇳🇬</div>
+            <div style={{ fontSize: '0.8rem', fontWeight: 900, color: '#0B4D2C', letterSpacing: '1.5px' }}>FEDERAL REPUBLIC OF NIGERIA</div>
+            <div style={{ fontSize: '1rem', fontWeight: 900, color: '#1F2937', marginTop: '2px' }}>CORPORATE AFFAIRS COMMISSION</div>
+            <div style={{ margin: '14px auto', padding: '6px 18px', background: '#0B4D2C', color: '#E5A93C', borderRadius: '6px', display: 'inline-block', fontSize: '0.88rem', fontWeight: 900 }}>
+              CERTIFICATE OF REGISTRATION
+            </div>
+            <div style={{ fontSize: '0.9rem', fontWeight: 800, marginBottom: '12px' }}>
+              RC / BN No: <span style={{ color: '#0B4D2C', fontFamily: 'monospace' }}>{merchantCacNumber}</span>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: '#374151', lineHeight: 1.6 }}>
+              I hereby certify that <strong>{currentVendor.name}</strong> is registered under the Companies and Allied Matters Act 2020 as a verified retail enterprise.
+            </p>
+            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed #D1D5DB', paddingTop: '14px' }}>
+              <span style={{ fontSize: '0.75rem', color: '#065F46', fontWeight: 700 }}>● VERIFIED IN CAC REGISTRY</span>
+              <button
+                onClick={() => setViewingCacModal(false)}
+                style={{ padding: '6px 14px', borderRadius: '6px', background: '#0B4D2C', color: 'white', fontWeight: 700, border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Director NIN Modal */}
+      {viewingNinModal && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-content" style={{ maxWidth: '500px', background: '#FFFFFF', color: '#0F172A', border: '2px solid #008751', padding: '0', overflow: 'hidden', position: 'relative' }}>
+            <div style={{ background: '#008751', padding: '12px 18px', color: '#FFFFFF', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '20px' }}>🇳🇬</span>
+                <div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 900 }}>FEDERAL REPUBLIC OF NIGERIA</div>
+                  <div style={{ fontSize: '0.68rem', opacity: 0.9 }}>NATIONAL IDENTITY MANAGEMENT COMMISSION</div>
+                </div>
+              </div>
+              <button onClick={() => setViewingNinModal(false)} style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '1.5rem' }}>
+              <div style={{ textAlign: 'center', padding: '10px', background: '#ECFDF5', borderRadius: '10px', border: '1.5px dashed #10B981', marginBottom: '16px' }}>
+                <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#065F46' }}>DIRECTOR NATIONAL IDENTIFICATION NUMBER</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#047857', fontFamily: 'monospace', letterSpacing: '2px', marginTop: '2px' }}>
+                  {directorNIN}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+                <div style={{ width: '80px', height: '90px', borderRadius: '8px', background: '#F1F5F9', border: '1px solid #CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px' }}>
+                  👤
+                </div>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem' }}>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>DIRECTOR FULL NAME</span><strong>{directorName}</strong></div>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>REPRESENTING STORE</span><strong>{currentVendor.name}</strong></div>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>STATUS</span><strong style={{ color: '#059669' }}>● NIMC CITIZEN VERIFIED ✓</strong></div>
+                </div>
+              </div>
+              <div style={{ marginTop: '1.25rem', paddingTop: '12px', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => setViewingNinModal(false)}
+                  style={{ padding: '6px 16px', borderRadius: '6px', background: '#0F172A', color: 'white', fontWeight: 700, border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -981,6 +1634,212 @@ export default function VendorPortal() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Business Profile & CAC / NIN Legal Tab */}
+      {activeTab === 'profile' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {/* Header Banner */}
+          <div
+            style={{
+              background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
+              border: '1px solid #334155',
+              borderRadius: '16px',
+              padding: '1.5rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '1rem',
+            }}
+          >
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>{currentVendor.name} Legal Business Profile</h3>
+                <span
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                    background: 'rgba(16, 185, 129, 0.2)',
+                    color: '#34D399',
+                    fontWeight: 700,
+                  }}
+                >
+                  ● CAC REGISTERED & NIMC VERIFIED
+                </span>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: '#94A3B8', marginTop: '4px' }}>
+                Corporate Affairs Commission Registration: <strong>{merchantCacNumber}</strong> • Tax ID: <strong>{taxId}</strong>
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setViewingCacModal(true)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  background: '#008751',
+                  color: '#FFFFFF',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>📄 View CAC Certificate</span>
+                <ExternalLink size={13} />
+              </button>
+              <button
+                onClick={() => setViewingNinModal(true)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  background: '#334155',
+                  color: '#FFFFFF',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  border: '1px solid #475569',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>🪪 Inspect Director NIN</span>
+                <ExternalLink size={13} />
+              </button>
+            </div>
+          </div>
+
+          {/* Details Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#38BDF8', marginBottom: '12px' }}>
+                ⚖️ Corporate Affairs & Statutory Registration
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>CAC Number:</span> <strong>{merchantCacNumber}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Business Entity:</span> Private Enterprise / Limited Liability</div>
+                <div><span style={{ color: '#94A3B8' }}>FIRS Tax ID (TIN):</span> <strong>{taxId}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>NAFDAC Grocery Permit:</span> {nafdacPermit}</div>
+                <div><span style={{ color: '#94A3B8' }}>PCN Pharmacy License:</span> {pcnLicense}</div>
+              </div>
+            </div>
+
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#FBBF24', marginBottom: '12px' }}>
+                👤 Director & Managing Desk Identity
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>Proprietor / Director:</span> <strong>{directorName}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Director NIN:</span> <strong style={{ color: '#34D399', fontFamily: 'monospace' }}>{directorNIN}</strong> (NIMC ✓)</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Hotline:</span> {currentVendor.phone}</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Category:</span> {currentVendor.category}</div>
+                <div><span style={{ color: '#94A3B8' }}>Store Address:</span> {currentVendor.address}</div>
+                <div><span style={{ color: '#94A3B8' }}>GPS Coordinates:</span> <span style={{ fontFamily: 'monospace' }}>{gpsCoords}</span></div>
+              </div>
+            </div>
+
+            <div style={{ background: '#1E293B', padding: '1.25rem', borderRadius: '14px', border: '1px solid #334155' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#34D399', marginBottom: '12px' }}>
+                🏦 Settlement Banking & CBN Escrow Coordinates
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.82rem', color: '#E2E8F0' }}>
+                <div><span style={{ color: '#94A3B8' }}>Bank Name:</span> <strong>{bankName}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>NUBAN Account:</span> <strong style={{ fontFamily: 'monospace' }}>{bankAccount}</strong></div>
+                <div><span style={{ color: '#94A3B8' }}>Account Beneficiary:</span> {currentVendor.name} Operations Account</div>
+                <div><span style={{ color: '#94A3B8' }}>Platform Take:</span> {currentVendor.commissionRate}% Contract Commission</div>
+                <div><span style={{ color: '#94A3B8' }}>Payout SLA:</span> Daily T+1 Dispatch Automated Release</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CAC Certificate Modal */}
+      {viewingCacModal && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-content" style={{ maxWidth: '600px', background: '#FFFDF9', color: '#1F2937', border: '5px double #0B4D2C', padding: '2rem', textAlign: 'center', position: 'relative' }}>
+            <button
+              onClick={() => setViewingCacModal(false)}
+              style={{ position: 'absolute', top: '14px', right: '14px', background: 'transparent', border: 'none', cursor: 'pointer', color: '#6B7280' }}
+            >
+              <X size={20} />
+            </button>
+            <div style={{ fontSize: '32px' }}>🇳🇬</div>
+            <div style={{ fontSize: '0.8rem', fontWeight: 900, color: '#0B4D2C', letterSpacing: '1.5px' }}>FEDERAL REPUBLIC OF NIGERIA</div>
+            <div style={{ fontSize: '1rem', fontWeight: 900, color: '#1F2937', marginTop: '2px' }}>CORPORATE AFFAIRS COMMISSION</div>
+            <div style={{ margin: '14px auto', padding: '6px 18px', background: '#0B4D2C', color: '#E5A93C', borderRadius: '6px', display: 'inline-block', fontSize: '0.88rem', fontWeight: 900 }}>
+              CERTIFICATE OF REGISTRATION
+            </div>
+            <div style={{ fontSize: '0.9rem', fontWeight: 800, marginBottom: '12px' }}>
+              RC / BN No: <span style={{ color: '#0B4D2C', fontFamily: 'monospace' }}>{merchantCacNumber}</span>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: '#374151', lineHeight: 1.6 }}>
+              I hereby certify that <strong>{currentVendor.name}</strong> is registered under the Companies and Allied Matters Act 2020 as a verified retail enterprise.
+            </p>
+            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed #D1D5DB', paddingTop: '14px' }}>
+              <span style={{ fontSize: '0.75rem', color: '#065F46', fontWeight: 700 }}>● VERIFIED IN CAC REGISTRY</span>
+              <button
+                onClick={() => setViewingCacModal(false)}
+                style={{ padding: '6px 14px', borderRadius: '6px', background: '#0B4D2C', color: 'white', fontWeight: 700, border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Director NIN Modal */}
+      {viewingNinModal && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-content" style={{ maxWidth: '500px', background: '#FFFFFF', color: '#0F172A', border: '2px solid #008751', padding: '0', overflow: 'hidden', position: 'relative' }}>
+            <div style={{ background: '#008751', padding: '12px 18px', color: '#FFFFFF', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '20px' }}>🇳🇬</span>
+                <div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 900 }}>FEDERAL REPUBLIC OF NIGERIA</div>
+                  <div style={{ fontSize: '0.68rem', opacity: 0.9 }}>NATIONAL IDENTITY MANAGEMENT COMMISSION</div>
+                </div>
+              </div>
+              <button onClick={() => setViewingNinModal(false)} style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '1.5rem' }}>
+              <div style={{ textAlign: 'center', padding: '10px', background: '#ECFDF5', borderRadius: '10px', border: '1.5px dashed #10B981', marginBottom: '16px' }}>
+                <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#065F46' }}>DIRECTOR NATIONAL IDENTIFICATION NUMBER</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#047857', fontFamily: 'monospace', letterSpacing: '2px', marginTop: '2px' }}>
+                  {directorNIN}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+                <div style={{ width: '80px', height: '90px', borderRadius: '8px', background: '#F1F5F9', border: '1px solid #CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px' }}>
+                  👤
+                </div>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem' }}>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>DIRECTOR FULL NAME</span><strong>{directorName}</strong></div>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>REPRESENTING STORE</span><strong>{currentVendor.name}</strong></div>
+                  <div><span style={{ color: '#64748B', fontSize: '0.68rem', display: 'block' }}>STATUS</span><strong style={{ color: '#059669' }}>● NIMC CITIZEN VERIFIED ✓</strong></div>
+                </div>
+              </div>
+              <div style={{ marginTop: '1.25rem', paddingTop: '12px', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => setViewingNinModal(false)}
+                  style={{ padding: '6px 16px', borderRadius: '6px', background: '#0F172A', color: 'white', fontWeight: 700, border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

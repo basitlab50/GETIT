@@ -1,6 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { NIGERIAN_GROCERIES_CATALOG } from '../data/nigerianGroceriesCatalog';
+import {
+  DEFAULT_MARKETPLACE_TAXONOMY,
+  TAXONOMY_STORAGE_KEY,
+  CATEGORY_REQUESTS_STORAGE_KEY,
+  REMOVED_TEST_STORE_IDS,
+  normalizeTaxonomyCatalog,
+  getDefaultStoreCoverImage,
+} from '../data/marketplaceTaxonomy';
 
 /**
  * Supabase Data Service for Mobile App
@@ -207,10 +215,12 @@ export async function createDatabaseOrder(order) {
     stops: order.stops || [],
     roadRouteCoordinates: order.roadRouteCoordinates || [],
     roadLegs: order.roadLegs || [],
+    snappedWaypoints: order.snappedWaypoints || [],
+    riderOrigin: order.riderOrigin || null,
     isMultiStore: Boolean(order.isMultiStore || (order.stops && order.stops.length > 1)),
     currentStopIndex: Number(order.currentStopIndex) || 0,
     roadPointIndex: Number(order.roadPointIndex) || 0,
-    legStartedAt: Number(order.legStartedAt) || Date.now(),
+    legStartedAt: order.status === 'On the Way' ? (Number(order.legStartedAt) || Date.now()) : (Number(order.legStartedAt) || 0),
     journeyAlert: order.journeyAlert || null,
   };
 
@@ -256,7 +266,14 @@ export async function createDatabaseOrder(order) {
         .maybeSingle();
 
       if (error) throw error;
-      return data || record;
+      const savedOrder = data || record;
+      try {
+        broadcastLiveEvent('NEW_ORDER', {
+          orderId: savedOrder.id,
+          order: savedOrder,
+        });
+      } catch (broadcastErr) {}
+      return savedOrder;
     } catch (err) {
       lastErr = err;
       const isNetworkErr =
@@ -290,6 +307,14 @@ export async function createDatabaseOrder(order) {
 }
 
 export async function updateDatabaseOrderStatus(orderId, updates) {
+  // Broadcast explicit updates immediately for sub-50ms cross-device responsiveness
+  try {
+    broadcastLiveEvent('ORDER_UPDATE', {
+      orderId,
+      ...updates,
+    });
+  } catch (earlyBroadcastErr) {}
+
   try {
     const dbUpdates = {};
     if (updates.status !== undefined) dbUpdates.status = updates.status;
@@ -306,18 +331,45 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
       }
     } catch (e) {}
 
+    const resolveProposalMerge = (existingProp, updateProp) => {
+      if (updateProp === null) return null;
+      if (updateProp !== undefined) {
+        if (
+          existingProp &&
+          existingProp.status &&
+          existingProp.status !== 'pending' &&
+          updateProp.status === 'pending' &&
+          (!updateProp.id || !existingProp.id || updateProp.id === existingProp.id)
+        ) {
+          return existingProp;
+        }
+        return updateProp;
+      }
+      return existingRider ? existingProp || null : null;
+    };
+
     const mergedRider = {
       ...existingRider,
       ...(updates.boltRider || {}),
-      replacementProposal: updates.replacementProposal !== undefined ? updates.replacementProposal : (existingRider.replacementProposal || null),
+      replacementProposal: resolveProposalMerge(existingRider.replacementProposal, updates.replacementProposal),
+      outOfStockProposal: resolveProposalMerge(existingRider.outOfStockProposal, updates.outOfStockProposal),
       stops: updates.stops !== undefined ? updates.stops : (existingRider.stops || []),
       journeyAlert: updates.journeyAlert !== undefined ? updates.journeyAlert : existingRider.journeyAlert,
       currentStopIndex: updates.currentStopIndex !== undefined ? updates.currentStopIndex : (existingRider.currentStopIndex || 0),
       roadPointIndex: updates.roadPointIndex !== undefined ? updates.roadPointIndex : (existingRider.roadPointIndex || 0),
-      legStartedAt: updates.legStartedAt !== undefined ? updates.legStartedAt : (existingRider.legStartedAt || Date.now()),
+      legStartedAt: updates.legStartedAt !== undefined ? updates.legStartedAt : (existingRider.legStartedAt || 0),
+      riderOrigin: updates.riderOrigin !== undefined ? updates.riderOrigin : (existingRider.riderOrigin || null),
       messages: updates.messages !== undefined ? updates.messages : (existingRider.messages || []),
       courierArrivedOutside: updates.courierArrivedOutside !== undefined ? updates.courierArrivedOutside : (existingRider.courierArrivedOutside || false),
       hasNotifiedArrived: updates.hasNotifiedArrived !== undefined ? updates.hasNotifiedArrived : (existingRider.hasNotifiedArrived || false),
+      isMultiStore: updates.isMultiStore !== undefined ? updates.isMultiStore : (updates.stops ? updates.stops.length > 1 : (existingRider.isMultiStore || false)),
+      transferredFromStoreId: updates.transferredFromStoreId !== undefined ? updates.transferredFromStoreId : (existingRider.transferredFromStoreId || null),
+      transferredFromStoreName: updates.transferredFromStoreName !== undefined ? updates.transferredFromStoreName : (existingRider.transferredFromStoreName || null),
+      transferredFromStoreIds: updates.transferredFromStoreIds !== undefined ? updates.transferredFromStoreIds : (existingRider.transferredFromStoreIds || []),
+      transferredFromStoreNames: updates.transferredFromStoreNames !== undefined ? updates.transferredFromStoreNames : (existingRider.transferredFromStoreNames || []),
+      roadRouteCoordinates: updates.roadRouteCoordinates !== undefined ? updates.roadRouteCoordinates : (updates.boltRider?.roadRouteCoordinates || existingRider.roadRouteCoordinates || []),
+      roadLegs: updates.roadLegs !== undefined ? updates.roadLegs : (updates.boltRider?.roadLegs || existingRider.roadLegs || []),
+      snappedWaypoints: updates.snappedWaypoints !== undefined ? updates.snappedWaypoints : (updates.boltRider?.snappedWaypoints || existingRider.snappedWaypoints || []),
     };
 
     if (!updates.boltRider && !existingRider.name && updates.status !== 'On the Way') {
@@ -339,6 +391,9 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
     if (updates.items !== undefined) dbUpdates.items = updates.items;
     if (updates.subtotal !== undefined) dbUpdates.subtotal = updates.subtotal;
     if (updates.total !== undefined) dbUpdates.total = updates.total;
+    if (updates.storeId !== undefined) dbUpdates.store_id = updates.storeId;
+    if (updates.storeName !== undefined) dbUpdates.store_name = updates.storeName;
+    if (updates.deliveryFee !== undefined) dbUpdates.delivery_fee = updates.deliveryFee;
 
     // Resilient update with exponential backoff (handles Expo/iOS "network connection was lost")
     let updateResult = null;
@@ -374,9 +429,10 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
     try {
       broadcastLiveEvent('ORDER_UPDATE', {
         orderId,
+        ...mergedRider,
         ...updates,
         replacementProposal: mergedRider.replacementProposal,
-        ...mergedRider,
+        outOfStockProposal: mergedRider.outOfStockProposal,
       });
     } catch (bErr) {}
     return updateResult;
@@ -396,6 +452,7 @@ export async function updateDatabaseOrderStatus(orderId, updates) {
         orderId,
         ...updates,
         replacementProposal: updates.replacementProposal,
+        outOfStockProposal: updates.outOfStockProposal,
       });
     } catch (bErr) {}
     return null;
@@ -473,11 +530,12 @@ export async function getDatabaseOrders() {
         if (item.items && Array.isArray(item.items) && item.items.length > 0) {
           const storeMap = new Map();
           item.items.forEach(it => {
-            const sName = it.storeName || item.store_name || 'GETIT Store';
+            const sName = item.store_name || it.storeName || 'Mega Stores';
+            const sId = item.store_id || it.storeId || `s-${storeMap.size + 1}`;
             if (!storeMap.has(sName)) {
               storeMap.set(sName, {
                 stopNumber: storeMap.size + 1,
-                storeId: it.storeId || item.store_id || `s-${storeMap.size + 1}`,
+                storeId: sId,
                 storeName: sName,
                 latitude: Number(it.latitude || (storeMap.size === 0 ? 9.0882 : 9.0765)),
                 longitude: Number(it.longitude || (storeMap.size === 0 ? 7.4933 : 7.4772)),
@@ -493,13 +551,16 @@ export async function getDatabaseOrders() {
           });
           stops = Array.from(storeMap.values());
         } else {
+          // Genuine store coordinates in Abuja
+          const defaultStoreLat = item.store_id === 'store-1792192743654' || (item.store_name || '').includes('Mega') ? 9.124943 : 9.113420;
+          const defaultStoreLng = item.store_id === 'store-1792192743654' || (item.store_name || '').includes('Mega') ? 7.439559 : 7.440612;
           stops = [
             {
               stopNumber: 1,
               storeId: item.store_id || 'store-1792192743654',
               storeName: item.store_name || 'Mega Stores',
-              latitude: Number(item.delivery_lat || 9.0882),
-              longitude: Number(item.delivery_lng || 7.4933),
+              latitude: defaultStoreLat,
+              longitude: defaultStoreLng,
               pickupPin: String(item.pickup_pin || '7731'),
               pickupStatus: 'in_progress',
               subtotal: Number(item.subtotal) || Number(item.total) || 0,
@@ -514,30 +575,34 @@ export async function getDatabaseOrders() {
       const isMultiStore = riderMeta.isMultiStore !== undefined ? riderMeta.isMultiStore : (stops.length > 1);
       const currentStopIndex = Number(riderMeta.currentStopIndex) || 0;
       const journeyAlert = riderMeta.journeyAlert || null;
-      // Normalize status: if order was delivered or cancelled, preserve it. If courier is active, normalize to 'On the Way'
+      // Normalize status: preserve explicit lifecycle statuses; only use 'On the Way' when dispatched
       let normalizedStatus = item.status || 'New Order';
       if (item.status === 'Delivered' || item.eta === 'Delivered') {
         normalizedStatus = 'Delivered';
       } else if (item.status === 'Cancelled') {
         normalizedStatus = 'Cancelled';
+      } else if (
+        item.status === 'New Order' ||
+        item.status === 'Preparing' ||
+        item.status === 'Ready for Pickup' ||
+        item.status === 'Looking for Courier' ||
+        item.status === 'On the Way'
+      ) {
+        normalizedStatus = item.status;
       } else if (riderMeta.name) {
         normalizedStatus = 'On the Way';
       }
 
-      // Strictly preserve stop statuses: Only prior completed stops (idx < currentStopIndex)
-      const verifiedStops = (stops || []).map((st, idx) => {
-        if (idx < currentStopIndex && st.pickupStatus !== 'picked_up') {
-          return {
-            ...st,
-            pickupStatus: 'picked_up',
-            status: 'Ready for Pickup',
-            pickedUpAt: st.pickedUpAt || (item.created_at ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '3:30 PM'),
-          };
-        }
-        return st;
-      });
-
-      const reconciledStopIndex = currentStopIndex;
+      // Clamp currentStopIndex so the rider never skips ahead of unpicked store stops
+      const verifiedStops = (stops || []).map((st) => ({ ...st }));
+      const firstUnpickedIdx = verifiedStops.findIndex(
+        (st) => st.pickupStatus !== 'picked_up' && st.status !== 'Completed'
+      );
+      const allStopsPicked = firstUnpickedIdx === -1 && verifiedStops.length > 0;
+      const maxAllowedStopIdx = firstUnpickedIdx === -1 ? verifiedStops.length : firstUnpickedIdx;
+      const reconciledStopIndex = normalizedStatus === 'Delivered'
+        ? verifiedStops.length
+        : Math.min(Math.max(0, currentStopIndex), maxAllowedStopIdx);
 
       return {
         id: item.id,
@@ -546,6 +611,11 @@ export async function getDatabaseOrders() {
         customerId: riderMeta.customerId || null,
         customerEmail: riderMeta.customerEmail || null,
         replacementProposal: riderMeta.replacementProposal || null,
+        outOfStockProposal: riderMeta.outOfStockProposal || null,
+        transferredFromStoreId: riderMeta.transferredFromStoreId || null,
+        transferredFromStoreName: riderMeta.transferredFromStoreName || null,
+        transferredFromStoreIds: Array.isArray(riderMeta.transferredFromStoreIds) ? riderMeta.transferredFromStoreIds : (riderMeta.transferredFromStoreId ? [String(riderMeta.transferredFromStoreId)] : []),
+        transferredFromStoreNames: Array.isArray(riderMeta.transferredFromStoreNames) ? riderMeta.transferredFromStoreNames : (riderMeta.transferredFromStoreName ? [String(riderMeta.transferredFromStoreName).toLowerCase()] : []),
         messages: (riderMeta.messages && Array.isArray(riderMeta.messages)) ? riderMeta.messages : [],
         customerName: item.customer_name || 'Customer',
         customerPhone: item.customer_phone || '',
@@ -560,7 +630,7 @@ export async function getDatabaseOrders() {
         conciergeFee: Number(item.concierge_fee) || 0,
         boltStatus: item.bolt_status || 'PENDING_STORE_READY',
         boltTrackingCode: item.bolt_tracking_code || `BOLT-ABJ-${item.id ? String(item.id).replace(/\D/g, '').slice(-5) : '89412'}`,
-        boltRider: (riderMeta.name && riderMeta.phone) ? {
+        boltRider: (normalizedStatus === 'On the Way' || normalizedStatus === 'Delivered') && (riderMeta.name && riderMeta.phone) ? {
           id: riderMeta.id || 'bolt-rider-01',
           name: riderMeta.name,
           phone: riderMeta.phone,
@@ -580,6 +650,10 @@ export async function getDatabaseOrders() {
           avatar: '🛵',
         } : null),
         boltCoords: item.bolt_coords || (verifiedStops[0] ? { latitude: Number(verifiedStops[0].latitude) || 9.0882, longitude: Number(verifiedStops[0].longitude) || 7.4933 } : { latitude: 9.0882, longitude: 7.4933 }),
+        riderOrigin: riderMeta.riderOrigin || null,
+        snappedWaypoints: (riderMeta.snappedWaypoints && Array.isArray(riderMeta.snappedWaypoints)) ? riderMeta.snappedWaypoints : [],
+        courierArrivedOutside: Boolean(riderMeta.courierArrivedOutside && allStopsPicked),
+        hasNotifiedArrived: Boolean(riderMeta.hasNotifiedArrived && allStopsPicked),
         status: normalizedStatus,
         eta: item.eta || '20 mins',
         deliveryPin: item.delivery_pin || '2489',
@@ -595,7 +669,7 @@ export async function getDatabaseOrders() {
         isMultiStore: isMultiStore,
         currentStopIndex: reconciledStopIndex,
         roadPointIndex: Number(riderMeta.roadPointIndex) || 0,
-        legStartedAt: Number(riderMeta.legStartedAt) || 0,
+        legStartedAt: normalizedStatus === 'On the Way' ? (Number(riderMeta.legStartedAt) || 0) : 0,
         journeyAlert: journeyAlert,
         timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
         createdAt: item.created_at
@@ -630,6 +704,41 @@ export function subscribeToOrders(callback) {
 }
 
 // 5. Stores Management & Sync
+const REMOVED_STORE_ID_SET = new Set(Array.isArray(REMOVED_TEST_STORE_IDS) ? REMOVED_TEST_STORE_IDS : []);
+
+export function deduplicateAndCleanStores(rawStores = []) {
+  if (!Array.isArray(rawStores)) return [];
+  const seenIds = new Set();
+  const seenNameKeys = new Map();
+  const cleaned = [];
+
+  for (const st of rawStores) {
+    if (!st || !st.id) continue;
+    if (REMOVED_STORE_ID_SET.has(st.id)) continue;
+    if (seenIds.has(st.id)) continue;
+
+    const normName = String(st.name || '').trim().toLowerCase();
+    if (!normName) continue;
+
+    if (seenNameKeys.has(normName)) {
+      const existingIdx = seenNameKeys.get(normName);
+      const existing = cleaned[existingIdx];
+      // Prefer the store entry that has custom metadata/image or is Mega Stores' canonical ID
+      const existingMeta = parseStoreMetadata(existing);
+      const currentMeta = parseStoreMetadata(st);
+      if (!existingMeta.image && currentMeta.image) {
+        cleaned[existingIdx] = st;
+      }
+      continue;
+    }
+
+    seenIds.add(st.id);
+    seenNameKeys.set(normName, cleaned.length);
+    cleaned.push(st);
+  }
+  return cleaned;
+}
+
 export async function getStores() {
   try {
     const { data, error } = await supabase
@@ -638,15 +747,16 @@ export async function getStores() {
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-    if (data && data.length > 0) {
-      AsyncStorage.setItem('getit_stores_list', JSON.stringify(data)).catch(() => {});
+    const cleaned = deduplicateAndCleanStores(data || []);
+    if (cleaned.length > 0) {
+      AsyncStorage.setItem('getit_cloud_stores_raw', JSON.stringify(cleaned)).catch(() => {});
     }
-    return data || [];
+    return cleaned;
   } catch (err) {
     logNetworkNotice('getStores', err);
     try {
-      const cached = await AsyncStorage.getItem('getit_stores_list');
-      if (cached) return JSON.parse(cached);
+      const cached = await AsyncStorage.getItem('getit_cloud_stores_raw');
+      if (cached) return deduplicateAndCleanStores(JSON.parse(cached));
     } catch (e) {}
     return [];
   }
@@ -654,20 +764,53 @@ export async function getStores() {
 
 export async function createDatabaseStore(store) {
   try {
+    const cleanName = String(store?.name || '').trim();
+    if (!cleanName) return null;
+
+    // Prevent duplicate store creation in Supabase if a store with the exact same name already exists
+    const { data: existingRows } = await supabase
+      .from('stores')
+      .select('*')
+      .ilike('name', cleanName);
+
+    if (Array.isArray(existingRows) && existingRows.length > 0) {
+      const exactMatch = existingRows.find(
+        (r) => String(r.name || '').trim().toLowerCase() === cleanName.toLowerCase() && !REMOVED_STORE_ID_SET.has(r.id)
+      );
+      if (exactMatch && exactMatch.id !== store.id) {
+        return { ...exactMatch, isDuplicate: true };
+      }
+    }
+
+    const resolvedDeptId = store.primaryDepartmentId || (store.category === 'pharmacy' || store.storeType === 'pharmacy' ? 'pharmacy' : 'grocery');
+    const resolvedFormat = store.storeTypeFormat || store.storeFormat || (store.category === 'pharmacy' || store.storeType === 'pharmacy' ? 'pharmacy' : 'supermarket');
+    const resolvedCoverImage = store.image || getDefaultStoreCoverImage(resolvedDeptId, resolvedFormat, cleanName);
+
     const metadataPayload = {
       cityName: typeof store.city === 'string' && !store.city.startsWith('{') ? store.city : 'Abuja',
       storeType: store.storeType || (store.category === 'pharmacy' ? 'pharmacy' : 'grocery'),
+      storeTypeFormat: resolvedFormat,
+      storeTypeLabel: store.storeTypeLabel || store.categoryLabel || 'Partner Store',
+      primaryDepartmentId: resolvedDeptId,
+      additionalDepartmentIds: Array.isArray(store.additionalDepartmentIds) ? store.additionalDepartmentIds : [],
+      specialisationSubcategories: Array.isArray(store.specialisationSubcategories) ? store.specialisationSubcategories : [],
+      specialisationProducts: Array.isArray(store.specialisationProducts) ? store.specialisationProducts : [],
+      regulatoryStatus: store.regulatoryStatus || (store.storeType === 'pharmacy' ? 'verified' : 'not_applicable'),
+      pcnLicenseNo: store.pcnLicenseNo || store.pharmacist?.licenseNo || null,
+      premisesLicenseNo: store.premisesLicenseNo || null,
+      dispensingScope: Array.isArray(store.dispensingScope) ? store.dispensingScope : [],
       pharmacist: store.pharmacist || null,
       openTime: store.openTime || '08:00 AM',
       closeTime: store.closeTime || '10:00 PM',
       operatingDays: store.operatingDays || 'Mon - Sun (Daily)',
       is24Hours: Boolean(store.is24Hours),
-      image: store.image || null,
+      image: resolvedCoverImage,
+      allowCustomerMessaging: store.allowCustomerMessaging !== undefined ? Boolean(store.allowCustomerMessaging) : true,
     };
 
     const record = {
       id: store.id || `store-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      name: store.name,
+      name: cleanName,
       category: store.category || (store.storeType === 'pharmacy' ? 'pharmacy' : 'Gourmet & Groceries'),
       address: store.address || 'Abuja, Nigeria',
       district: store.district || 'Maitama, Abuja',
@@ -682,7 +825,7 @@ export async function createDatabaseStore(store) {
 
     const { data, error } = await supabase
       .from('stores')
-      .insert(record)
+      .upsert(record, { onConflict: 'id' })
       .select()
       .single();
 
@@ -874,14 +1017,34 @@ export function parseStoreMetadata(dbStore) {
     dbStore.storeType === 'pharmacy' ||
     (dbStore.category && typeof dbStore.category === 'string' && dbStore.category.toLowerCase().includes('pharm'));
 
+  const allowCustomerMessagingVal =
+    isPharm
+      ? true
+      : (meta.allowCustomerMessaging !== undefined
+          ? Boolean(meta.allowCustomerMessaging)
+          : (dbStore.allow_customer_messaging !== undefined
+              ? Boolean(dbStore.allow_customer_messaging)
+              : (dbStore.allowCustomerMessaging !== undefined ? Boolean(dbStore.allowCustomerMessaging) : true)));
+
   return {
     isOpen: isOpenVal,
+    allowCustomerMessaging: allowCustomerMessagingVal,
     openTime: meta.openTime || dbStore.open_time || '08:00 AM',
     closeTime: meta.closeTime || dbStore.close_time || '10:00 PM',
     operatingDays: meta.operatingDays || dbStore.operating_days || 'Mon - Sun (Daily)',
     is24Hours: meta.is24Hours !== undefined ? Boolean(meta.is24Hours) : Boolean(dbStore.is_24_hours),
     image: meta.image || dbStore.image_url || dbStore.image,
     storeType: isPharm ? 'pharmacy' : (meta.storeType || dbStore.store_type || 'grocery'),
+    storeTypeFormat: meta.storeTypeFormat || (isPharm ? 'pharmacy' : undefined),
+    storeTypeLabel: meta.storeTypeLabel || undefined,
+    primaryDepartmentId: meta.primaryDepartmentId || (isPharm ? 'pharmacy' : undefined),
+    additionalDepartmentIds: Array.isArray(meta.additionalDepartmentIds) ? meta.additionalDepartmentIds : [],
+    specialisationSubcategories: Array.isArray(meta.specialisationSubcategories) ? meta.specialisationSubcategories : [],
+    specialisationProducts: Array.isArray(meta.specialisationProducts) ? meta.specialisationProducts : [],
+    regulatoryStatus: meta.regulatoryStatus || (isPharm ? 'verified' : 'not_applicable'),
+    pcnLicenseNo: meta.pcnLicenseNo || meta.pharmacist?.licenseNo || null,
+    premisesLicenseNo: meta.premisesLicenseNo || null,
+    dispensingScope: Array.isArray(meta.dispensingScope) ? meta.dispensingScope : [],
     pharmacist: meta.pharmacist || (isPharm ? {
       name: 'On-Duty Clinical Pharmacist',
       qualification: 'B.Pharm, MPSN',
@@ -905,7 +1068,7 @@ export async function updateDatabaseStore(storeId, updates) {
     if (updates.latitude !== undefined) dbUpdates.latitude = Number(updates.latitude);
     if (updates.longitude !== undefined) dbUpdates.longitude = Number(updates.longitude);
 
-    // Pack timing, 24h flag, custom image, and live isOpen flag into city column so all devices sync instantly
+    // Pack timing, 24h flag, custom image, live isOpen flag, taxonomy specialisations, and allowCustomerMessaging into city column so all devices sync instantly
     if (
       updates.isOpen !== undefined ||
       updates.is_open !== undefined ||
@@ -913,7 +1076,16 @@ export async function updateDatabaseStore(storeId, updates) {
       updates.closeTime !== undefined ||
       updates.operatingDays !== undefined ||
       updates.is24Hours !== undefined ||
-      updates.image !== undefined
+      updates.image !== undefined ||
+      updates.allowCustomerMessaging !== undefined ||
+      updates.primaryDepartmentId !== undefined ||
+      updates.storeTypeFormat !== undefined ||
+      updates.storeTypeLabel !== undefined ||
+      updates.additionalDepartmentIds !== undefined ||
+      updates.specialisationSubcategories !== undefined ||
+      updates.specialisationProducts !== undefined ||
+      updates.regulatoryStatus !== undefined ||
+      updates.pharmacist !== undefined
     ) {
       let meta = { city: 'Abuja' };
       try {
@@ -930,6 +1102,15 @@ export async function updateDatabaseStore(storeId, updates) {
       if (updates.operatingDays !== undefined) meta.operatingDays = updates.operatingDays;
       if (updates.is24Hours !== undefined) meta.is24Hours = Boolean(updates.is24Hours);
       if (updates.image !== undefined) meta.image = updates.image;
+      if (updates.allowCustomerMessaging !== undefined) meta.allowCustomerMessaging = Boolean(updates.allowCustomerMessaging);
+      if (updates.primaryDepartmentId !== undefined) meta.primaryDepartmentId = updates.primaryDepartmentId;
+      if (updates.storeTypeFormat !== undefined) meta.storeTypeFormat = updates.storeTypeFormat;
+      if (updates.storeTypeLabel !== undefined) meta.storeTypeLabel = updates.storeTypeLabel;
+      if (updates.additionalDepartmentIds !== undefined) meta.additionalDepartmentIds = updates.additionalDepartmentIds;
+      if (updates.specialisationSubcategories !== undefined) meta.specialisationSubcategories = updates.specialisationSubcategories;
+      if (updates.specialisationProducts !== undefined) meta.specialisationProducts = updates.specialisationProducts;
+      if (updates.regulatoryStatus !== undefined) meta.regulatoryStatus = updates.regulatoryStatus;
+      if (updates.pharmacist !== undefined) meta.pharmacist = updates.pharmacist;
       meta.city = 'Abuja';
 
       dbUpdates.city = JSON.stringify(meta);
@@ -1593,6 +1774,324 @@ export async function getOrderChatMessages(orderId) {
   // 2. Fall back to local AsyncStorage cache if offline / timeout
   return localMsgs;
 }
+
+// =========================================================================
+// 9. DYNAMIC MARKETPLACE TAXONOMY & CENTRAL CATEGORY MANAGEMENT (ADMIN SYNC)
+// =========================================================================
+
+const CLOUD_TAXONOMY_RECORD_ID = 'cfg-marketplace-taxonomy-v3';
+const CLOUD_CATEGORY_REQUESTS_RECORD_ID = 'cfg-category-requests-v1';
+
+export async function getMarketplaceTaxonomy() {
+  let cachedTaxonomy = null;
+  try {
+    const raw = await AsyncStorage.getItem(TAXONOMY_STORAGE_KEY);
+    if (raw) {
+      cachedTaxonomy = normalizeTaxonomyCatalog(JSON.parse(raw));
+    }
+  } catch (e) {}
+
+  try {
+    const { data, error } = await supabase
+      .from('riders')
+      .select('avatar')
+      .eq('id', CLOUD_TAXONOMY_RECORD_ID)
+      .maybeSingle();
+
+    if (!error && data?.avatar) {
+      const parsed = normalizeTaxonomyCatalog(JSON.parse(data.avatar));
+      if (parsed && Array.isArray(parsed.departments) && parsed.departments.length > 0) {
+        await AsyncStorage.setItem(TAXONOMY_STORAGE_KEY, JSON.stringify(parsed)).catch(() => {});
+        return parsed;
+      }
+    }
+  } catch (err) {
+    logNetworkNotice('getMarketplaceTaxonomy', err);
+  }
+
+  return cachedTaxonomy && Array.isArray(cachedTaxonomy.departments)
+    ? cachedTaxonomy
+    : DEFAULT_MARKETPLACE_TAXONOMY;
+}
+
+export async function saveMarketplaceTaxonomy(newTaxonomy) {
+  const payload = normalizeTaxonomyCatalog({
+    ...DEFAULT_MARKETPLACE_TAXONOMY,
+    ...(newTaxonomy || {}),
+    updatedAt: new Date().toISOString(),
+  });
+
+  try {
+    await AsyncStorage.setItem(TAXONOMY_STORAGE_KEY, JSON.stringify(payload));
+  } catch (e) {}
+
+  // Broadcast immediately so all connected buyer & merchant devices update in <50ms
+  try {
+    broadcastLiveEvent('TAXONOMY_UPDATE', { taxonomy: payload });
+  } catch (e) {}
+
+  try {
+    await supabase.from('riders').upsert(
+      {
+        id: CLOUD_TAXONOMY_RECORD_ID,
+        name: 'MARKETPLACE_TAXONOMY_V3',
+        phone: 'ADMIN_CONFIG',
+        vehicle: 'taxonomy',
+        plate: payload.version || '3.0.0',
+        avatar: JSON.stringify(payload),
+        is_active: true,
+      },
+      { onConflict: 'id' }
+    );
+  } catch (err) {
+    logNetworkNotice('saveMarketplaceTaxonomy', err);
+  }
+
+  return payload;
+}
+
+export async function getMerchantCategoryRequests() {
+  let localReqs = [];
+  try {
+    const raw = await AsyncStorage.getItem(CATEGORY_REQUESTS_STORAGE_KEY);
+    if (raw) localReqs = JSON.parse(raw);
+  } catch (e) {}
+
+  try {
+    const { data, error } = await supabase
+      .from('riders')
+      .select('avatar')
+      .eq('id', CLOUD_CATEGORY_REQUESTS_RECORD_ID)
+      .maybeSingle();
+
+    if (!error && data?.avatar) {
+      const parsed = JSON.parse(data.avatar);
+      if (Array.isArray(parsed)) {
+        await AsyncStorage.setItem(CATEGORY_REQUESTS_STORAGE_KEY, JSON.stringify(parsed)).catch(() => {});
+        return parsed;
+      }
+    }
+  } catch (err) {}
+
+  return Array.isArray(localReqs) ? localReqs : [];
+}
+
+export async function submitMerchantCategoryRequest(requestObj) {
+  const currentList = await getMerchantCategoryRequests();
+  const newEntry = {
+    id: requestObj.id || `catreq-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    storeId: requestObj.storeId || null,
+    storeName: requestObj.storeName || 'Merchant Store',
+    merchantName: requestObj.merchantName || 'Store Owner',
+    merchantPhone: requestObj.merchantPhone || '',
+    level: requestObj.level || 'subcategory', // 'department' | 'subcategory' | 'variety'
+    parentDepartmentId: requestObj.parentDepartmentId || 'grocery',
+    parentSubcategoryId: requestObj.parentSubcategoryId || null,
+    requestedName: requestObj.requestedName || '',
+    notes: requestObj.notes || '',
+    status: 'pending', // 'pending' | 'approved' | 'rejected'
+    createdAt: new Date().toISOString(),
+  };
+
+  const nextList = [newEntry, ...currentList];
+  try {
+    await AsyncStorage.setItem(CATEGORY_REQUESTS_STORAGE_KEY, JSON.stringify(nextList));
+  } catch (e) {}
+
+  try {
+    broadcastLiveEvent('CATEGORY_REQUEST_UPDATE', { requests: nextList, latestRequest: newEntry });
+  } catch (e) {}
+
+  try {
+    await supabase.from('riders').upsert(
+      {
+        id: CLOUD_CATEGORY_REQUESTS_RECORD_ID,
+        name: 'MERCHANT_CATEGORY_REQUESTS',
+        phone: 'ADMIN_CONFIG',
+        vehicle: 'category_requests',
+        plate: String(nextList.length),
+        avatar: JSON.stringify(nextList),
+        is_active: true,
+      },
+      { onConflict: 'id' }
+    );
+  } catch (err) {}
+
+  return { request: newEntry, list: nextList };
+}
+
+export async function saveMerchantCategoryRequests(nextList) {
+  try {
+    await AsyncStorage.setItem(CATEGORY_REQUESTS_STORAGE_KEY, JSON.stringify(nextList));
+  } catch (e) {}
+
+  try {
+    broadcastLiveEvent('CATEGORY_REQUEST_UPDATE', { requests: nextList });
+  } catch (e) {}
+
+  try {
+    await supabase.from('riders').upsert(
+      {
+        id: CLOUD_CATEGORY_REQUESTS_RECORD_ID,
+        name: 'MERCHANT_CATEGORY_REQUESTS',
+        phone: 'ADMIN_CONFIG',
+        vehicle: 'category_requests',
+        plate: String(nextList.length),
+        avatar: JSON.stringify(nextList),
+        is_active: true,
+      },
+      { onConflict: 'id' }
+    );
+  } catch (err) {}
+
+  return nextList;
+}
+
+// 21. Realtime Commercial Policy Synchronization (Tiered Markups, Concierge & Bolt Logistics)
+export async function fetchActiveCommercialPolicy() {
+  try {
+    const { data, error } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .eq('action', 'COMMERCIAL_POLICY_UPDATE')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && data && data.payload) {
+      const parsed = typeof data.payload === 'string' ? JSON.parse(data.payload) : data.payload;
+      try {
+        await AsyncStorage.setItem('getit_cms_business_rules_v1', JSON.stringify(parsed));
+      } catch (e) {}
+      return parsed;
+    }
+  } catch (err) {
+    logNetworkNotice('fetchActiveCommercialPolicy', err);
+  }
+
+  try {
+    const local = await AsyncStorage.getItem('getit_cms_business_rules_v1');
+    if (local) return JSON.parse(local);
+  } catch (e) {}
+
+  return null;
+}
+
+export const COMMERCIAL_POLICY_CHANNEL_NAME = 'getit_commercial_policy_live_channel';
+
+// Persistent shared broadcast channel for lightning-fast sub-50ms mobile sync
+let sharedPolicyMobileBroadcastChannel = null;
+function getSharedPolicyMobileChannel() {
+  if (!sharedPolicyMobileBroadcastChannel) {
+    sharedPolicyMobileBroadcastChannel = supabase.channel(COMMERCIAL_POLICY_CHANNEL_NAME, {
+      config: { broadcast: { ack: true } },
+    });
+    sharedPolicyMobileBroadcastChannel.subscribe();
+  }
+  return sharedPolicyMobileBroadcastChannel;
+}
+
+export async function publishCommercialPolicy(policyData) {
+  try {
+    const policyPayload = {
+      version: policyData.version || `v4.${Date.now().toString().slice(-4)}`,
+      publishedBy: policyData.publishedBy || 'CEO / General Management',
+      publishedAt: new Date().toISOString(),
+      markupBelowThresholdPct: Number(policyData.markupBelowThresholdPct ?? 10.0),
+      markupAboveThresholdPct: Number(policyData.markupAboveThresholdPct ?? 7.0),
+      tierThresholdNaira: Number(policyData.tierThresholdNaira ?? 50000),
+      markupTiers: Array.isArray(policyData.markupTiers) ? policyData.markupTiers : undefined,
+      conciergePackagingPct: Number(policyData.conciergePackagingPct ?? 5.0),
+      conciergeTiers: Array.isArray(policyData.conciergeTiers) ? policyData.conciergeTiers : undefined,
+      boltDeliveryMarkupPct: Number(policyData.boltDeliveryMarkupPct ?? 20.0),
+      standardMerchantCommissionPct: Number(policyData.standardMerchantCommissionPct ?? 7.0),
+      status: 'LIVE_ENFORCED',
+    };
+
+    // 1. Instantly broadcast across Supabase Realtime WebSocket to all mobile apps and dashboards
+    try {
+      const channel = getSharedPolicyMobileChannel();
+      channel.send({
+        type: 'broadcast',
+        event: 'COMMERCIAL_POLICY_UPDATE',
+        payload: policyPayload,
+      });
+    } catch (bcErr) {
+      logNetworkNotice('publishCommercialPolicy broadcast', bcErr);
+    }
+
+    // 2. Solidify into Supabase audit_logs as immutable ledger record
+    const record = {
+      id: `policy-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      action: 'COMMERCIAL_POLICY_UPDATE',
+      user_identifier: 'CEO_MOBILE_DASHBOARD',
+      payload: JSON.stringify(policyPayload),
+    };
+
+    const { data, error } = await supabase
+      .from('audit_logs')
+      .insert(record)
+      .select()
+      .single();
+
+    if (error) {
+      logNetworkNotice('publishCommercialPolicy', error);
+    }
+
+    // 3. Persist locally for immediate offline/hybrid availability
+    try {
+      await AsyncStorage.setItem('getit_cms_business_rules_v1', JSON.stringify(policyPayload));
+    } catch (e) {}
+
+    return policyPayload;
+  } catch (err) {
+    logNetworkNotice('publishCommercialPolicy (critical)', err);
+    return null;
+  }
+}
+
+export function subscribeToCommercialPolicyUpdates(callback) {
+  try {
+    const channelName = `${COMMERCIAL_POLICY_CHANNEL_NAME}_mob_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'broadcast',
+        { event: 'COMMERCIAL_POLICY_UPDATE' },
+        (msg) => {
+          if (msg?.payload && callback) {
+            callback(msg.payload);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'audit_logs' },
+        (payload) => {
+          if (payload?.new?.action === 'COMMERCIAL_POLICY_UPDATE') {
+            try {
+              const parsed = typeof payload.new.payload === 'string'
+                ? JSON.parse(payload.new.payload)
+                : payload.new.payload;
+              if (callback) callback(parsed);
+            } catch (e) {
+              console.warn('Realtime policy parse notice:', e);
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  } catch (err) {
+    logNetworkNotice('subscribeToCommercialPolicyUpdates', err);
+    return () => {};
+  }
+}
+
+
 
 
 

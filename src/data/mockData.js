@@ -591,6 +591,7 @@ export const INITIAL_ORDERS = [
       }
     ],
     productSubtotal: 19650,
+    subtotal: 19650,
     serviceFee: 982.5, // 5% (< ₦30,000)
     serviceFeeRate: 0.05,
     deliveryFee: 1000,
@@ -598,6 +599,9 @@ export const INITIAL_ORDERS = [
     deliveryPlatformMargin: 150,
     paymentProcessingFee: 310, // ~1.5% + ₦100 passed to customer
     totalAmountPaid: 21942.5,
+    total: 21942.5,
+    total_amount: 21942.5,
+    amount: 21942.5,
     paymentMethod: 'Paystack Card / Transfer',
     paymentStatus: 'PAID',
     paymentReference: 'PSTK_LIVE_99812903',
@@ -630,6 +634,7 @@ export const INITIAL_ORDERS = [
       { name: 'Benue Yam Tubers', qty: '5 Large Tubers', estimatedPrice: 15000, completed: false, actualCost: null }
     ],
     productSubtotal: 46500,
+    subtotal: 46500,
     serviceFee: 1860, // 4% (between ₦30k - ₦50k)
     serviceFeeRate: 0.04,
     deliveryFee: 1500,
@@ -637,6 +642,9 @@ export const INITIAL_ORDERS = [
     deliveryPlatformMargin: 300,
     paymentProcessingFee: 797,
     totalAmountPaid: 50657,
+    total: 50657,
+    total_amount: 50657,
+    amount: 50657,
     paymentStatus: 'PAID',
     paymentReference: 'PSTK_MKT_8823192',
     status: 'PREPARING', // Shopper actively in market picking items

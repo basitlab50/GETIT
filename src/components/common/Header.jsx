@@ -60,11 +60,24 @@ export default function Header() {
       {/* 4 Portals Role Switcher */}
       <nav className="role-switcher">
         <button
+          className={`role-tab-btn ${activeRole === 'admin' ? 'active' : ''}`}
+          onClick={() => setActiveRole('admin')}
+        >
+          <ShieldCheck size={16} />
+          <span>GETIT Central Management (MEGAUP)</span>
+          {activeOrdersCount > 0 && (
+            <span className="role-badge-count" style={{ background: '#0284C7' }}>
+              {activeOrdersCount}
+            </span>
+          )}
+        </button>
+
+        <button
           className={`role-tab-btn ${activeRole === 'customer' ? 'active' : ''}`}
           onClick={() => setActiveRole('customer')}
         >
           <ShoppingBag size={16} />
-          <span>Customer App</span>
+          <span>Customer App Preview</span>
           {cartCount > 0 && <span className="role-badge-count">{cartCount}</span>}
         </button>
 
@@ -90,19 +103,6 @@ export default function Header() {
           {riderActiveJobs > 0 && (
             <span className="role-badge-count" style={{ background: '#F59E0B' }}>
               {riderActiveJobs}
-            </span>
-          )}
-        </button>
-
-        <button
-          className={`role-tab-btn ${activeRole === 'admin' ? 'active' : ''}`}
-          onClick={() => setActiveRole('admin')}
-        >
-          <ShieldCheck size={16} />
-          <span>Admin Command Center</span>
-          {activeOrdersCount > 0 && (
-            <span className="role-badge-count" style={{ background: '#0284C7' }}>
-              {activeOrdersCount}
             </span>
           )}
         </button>

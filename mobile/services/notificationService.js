@@ -27,6 +27,25 @@ export function subscribeToInAppNotifications(listener) {
   return () => inAppNotificationListeners.delete(listener);
 }
 
+// Active user & audience context for strict audience separation
+let currentNotificationContext = {
+  role: 'customer',
+  storeId: null,
+  userId: null,
+};
+
+export function setCurrentNotificationContext({ role, storeId, userId }) {
+  currentNotificationContext = {
+    role: role || currentNotificationContext.role,
+    storeId: storeId !== undefined ? storeId : currentNotificationContext.storeId,
+    userId: userId !== undefined ? userId : currentNotificationContext.userId,
+  };
+}
+
+export function getCurrentNotificationContext() {
+  return currentNotificationContext;
+}
+
 // Rate-limiting and deduplication shield to prevent repetitive buzzing
 const recentNotificationTimestamps = new Map();
 let lastVibrationTime = 0;
@@ -247,6 +266,32 @@ export async function triggerNotification({
   type = 'default',
   data = {},
 }) {
+  const targetAudience = data.audience || (data.role === 'merchant' ? 'merchant' : (data.role === 'customer' ? 'buyer' : null));
+  const currentRole = currentNotificationContext.role;
+  const currentStoreId = currentNotificationContext.storeId;
+  const currentUserId = currentNotificationContext.userId;
+
+  // STRICT AUDIENCE ISOLATION (Never cross-talk merchant and customer alerts):
+  // 1. If notification is strictly for merchant (orders to accept/prep, courier at shop):
+  if (targetAudience === 'merchant') {
+    if (currentRole !== 'merchant') {
+      return; // Do not alert customers with merchant alerts
+    }
+    if (data.storeId && currentStoreId && String(data.storeId) !== String(currentStoreId)) {
+      return; // Do not alert merchants for other stores
+    }
+  }
+
+  // 2. If notification is strictly for buyer (order confirmed, on the way, arrived at gate, delivered):
+  if (targetAudience === 'buyer') {
+    if (currentRole === 'merchant') {
+      return; // Do not alert merchants with buyer alerts
+    }
+    if (data.customerId && currentUserId && String(data.customerId) !== String(currentUserId)) {
+      return; // Do not alert buyers for another buyer's order
+    }
+  }
+
   const isChat = type === 'chat' || !!data.messageId || !!data.senderRole;
   const notifKey = data.messageId ? `chat_${data.messageId}` : `${type}_${data.orderId || title}`;
   const now = Date.now();
@@ -303,12 +348,12 @@ export async function triggerNotification({
 // 5. TAILORED ORDER LIFECYCLE EVENT NOTIFIERS
 // =========================================================================
 
-// A. New Order Created (For Buyer & Merchant)
+// A. New Order Created (Separated for Buyer & Merchant)
 export function notifyOrderPlaced(order) {
   // Buyer alert (Strictly for buyer)
   triggerNotification({
     title: '🛍️ Order Confirmed & Paid!',
-    body: `Your provisions from ${order.storeName} (${order.itemsCount || 1} items) are confirmed and being prepared.`,
+    body: `Your provisions from ${order.storeName || 'the store'} (${order.itemsCount || 1} items) are confirmed and being prepared.`,
     type: 'default',
     data: {
       orderId: order.id,
@@ -335,11 +380,12 @@ export function notifyOrderPlaced(order) {
   });
 }
 
-// B. Courier Dispatched to Store (Strictly for buyer)
-export function notifyCourierDispatched(order, riderName = 'Musa Ibrahim') {
+// B. Store Accepts Order & Begins Preparing (Strictly for Buyer)
+export function notifyMerchantOrderAccepted(order, storeName) {
+  const sName = storeName || order.storeName || order.store_name || 'Store';
   triggerNotification({
-    title: '🛵 Courier Dispatched',
-    body: `Courier ${riderName} has been assigned and is riding to ${order.storeName} to collect your packages.`,
+    title: '🍳 Order Accepted!',
+    body: `${sName} has accepted your order and started preparing your items.`,
     type: 'default',
     data: {
       orderId: order.id,
@@ -351,7 +397,59 @@ export function notifyCourierDispatched(order, riderName = 'Musa Ibrahim') {
   });
 }
 
-// C. Order Picked Up & On the Way (Strictly for buyer)
+// C. Store Bags Items & Marks Ready for Courier (Strictly for Buyer)
+export function notifyOrderReadyForCourier(order, storeName) {
+  const sName = storeName || order.storeName || order.store_name || 'Store';
+  triggerNotification({
+    title: '📦 Order Packaged & Ready!',
+    body: `${sName} has bagged your provisions. Courier is heading to the shop for pickup!`,
+    type: 'default',
+    data: {
+      orderId: order.id,
+      status: 'Ready for Pickup',
+      audience: 'buyer',
+      role: 'customer',
+      customerId: order.customerId || order.customer_id,
+    },
+  });
+}
+
+// D. Courier Dispatched to Store (Strictly for Buyer)
+export function notifyCourierDispatched(order, riderName = 'Musa Ibrahim') {
+  triggerNotification({
+    title: '🛵 Courier Dispatched',
+    body: `Courier ${riderName} has been assigned and is riding to ${order.storeName || 'the shop'} to collect your packages.`,
+    type: 'default',
+    data: {
+      orderId: order.id,
+      status: 'Ready for Pickup',
+      audience: 'buyer',
+      role: 'customer',
+      customerId: order.customerId || order.customer_id,
+    },
+  });
+}
+
+// E. Courier Arrived Outside Shop (Strictly for the Store Owner)
+export function notifyCourierArrivedAtShop(order, store) {
+  const storeName = store?.storeName || store?.name || order.storeName || 'your shop';
+  const pickupPin = store?.pickupPin || order.pickupPin || '5821';
+  triggerNotification({
+    title: '🛵 Courier Outside Your Shop!',
+    body: `Musa Ibrahim is outside ${storeName} to collect Order #${order.id}. Handover PIN: ${pickupPin}.`,
+    type: 'merchant_new_order',
+    data: {
+      orderId: order.id,
+      status: 'Ready for Pickup',
+      audience: 'merchant',
+      role: 'merchant',
+      storeId: store?.storeId || store?.id || order.storeId,
+      pickupPin,
+    },
+  });
+}
+
+// F. Order Picked Up & On the Way (Strictly for Buyer)
 export function notifyOrderOnTheWay(order, riderName = 'Musa Ibrahim') {
   triggerNotification({
     title: '🚀 Courier is On the Road!',
@@ -367,11 +465,11 @@ export function notifyOrderOnTheWay(order, riderName = 'Musa Ibrahim') {
   });
 }
 
-// D. Courier Arrived at Door / Gate (Strictly for buyer - NEVER sent to stores)
+// G. Courier Arrived at Door / Gate (Strictly for Buyer)
 export function notifyCourierArrived(order) {
   triggerNotification({
     title: '📍 Courier Has Arrived Outside!',
-    body: `Your courier has arrived at your gate! Give your Delivery PIN (${order.deliveryPin}) to collect your provisions.`,
+    body: `Your courier has arrived outside! Musa is ready with your packages. Delivery PIN: ${order.deliveryPin || '2489'}.`,
     type: 'arrived',
     data: {
       orderId: order.id,
@@ -384,11 +482,12 @@ export function notifyCourierArrived(order) {
   });
 }
 
-// E. Order Delivered & Review Reminder (Strictly for buyer - NEVER sent to stores)
+// H. Order Delivered Successfully (Buyer & Merchant confirmations)
 export function notifyOrderDelivered(order) {
+  // Buyer alert
   triggerNotification({
     title: '✅ Order Delivered Successfully!',
-    body: `Your provisions from ${order.storeName} have been delivered. Tap here to rate your food & courier!`,
+    body: `Your provisions from ${order.storeName || 'the store'} have been delivered. Tap here to rate your food & courier!`,
     type: 'default',
     data: {
       orderId: order.id,
@@ -396,6 +495,20 @@ export function notifyOrderDelivered(order) {
       audience: 'buyer',
       role: 'customer',
       customerId: order.customerId || order.customer_id,
+    },
+  });
+
+  // Merchant alert
+  triggerNotification({
+    title: '🎉 Order Completed & Delivered!',
+    body: `Order #${order.id} was handed over to the customer. Delivery completed!`,
+    type: 'merchant_new_order',
+    data: {
+      orderId: order.id,
+      status: 'Delivered',
+      audience: 'merchant',
+      role: 'merchant',
+      storeId: order.storeId || order.store_id,
     },
   });
 }
@@ -499,6 +612,38 @@ export function notifyItemRefunded(order, item, refundAmount) {
       audience: 'buyer',
       role: 'customer',
       customerId: order.customerId || order.customer_id,
+    },
+  });
+}
+
+// J2. Out of Stock Resolution Request (Strictly for buyer: explore shops or refund)
+export function notifyOutOfStockProposed(order, item, refundAmount) {
+  const storeName = order.storeName || order.store_name || 'Store';
+  triggerNotification({
+    title: `⚠️ ${storeName}: Item Out of Stock`,
+    body: `${item.name} is out of stock. Tap to explore alternative nearby shops or accept a ₦${Number(refundAmount).toLocaleString()} refund!`,
+    type: 'default',
+    data: {
+      orderId: order.id,
+      audience: 'buyer',
+      role: 'customer',
+      customerId: order.customerId || order.customer_id,
+    },
+  });
+}
+
+// J3. Out of Stock Resolution Decision (Strictly for merchant)
+export function notifyOutOfStockDecision(order, item, decisionText, isStoreSwitch = false) {
+  const title = isStoreSwitch ? '🔄 Order Re-routed / Switched' : '💳 Item Refund Accepted';
+  triggerNotification({
+    title,
+    body: decisionText,
+    type: 'merchant_new_order',
+    data: {
+      orderId: order.id,
+      audience: 'merchant',
+      role: 'merchant',
+      storeId: order.storeId || order.store_id,
     },
   });
 }

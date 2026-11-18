@@ -18,6 +18,8 @@
       "bundleIdentifier": "ng.getit.mobile",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "GETIT uses your location to show available provision stores in Abuja and deliver orders to your doorstep.",
+        "NSCameraUsageDescription": "GETIT needs camera access so you can photograph and upload medical prescriptions.",
+        "NSPhotoLibraryUsageDescription": "GETIT needs photo library access so you can upload medical prescriptions and profile pictures.",
         "UIBackgroundModes": [
           "remote-notification"
         ]
@@ -34,7 +36,8 @@
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "CAMERA"
       ]
     },
     "web": {
@@ -55,6 +58,13 @@
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Allow GETIT to access your location to show stores and track delivery couriers in real time."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow GETIT to access your photos so you can upload medical prescriptions or store profile images.",
+          "cameraPermission": "Allow GETIT to use your camera to photograph prescriptions."
         }
       ]
     ],

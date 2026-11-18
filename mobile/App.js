@@ -23,6 +23,7 @@ import {
   KeyboardAvoidingView,
   Share,
   Vibration,
+  Switch,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, Polyline } from 'react-native-maps';
@@ -40,6 +41,7 @@ import {
   AudioModule,
 } from 'expo-audio';
 import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
+import { sendSmsOtp, sendEmailOtp } from './services/otpDispatchService';
 import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
 import { REAL_ROAD_LEGS, REAL_ROAD_POINTS, REAL_ROAD_WAYPOINTS } from './realRoadRouteData';
 import {
@@ -71,14 +73,57 @@ import {
   sendOrderChatMessage,
   getOrderChatMessages,
   ensureLiveBroadcastConnected,
+  getMarketplaceTaxonomy,
+  saveMarketplaceTaxonomy,
+  getMerchantCategoryRequests,
+  submitMerchantCategoryRequest,
+  saveMerchantCategoryRequests,
+  deduplicateAndCleanStores,
+  fetchActiveCommercialPolicy,
+  publishCommercialPolicy,
+  subscribeToCommercialPolicyUpdates,
 } from './services/supabaseService';
+import {
+  DEFAULT_MARKETPLACE_TAXONOMY,
+  DEFAULT_STORE_TYPES,
+  DEFAULT_PRODUCT_SPOTLIGHTS,
+  DEFAULT_MARKETPLACE_DEPARTMENTS,
+  SPECIALIST_SHOWCASE_STORES,
+  REMOVED_TEST_STORE_IDS,
+  CATEGORY_STORE_COVER_GALLERY,
+  getCategoryCoverOptions,
+  getDefaultStoreCoverImage,
+  getStoreAllowedCatalogData,
+  classifyProductIntoTaxonomy,
+  normalizeStoreTaxonomyProfile,
+  evaluateStoreAgainstTaxonomyFilter,
+} from './data/marketplaceTaxonomy';
+import {
+  COMPANY_IDENTITY,
+  PERMISSION_ACTIONS,
+  CENTRAL_DASHBOARD_MODULES,
+  INITIAL_TERRITORIES,
+  INITIAL_STAFF_ACCOUNTS,
+  INITIAL_BUSINESS_RULES,
+  INITIAL_APPROVAL_REQUESTS,
+  INITIAL_AUDIT_LOGS,
+  INITIAL_MERCHANT_SETTLEMENTS,
+  INITIAL_FIELD_TASKS,
+  canStaffPerform,
+  getAuthorizedDashboardsForStaff,
+  buildImmutableAuditLog,
+} from './data/centralManagementSystem';
 import {
   registerForPushNotificationsAsync,
   subscribeToInAppNotifications,
+  setCurrentNotificationContext,
   triggerNotification,
   playAudioBeep,
   notifyOrderPlaced,
+  notifyMerchantOrderAccepted,
+  notifyOrderReadyForCourier,
   notifyCourierDispatched,
+  notifyCourierArrivedAtShop,
   notifyOrderOnTheWay,
   notifyCourierArrived,
   notifyOrderDelivered,
@@ -87,6 +132,8 @@ import {
   notifyReplacementProposed,
   notifyReplacementDecision,
   notifyItemRefunded,
+  notifyOutOfStockProposed,
+  notifyOutOfStockDecision,
   notifyNewChatMessage,
 } from './services/notificationService';
 import {
@@ -620,15 +667,19 @@ const CATEGORIES = [
 ];
 
 // --- High-Performance Image Optimization & CDN Cache Resizer ---
-function optimizeImageUrl(url, width = 500, quality = 65) {
-  if (!url || typeof url !== 'string') return url;
-  if (url.includes('images.unsplash.com')) {
-    let clean = url.replace(/([?&])(w|q|auto|fit|fm)=[^&]*/gi, '');
-    clean = clean.replace(/\?&/g, '?').replace(/&&+/g, '&').replace(/[?&]$/, '');
-    const sep = clean.includes('?') ? '&' : '?';
-    return `${clean}${sep}auto=format&fit=crop&w=${width}&q=${quality}&fm=webp`;
+const DEFAULT_STORE_COVER_IMAGE =
+  'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80';
+
+function optimizeImageUrl(url, width = 800, quality = 80) {
+  if (!url || typeof url !== 'string' || !url.trim()) {
+    return DEFAULT_STORE_COVER_IMAGE;
   }
-  return url;
+  const trimmed = url.trim();
+  if (trimmed.includes('images.unsplash.com')) {
+    const base = trimmed.split('?')[0].split('&')[0];
+    return `${base}?auto=format&fit=crop&w=${width}&q=${quality}`;
+  }
+  return trimmed;
 }
 
 // --- Curated Luxury Store Cover Photo Presets ---
@@ -683,15 +734,32 @@ const STORES_AROUND_ME = [
     id: 'store-1792192743654',
     name: 'Mega Stores',
     storeType: 'grocery',
+    storeTypeFormat: 'supermarket',
+    storeTypeLabel: 'Supermarket & Hypermarket',
+    primaryDepartmentId: 'grocery',
+    additionalDepartmentIds: [
+      'drinks_beverages',
+    ],
+    specialisationSubcategories: [
+      'cooking_pantry',
+      'pasta_noodles_canned',
+      'dairy_breakfast_cereals',
+      'biscuits_snacks_sweets',
+    ],
+    specialisationProducts: [
+      'spaghetti_macaroni',
+      'milk_powder_liquid',
+      'vegetable_olive_oil',
+    ],
     category: 'gourmet',
-    categoryLabel: 'Gourmet Groceries & Provisions',
+    categoryLabel: 'Supermarket & Hypermarket',
     rating: 5.0,
     reviewCount: 'Verified',
     distance: '0.8 km',
     deliveryTime: '15-25 min',
     deliveryFee: '₦1,200',
     freeDeliveryThreshold: 25000,
-    tag: 'FEATURED MEGA STORE',
+    tag: 'SUPERMARKET',
     badgeColor: COLORS.emeraldPrimary,
     address: 'Plot 14 Gana Street, Maitama',
     district: 'Maitama, Abuja',
@@ -708,6 +776,7 @@ const STORES_AROUND_ME = [
     is_open: true,
     products: [],
   },
+  ...SPECIALIST_SHOWCASE_STORES,
 ];
 
 // --- Financial formatting helper ---
@@ -835,12 +904,16 @@ function parseInventoryText(text) {
         if (name && price > 0) {
           const { category, icon } = guessCategoryAndIcon(name, cat);
           const autoMatchedImage = matchCatalogImageByName(name);
+          const taxonomyMatch = classifyProductIntoTaxonomy({ name, category });
           products.push({
             id: `imp-${Math.random().toString(36).substr(2, 7)}-${Date.now().toString().slice(-4)}`,
             name,
             price,
-            category,
-            icon,
+            category: taxonomyMatch?.subcategoryLabel || category,
+            departmentId: taxonomyMatch?.departmentId || 'grocery',
+            subcategoryId: taxonomyMatch?.subcategoryId || 'pantry_provisions',
+            varietyId: taxonomyMatch?.varietyId || '',
+            icon: taxonomyMatch?.departmentIcon || icon,
             imageUrl: autoMatchedImage || null,
             imageUri: autoMatchedImage || null,
             outOfStock: false,
@@ -882,12 +955,16 @@ function parseInventoryText(text) {
         const cleanName = name.replace(/^["']|["']$/g, '');
         const { category, icon } = guessCategoryAndIcon(cleanName, catPart);
         const autoMatchedImage = matchCatalogImageByName(cleanName);
+        const taxonomyMatch = classifyProductIntoTaxonomy({ name: cleanName, category });
         products.push({
           id: `imp-${Math.random().toString(36).substr(2, 7)}-${Date.now().toString().slice(-4)}`,
           name: cleanName,
           price,
-          category,
-          icon,
+          category: taxonomyMatch?.subcategoryLabel || category,
+          departmentId: taxonomyMatch?.departmentId || 'grocery',
+          subcategoryId: taxonomyMatch?.subcategoryId || 'pantry_provisions',
+          varietyId: taxonomyMatch?.varietyId || '',
+          icon: taxonomyMatch?.departmentIcon || icon,
           imageUrl: autoMatchedImage || null,
           imageUri: autoMatchedImage || null,
           outOfStock: false,
@@ -1199,26 +1276,44 @@ function MerchantStraightLineTracker({ order, currentStore }) {
   const storeLat = Number(myStop?.latitude || currentStore?.coordinates?.latitude || 9.0882);
   const storeLng = Number(myStop?.longitude || currentStore?.coordinates?.longitude || 7.4933);
 
-  const currentRiderStop = order.currentStopIndex || 0;
-  const isMyStopCompleted = myStop?.pickupStatus === 'picked_up' || currentRiderStop > myStopIndex;
+  const firstUnpickedIdx = stops.findIndex(
+    (st) => st.pickupStatus !== 'picked_up' && st.status !== 'Completed'
+  );
+  const maxAllowedStopIdx = firstUnpickedIdx === -1 ? stops.length : firstUnpickedIdx;
+  const currentRiderStop = Math.min(Math.max(0, order.currentStopIndex || 0), maxAllowedStopIdx);
+  const isMyStopCompleted = myStop?.pickupStatus === 'picked_up' || myStop?.status === 'Completed' || currentRiderStop > myStopIndex;
+  const isCourierDispatched = order.status === 'On the Way' && Boolean(order.boltRider?.name);
 
   let accurateRemainingKm = 0;
   let activeRoadProgress = 0;
 
-  const roadLegs = order.roadLegs && Array.isArray(order.roadLegs) && order.roadLegs.length > 0 ? order.roadLegs : null;
+  const expectedLegsCount = Math.max(1, stops.length) + 1;
+  const roadLegs =
+    order.roadLegs &&
+    Array.isArray(order.roadLegs) &&
+    order.roadLegs.length === expectedLegsCount
+      ? order.roadLegs
+      : null;
 
-  if (isMyStopCompleted) {
+  const MS_PER_POINT = 2000;
+
+  if (!isCourierDispatched && !isMyStopCompleted) {
+    accurateRemainingKm = 1.2;
+    activeRoadProgress = 0;
+  } else if (isMyStopCompleted) {
     accurateRemainingKm = 0;
     activeRoadProgress = 1.0;
   } else if (roadLegs) {
-    // In multi-stop route:
-    // Leg 0: Waypoint 0 (Store 0) -> Waypoint 1 (Store 1)
-    // Leg 1: Waypoint 1 (Store 1) -> Waypoint 2 (Home or Store 2)
+    // Full multi-stop route legs:
+    // Leg 0: Rider Origin -> Stop 0 (1st Store)
+    // Leg 1: Stop 0 -> Stop 1 (2nd Store or Customer Home)
+    // Leg N: Last Store -> Customer Home
     const legIdxToMe = myStopIndex;
     const activeLeg = roadLegs[currentRiderStop] || roadLegs[0] || [];
-    const elapsedTrackerIdx = order.legStartedAt
-      ? Math.min(activeLeg.length - 1, Math.floor((Date.now() - order.legStartedAt) / 3000))
-      : (order.roadPointIndex || 0);
+    const elapsedTrackerIdx =
+      order.legStartedAt && order.legStartedAt > 0
+        ? Math.min(activeLeg.length - 1, Math.floor(Math.max(0, Date.now() - order.legStartedAt) / MS_PER_POINT))
+        : (order.roadPointIndex || 0);
     const roadPtIdx = Math.min(Math.max(elapsedTrackerIdx, order.roadPointIndex || 0), Math.max(0, activeLeg.length - 1));
 
     if (currentRiderStop === legIdxToMe) {
@@ -1244,55 +1339,66 @@ function MerchantStraightLineTracker({ order, currentStore }) {
       }
       const hopFallback = Number(myStop?.distanceFromPrevKm) || 1.8;
       accurateRemainingKm = remCurrentLeg + (intermediateKm > 0.1 ? intermediateKm : hopFallback);
-      activeRoadProgress = Math.min(0.9, Math.max(0.1, roadPtIdx / Math.max(1, activeLeg.length - 1)));
+      activeRoadProgress = Math.min(1.0, Math.max(0, roadPtIdx / Math.max(1, activeLeg.length - 1)));
     } else {
       accurateRemainingKm = 0;
       activeRoadProgress = 1.0;
     }
   } else {
-    // Fallback if roadLegs are direct or pending
-    const riderLat = Number(order.boltCoords?.latitude || (stops[0]?.latitude ? Number(stops[0].latitude) - 0.012 : 9.0762));
-    const riderLng = Number(order.boltCoords?.longitude || (stops[0]?.longitude ? Number(stops[0].longitude) - 0.010 : 7.4833));
+    // Fallback if roadLegs are direct or pending (matches 31-point buildDirectLegsBetweenWaypoints)
+    const riderLat = Number(order.boltCoords?.latitude || (stops[0]?.latitude ? Number(stops[0].latitude) - 0.0072 : 9.0762));
+    const riderLng = Number(order.boltCoords?.longitude || (stops[0]?.longitude ? Number(stops[0].longitude) - 0.0065 : 7.4833));
 
     const directKm = calcDist(riderLat, riderLng, storeLat, storeLng);
-    // Real road distance in city grid is ~1.4x straight line
     const roadEstimatedKm = directKm * 1.4;
+    const legPoints = 31;
+    const elapsedFallbackIdx =
+      order.legStartedAt && order.legStartedAt > 0
+        ? Math.min(legPoints - 1, Math.floor(Math.max(0, Date.now() - order.legStartedAt) / MS_PER_POINT))
+        : (order.roadPointIndex || 0);
+    const roadIdx = Math.min(Math.max(elapsedFallbackIdx, order.roadPointIndex || 0), legPoints - 1);
 
-    if (hasPriorStops && currentRiderStop === 0) {
+    if (hasPriorStops && currentRiderStop < myStopIndex) {
       const priorHop = Number(myStop?.distanceFromPrevKm) || 1.6;
       accurateRemainingKm = Math.max(roadEstimatedKm, priorHop + 0.8);
-      activeRoadProgress = 0.25;
+      activeRoadProgress = Math.min(1.0, Math.max(0, roadIdx / (legPoints - 1)));
     } else {
       accurateRemainingKm = roadEstimatedKm;
-      const legPoints = (order.roadLegs && order.roadLegs[0]?.length) || 30;
-      const elapsedFallbackIdx = order.legStartedAt
-        ? Math.min(legPoints - 1, Math.floor((Date.now() - order.legStartedAt) / 2000))
-        : (order.roadPointIndex || 0);
-      const roadIdx = Math.min(Math.max(elapsedFallbackIdx, order.roadPointIndex || 0), legPoints - 1);
-      activeRoadProgress = Math.min(1.0, Math.max(0.08, roadIdx / legPoints));
+      activeRoadProgress = Math.min(1.0, Math.max(0, roadIdx / (legPoints - 1)));
     }
   }
 
-  // Threshold: under 60 meters, active road progress completed, or marked completed
-  const isAtShop = accurateRemainingKm < 0.06 || isMyStopCompleted || activeRoadProgress >= 0.98;
-  const distText = isAtShop
-    ? 'Arrived at shop'
-    : accurateRemainingKm < 1
-      ? Math.round(accurateRemainingKm * 1000) + 'm away'
-      : accurateRemainingKm.toFixed(1) + ' km away';
+  // Threshold: arrived only when rider is on this shop's leg and has reached the shop (or completed)
+  const isAtShop =
+    isMyStopCompleted ||
+    (isCourierDispatched && currentRiderStop === myStopIndex && (accurateRemainingKm < 0.05 || activeRoadProgress >= 0.98 || order.boltStatus === 'AT_STORE'));
+  const distText = !isCourierDispatched && !isMyStopCompleted
+    ? 'Scanning fleet...'
+    : isAtShop
+      ? 'Arrived at shop'
+      : accurateRemainingKm < 1
+        ? Math.round(accurateRemainingKm * 1000) + 'm away'
+        : accurateRemainingKm.toFixed(1) + ' km away';
 
   // Realistic city transit speed (22 km/h) accounts for turns, traffic, and intersections
   const allocatedMins = Math.max(1, Math.round((accurateRemainingKm / 22) * 60));
-  const etaText = isAtShop ? 'Arrived outside' : '~' + allocatedMins + ' min' + (allocatedMins === 1 ? '' : 's');
+  const etaText = !isCourierDispatched && !isMyStopCompleted
+    ? 'Matching rider'
+    : isAtShop
+      ? 'Arrived outside'
+      : '~' + allocatedMins + ' min' + (allocatedMins === 1 ? '' : 's');
 
   let bikePercent = 0;
   let statusMessage = '';
 
-  if (!hasPriorStops) {
+  if (!isCourierDispatched && !isMyStopCompleted) {
+    bikePercent = 0;
+    statusMessage = '📡 Scanning nearby courier fleet to dispatch a rider to your shop...';
+  } else if (!hasPriorStops) {
     // Single Direct Leg: First shop sees a direct straight line from Rider to Shop
     if (isAtShop) {
       bikePercent = 100; // Lands EXACTLY at the shop node!
-      statusMessage = '🛵 Courier Musa has arrived outside! Handover PIN: ' + (order.pickupPin || '5821');
+      statusMessage = '🛵 Courier Musa has arrived outside! Handover PIN: ' + (myStop?.pickupPin || order.pickupPin || '5821');
     } else {
       bikePercent = Math.min(100, Math.max(0, Math.round(activeRoadProgress * 100)));
       statusMessage = '🚴 Courier Musa is en route directly to your shop (' + distText + ')';
@@ -1300,7 +1406,7 @@ function MerchantStraightLineTracker({ order, currentStore }) {
   } else {
     // Multi-Stop Leg: Second shop sees the intermediate stop before their store
     const firstStopName = priorStops[0]?.storeName || '1st Shop';
-    const isFirstStopDone = currentRiderStop > 0 || (priorStops[0]?.pickupStatus === 'picked_up');
+    const isFirstStopDone = currentRiderStop >= myStopIndex || (priorStops.every((ps) => ps.pickupStatus === 'picked_up' || ps.status === 'Completed'));
 
     if (!isFirstStopDone) {
       // Rider is still heading to or at the 1st stop (0% to 50% milestone)
@@ -1310,7 +1416,7 @@ function MerchantStraightLineTracker({ order, currentStore }) {
       // 1st stop is done! Rider is on the leg to this shop (50% to 100%)
       if (isAtShop) {
         bikePercent = 100; // Lands EXACTLY at the shop node!
-        statusMessage = '🛵 Courier Musa has arrived outside! Handover PIN: ' + (order.pickupPin || '5821');
+        statusMessage = '🛵 Courier Musa has arrived outside! Handover PIN: ' + (myStop?.pickupPin || order.pickupPin || '5821');
       } else {
         bikePercent = Math.min(100, Math.max(50, 50 + Math.round(activeRoadProgress * 50)));
         statusMessage = '🚀 1st stop completed! Musa is riding directly to your shop (' + distText + ')';
@@ -1320,7 +1426,7 @@ function MerchantStraightLineTracker({ order, currentStore }) {
 
   // Clamped bike percentage smoothly between 0% and 100% so the motto touches the shop node exactly
   const clampedBikePercent = isAtShop ? 100 : Math.min(100, Math.max(0, bikePercent));
-  const isFirstStopDone = currentRiderStop > 0 || (priorStops[0]?.pickupStatus === 'picked_up');
+  const isFirstStopDone = currentRiderStop >= myStopIndex || (priorStops.length > 0 && priorStops.every((ps) => ps.pickupStatus === 'picked_up' || ps.status === 'Completed'));
   const storeDisplay = currentStore?.name || myStop?.storeName || 'Your Shop';
 
   return (
@@ -1340,7 +1446,7 @@ function MerchantStraightLineTracker({ order, currentStore }) {
       <View style={styles.mStraightRiderRow}>
         <Text style={styles.mStraightRiderText} numberOfLines={1}>
           Rider: <Text style={{ color: '#F8FAFC', fontWeight: '700' }}>{order.boltRider?.name || 'Musa Ibrahim'}</Text>
-          {order.boltRider?.vehicle ? ' (' + order.boltRider.vehicle.split(' ')[0] + ')' : ''}
+          {order.boltRider?.vehicle && typeof order.boltRider.vehicle === 'string' ? ' (' + (order.boltRider.vehicle || '').split(' ')[0] + ')' : ''}
         </Text>
         <View style={styles.mStraightPinBadge}>
           <Text style={styles.mStraightPinBadgeText}>
@@ -1512,8 +1618,9 @@ export default function App() {
   const [customProductCategory, setCustomProductCategory] = useState('Pantry');
   const [customProductIcon, setCustomProductIcon] = useState('🛍️');
   const [customProductImage, setCustomProductImage] = useState(null);
-  // Merchant Inventory Search & Product Editing State
+  // Merchant Inventory Search, Stock Status Filter & Product Editing State
   const [merchantInventorySearch, setMerchantInventorySearch] = useState('');
+  const [merchantInventoryStockFilter, setMerchantInventoryStockFilter] = useState('all'); // 'all' | 'in_stock' | 'out_of_stock'
   const [editProductModalVisible, setEditProductModalVisible] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [editProductName, setEditProductName] = useState('');
@@ -1691,6 +1798,34 @@ export default function App() {
   const [authSellerPharmacistLicenseNo, setAuthSellerPharmacistLicenseNo] = useState('');
   const [authSellerPharmacistQualification, setAuthSellerPharmacistQualification] = useState('');
 
+  // --- OTP AUTHENTICATION SYSTEM (BUYER & MERCHANT - DUAL PHONE & EMAIL) ---
+  const [authMethod, setAuthMethod] = useState('otp'); // 'otp' | 'password'
+  const [otpStep, setOtpStep] = useState('input'); // 'input' | 'verify'
+  const [generatedOtp, setGeneratedOtp] = useState('');
+  const [enteredOtp, setEnteredOtp] = useState('');
+  const [otpTargetIdentifier, setOtpTargetIdentifier] = useState('');
+  const [otpChannel, setOtpChannel] = useState('phone'); // 'phone' | 'email'
+  const otpTargetPhone = otpTargetIdentifier; // alias for backwards compatibility
+  const setOtpTargetPhone = setOtpTargetIdentifier; // alias for backwards compatibility
+  const [otpTargetRole, setOtpTargetRole] = useState('buyer'); // 'buyer' | 'seller'
+  const [otpTargetMode, setOtpTargetMode] = useState('signin'); // 'signin' | 'signup'
+  const [otpCountdown, setOtpCountdown] = useState(30);
+  const [otpBannerMsg, setOtpBannerMsg] = useState('');
+  const [pendingSignupPayload, setPendingSignupPayload] = useState(null);
+
+  // OTP Countdown Timer
+  useEffect(() => {
+    let timer = null;
+    if (otpStep === 'verify' && otpCountdown > 0) {
+      timer = setInterval(() => {
+        setOtpCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [otpStep, otpCountdown]);
+
   // Smooth Animations
   const authFadeAnim = useRef(new Animated.Value(1)).current;
   const authSlideAnim = useRef(new Animated.Value(0)).current;
@@ -1781,6 +1916,61 @@ export default function App() {
   const [replaceSearchQuery, setReplaceSearchQuery] = useState('');
   const [replaceCategoryFilter, setReplaceCategoryFilter] = useState('ALL');
   const [customerDismissedReplacementId, setCustomerDismissedReplacementId] = useState(null);
+  const [customerDismissedOutOfStockId, setCustomerDismissedOutOfStockId] = useState(null);
+  const [selectedAlternativeIndex, setSelectedAlternativeIndex] = useState(0);
+  const resolvedProposalIdsRef = useRef(new Set());
+  const lastOrderMutationTimestampRef = useRef({});
+
+  const isProposalResolvedStatus = (status) =>
+    status === 'switched_full' ||
+    status === 'switched_multistore' ||
+    status === 'refunded' ||
+    status === 'accepted' ||
+    status === 'declined' ||
+    status === 'resolved';
+
+  const mergeProposalField = (localProp, incomingProp) => {
+    if (!localProp && !incomingProp) return null;
+    if (localProp?.id && isProposalResolvedStatus(localProp.status)) {
+      resolvedProposalIdsRef.current.add(localProp.id);
+    }
+    if (incomingProp?.id && isProposalResolvedStatus(incomingProp.status)) {
+      resolvedProposalIdsRef.current.add(incomingProp.id);
+    }
+    // 1. If incoming is explicitly resolved, always accept the resolved state
+    if (incomingProp && typeof incomingProp === 'object' && isProposalResolvedStatus(incomingProp.status)) {
+      return incomingProp;
+    }
+    // 2. If local is already resolved and incoming is the same proposal (or has no id) still marked 'pending', keep local resolved!
+    const isSameProposal = !incomingProp?.id || !localProp?.id || incomingProp.id === localProp.id;
+    if (
+      localProp &&
+      typeof localProp === 'object' &&
+      isProposalResolvedStatus(localProp.status) &&
+      (!incomingProp || (isSameProposal && incomingProp.status === 'pending'))
+    ) {
+      return localProp;
+    }
+    // 3. If incoming is 'pending' but its ID was already resolved on this device, never let it revert to 'pending'
+    if (
+      incomingProp &&
+      typeof incomingProp === 'object' &&
+      incomingProp.status === 'pending' &&
+      incomingProp.id &&
+      resolvedProposalIdsRef.current.has(incomingProp.id)
+    ) {
+      return localProp && isProposalResolvedStatus(localProp.status)
+        ? localProp
+        : { ...incomingProp, status: 'resolved' };
+    }
+    if (incomingProp && typeof incomingProp === 'object' && incomingProp.status) {
+      return incomingProp;
+    }
+    if (localProp && typeof localProp === 'object' && localProp.status) {
+      return localProp;
+    }
+    return incomingProp !== undefined ? incomingProp : (localProp || null);
+  };
 
   // --- STORE OPERATING SCHEDULE & TIMING STATE ---
   const [timingModalVisible, setTimingModalVisible] = useState(false);
@@ -1796,7 +1986,8 @@ export default function App() {
   const [tempOperatingDays, setTempOperatingDays] = useState('Weekends Only');
 
   const openTimingModal = () => {
-    const activeStore = storesList.find((s) => s.id === merchantStoreId) || currentMerchantStore || storesList[0];
+    const activeStore = currentMerchantStore || (merchantStoreId ? storesList.find((s) => s.id === merchantStoreId) : null);
+    if (!activeStore) return;
     const activeIs24 = activeStore?.is24Hours !== undefined ? activeStore.is24Hours : storeTiming.is24Hours;
     const activeOpen = activeStore?.openTime || storeTiming.openTime || '08:00 AM';
     const activeClose = activeStore?.closeTime || storeTiming.closeTime || '10:00 PM';
@@ -1841,6 +2032,7 @@ export default function App() {
   const [storeImageModalVisible, setStoreImageModalVisible] = useState(false);
   const [customStoreImageUrl, setCustomStoreImageUrl] = useState('');
   const [editStoreModalVisible, setEditStoreModalVisible] = useState(false);
+  const [editStoreActiveSection, setEditStoreActiveSection] = useState('all'); // 'all' | 'identity' | 'photo' | 'location' | 'bio' | 'chat'
   const [editStoreName, setEditStoreName] = useState('');
   const [editStoreAddress, setEditStoreAddress] = useState('');
   const [editStoreCategory, setEditStoreCategory] = useState('');
@@ -1850,6 +2042,7 @@ export default function App() {
   const [editStoreImage, setEditStoreImage] = useState('');
   const [editStoreLatitude, setEditStoreLatitude] = useState(9.0882);
   const [editStoreLongitude, setEditStoreLongitude] = useState(7.4933);
+  const [editStoreAllowMessaging, setEditStoreAllowMessaging] = useState(true);
   const [storeMapModalVisible, setStoreMapModalVisible] = useState(false);
   const [storeMapRegion, setStoreMapRegion] = useState({
     latitude: 9.0882,
@@ -1860,25 +2053,401 @@ export default function App() {
   const [storeDisplayMode, setStoreDisplayMode] = useState('list'); // 'list' | 'map'
   const [selectedMapStore, setSelectedMapStore] = useState(null);
 
-  // High performance memoized filtered suggested catalog
+  // --- 3-LEVEL MARKETPLACE TAXONOMY, SPECIALISATION & ADMIN MANAGEMENT STATE ---
+  const [marketplaceTaxonomy, setMarketplaceTaxonomy] = useState(DEFAULT_MARKETPLACE_TAXONOMY);
+  const [categoryRequests, setCategoryRequests] = useState([]);
+
+  // Customer Dual Shopping Mode (Option A: By Product Category | Option B: By Store Type)
+  const [customerBrowseMode, setCustomerBrowseMode] = useState('product'); // 'product' | 'store_type'
+  const [activeDepartmentId, setActiveDepartmentId] = useState('all');
+  const [activeSubcategoryId, setActiveSubcategoryId] = useState('all');
+  const [activeVarietyId, setActiveVarietyId] = useState('all');
+  const [activeStoreTypeFilter, setActiveStoreTypeFilter] = useState('all');
+
+  // Guided 3-Step Merchant Registration Wizard State
+  const [regWizardStep, setRegWizardStep] = useState(1); // 1 | 2 | 3
+  const [regPrimaryDepartmentId, setRegPrimaryDepartmentId] = useState('grocery');
+  const [regStoreTypeFormat, setRegStoreTypeFormat] = useState('supermarket');
+  const [regSelectedSubcategories, setRegSelectedSubcategories] = useState(['pantry_provisions', 'dairy_eggs']);
+  const [regSelectedVarieties, setRegSelectedVarieties] = useState([]);
+  const [regSellsOtherDepartments, setRegSellsOtherDepartments] = useState(false);
+  const [regAdditionalDepartments, setRegAdditionalDepartments] = useState([]);
+  const [regPremisesLicenseNo, setRegPremisesLicenseNo] = useState('');
+  const [regDispensingScope, setRegDispensingScope] = useState(['otc', 'rx_prescription', 'tele_consult']);
+  const [regStoreCoverImage, setRegStoreCoverImage] = useState(
+    CATEGORY_STORE_COVER_GALLERY.grocery?.[0]?.url || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80'
+  );
+  const [regHasCustomCoverImage, setRegHasCustomCoverImage] = useState(false);
+  const [newStoreCoverImage, setNewStoreCoverImage] = useState(
+    CATEGORY_STORE_COVER_GALLERY.grocery?.[0]?.url || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80'
+  );
+  const [newStoreHasCustomCover, setNewStoreHasCustomCover] = useState(false);
+
+  // Store Location & GPS Coordinates State for Merchant Registration
+  const [regStoreDistrict, setRegStoreDistrict] = useState('Maitama District, Abuja');
+  const [regStoreLatitude, setRegStoreLatitude] = useState(9.0882);
+  const [regStoreLongitude, setRegStoreLongitude] = useState(7.4933);
+  const [regStoreMapRegion, setRegStoreMapRegion] = useState({
+    latitude: 9.0882,
+    longitude: 7.4933,
+    latitudeDelta: 0.01,
+    longitudeDelta: 0.01,
+  });
+  const [regMapModalVisible, setRegMapModalVisible] = useState(false);
+  const [isFetchingRegGps, setIsFetchingRegGps] = useState(false);
+  const [newStoreLatitude, setNewStoreLatitude] = useState(9.0882);
+  const [newStoreLongitude, setNewStoreLongitude] = useState(7.4933);
+  const regMiniMapRef = useRef(null);
+  const regFullMapRef = useRef(null);
+  const createStoreMiniMapRef = useRef(null);
+
+  const REGISTRATION_STORE_DISTRICTS = [
+    { label: 'Maitama', district: 'Maitama District, Abuja', city: 'Abuja', latitude: 9.0882, longitude: 7.4933 },
+    { label: 'Wuse 2', district: 'Wuse 2, Abuja', city: 'Abuja', latitude: 9.0792, longitude: 7.4721 },
+    { label: 'Gwarinpa', district: 'Gwarinpa Estate, Abuja', city: 'Abuja', latitude: 9.1085, longitude: 7.3912 },
+    { label: 'Jabi', district: 'Jabi District, Abuja', city: 'Abuja', latitude: 9.0684, longitude: 7.4265 },
+    { label: 'Asokoro', district: 'Asokoro Presidential Wing, Abuja', city: 'Abuja', latitude: 9.0435, longitude: 7.5218 },
+    { label: 'Garki', district: 'Garki District, Abuja', city: 'Abuja', latitude: 9.0354, longitude: 7.4891 },
+    { label: 'Utako', district: 'Utako District, Abuja', city: 'Abuja', latitude: 9.0578, longitude: 7.4412 },
+    { label: 'Guzape', district: 'Guzape District, Abuja', city: 'Abuja', latitude: 9.0221, longitude: 7.5142 },
+    { label: 'Katampe', district: 'Katampe, Abuja', city: 'Abuja', latitude: 9.1215, longitude: 7.4561 },
+    { label: 'Apo', district: 'Apo, Abuja', city: 'Abuja', latitude: 8.9954, longitude: 7.5023 },
+    { label: 'CBD', district: 'Central Business District, Abuja', city: 'Abuja', latitude: 9.0578, longitude: 7.4951 },
+    { label: 'Kubwa', district: 'Kubwa, Abuja', city: 'Abuja', latitude: 9.1538, longitude: 7.3220 },
+    { label: 'Lugbe', district: 'Lugbe, Abuja', city: 'Abuja', latitude: 8.9868, longitude: 7.3624 },
+    { label: 'VI Lagos', district: 'Victoria Island, Lagos', city: 'Lagos', latitude: 6.4281, longitude: 3.4219 },
+    { label: 'Lekki Ph1', district: 'Lekki Phase 1, Lagos', city: 'Lagos', latitude: 6.4474, longitude: 3.4735 },
+    { label: 'Ikoyi', district: 'Ikoyi Crescent, Lagos', city: 'Lagos', latitude: 6.4549, longitude: 3.4346 },
+    { label: 'Ikeja GRA', district: 'Ikeja GRA, Lagos', city: 'Lagos', latitude: 6.5892, longitude: 3.3582 },
+  ];
+
+  const handleSelectRegDistrict = (distObj, isCreateModal = false) => {
+    if (!distObj) return;
+    const nextReg = {
+      latitude: distObj.latitude,
+      longitude: distObj.longitude,
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
+    };
+    if (isCreateModal) {
+      setNewStoreDistrict(distObj.district);
+      setNewStoreLatitude(distObj.latitude);
+      setNewStoreLongitude(distObj.longitude);
+      if (createStoreMiniMapRef.current) {
+        createStoreMiniMapRef.current.animateToRegion(nextReg, 320);
+      }
+    } else {
+      setRegStoreDistrict(distObj.district);
+      setRegStoreLatitude(distObj.latitude);
+      setRegStoreLongitude(distObj.longitude);
+      setRegStoreMapRegion(nextReg);
+      if (regMiniMapRef.current) {
+        regMiniMapRef.current.animateToRegion(nextReg, 320);
+      }
+      if (regFullMapRef.current) {
+        regFullMapRef.current.animateToRegion(nextReg, 320);
+      }
+    }
+  };
+
+  const handleDetectRegistrationGps = async (isCreateModal = false) => {
+    if (isFetchingRegGps) return;
+    setIsFetchingRegGps(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Location Permission Required',
+          'Please allow location access so GETIT can pin your store location automatically, or tap directly on the map to set your shop pin.'
+        );
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      if (loc && loc.coords) {
+        const { latitude, longitude } = loc.coords;
+        setUserLiveCoords({ latitude, longitude });
+        const nextReg = {
+          latitude,
+          longitude,
+          latitudeDelta: 0.008,
+          longitudeDelta: 0.008,
+        };
+        if (isCreateModal) {
+          setNewStoreLatitude(latitude);
+          setNewStoreLongitude(longitude);
+          if (createStoreMiniMapRef.current) {
+            createStoreMiniMapRef.current.animateToRegion(nextReg, 350);
+          }
+        } else {
+          setRegStoreLatitude(latitude);
+          setRegStoreLongitude(longitude);
+          setRegStoreMapRegion(nextReg);
+          if (regMiniMapRef.current) {
+            regMiniMapRef.current.animateToRegion(nextReg, 350);
+          }
+          if (regFullMapRef.current) {
+            regFullMapRef.current.animateToRegion(nextReg, 350);
+          }
+        }
+
+        // Reverse geocode to suggest street & district if empty
+        try {
+          const geoList = await Location.reverseGeocodeAsync({ latitude, longitude });
+          if (geoList && geoList.length > 0) {
+            const g = geoList[0];
+            const streetPart = [g.name, g.street].filter(Boolean).join(', ');
+            const districtPart = [g.district || g.subregion, g.city || g.region || 'Abuja'].filter(Boolean).join(', ');
+            if (isCreateModal) {
+              if (streetPart && !newStoreAddress.trim()) setNewStoreAddress(streetPart);
+              if (districtPart) setNewStoreDistrict(districtPart);
+            } else {
+              if (streetPart && !authSignupAddress.trim()) setAuthSignupAddress(streetPart);
+              if (districtPart) setRegStoreDistrict(districtPart);
+            }
+          }
+        } catch (geoErr) {}
+
+        Alert.alert(
+          '🎯 Store GPS Location Set!',
+          `Your storefront pin has been locked to your current GPS coordinates:\n${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E`
+        );
+      }
+    } catch (err) {
+      Alert.alert(
+        'GPS Notice',
+        'Could not fetch live GPS signal right now. You can select your district or tap/drag the pin directly on the map.'
+      );
+    } finally {
+      setIsFetchingRegGps(false);
+    }
+  };
+
+  const handleZoomRegMap = (zoomIn, isFullMap = false) => {
+    const factor = zoomIn ? 0.5 : 2;
+    const curLatDelta = regStoreMapRegion.latitudeDelta || 0.01;
+    const curLngDelta = regStoreMapRegion.longitudeDelta || 0.01;
+    const nextReg = {
+      latitude: Number(regStoreLatitude) || 9.0882,
+      longitude: Number(regStoreLongitude) || 7.4933,
+      latitudeDelta: Math.max(0.001, Math.min(1.0, curLatDelta * factor)),
+      longitudeDelta: Math.max(0.001, Math.min(1.0, curLngDelta * factor)),
+    };
+    setRegStoreMapRegion(nextReg);
+    if (isFullMap && regFullMapRef.current) {
+      regFullMapRef.current.animateToRegion(nextReg, 250);
+    } else if (regMiniMapRef.current) {
+      regMiniMapRef.current.animateToRegion(nextReg, 250);
+    }
+  };
+
+  // Loading & Anti-Freeze Submission Locks for Auth & Registration Steps
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [authSubmittingLabel, setAuthSubmittingLabel] = useState('Loading...');
+  const [isWizardStepLoading, setIsWizardStepLoading] = useState(false);
+  const authSubmitLockRef = useRef(false);
+
+  const handleAdvanceRegWizardStep = (targetStep) => {
+    if (isWizardStepLoading || isAuthSubmitting || authSubmitLockRef.current) return;
+    setIsWizardStepLoading(true);
+    setTimeout(() => {
+      setRegWizardStep(targetStep);
+      setIsWizardStepLoading(false);
+    }, 260);
+  };
+
+  const handlePickCustomRegistrationImage = async (onSelectUri, onMarkCustom) => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets || result.assets.length === 0) return;
+      const pickedUri = result.assets[0]?.uri;
+      if (pickedUri) {
+        onSelectUri(pickedUri);
+        if (onMarkCustom) onMarkCustom(true);
+      }
+    } catch (err) {
+      Alert.alert('Upload Error', 'Could not select image from device. Please try again.');
+    }
+  };
+
+  // Merchant Category Manager & Admin Central Category Console Modals
+  const [merchantTaxonomyModalVisible, setMerchantTaxonomyModalVisible] = useState(false);
+  const [adminTaxonomyModalVisible, setAdminTaxonomyModalVisible] = useState(false);
+  const [requestCategoryModalVisible, setRequestCategoryModalVisible] = useState(false);
+  const [requestedCategoryName, setRequestedCategoryName] = useState('');
+  const [requestedCategoryParent, setRequestedCategoryParent] = useState('meat_poultry');
+  const [requestedCategoryLevel, setRequestedCategoryLevel] = useState('subcategory'); // 'department' | 'subcategory' | 'variety'
+  const [requestedCategoryNotes, setRequestedCategoryNotes] = useState('');
+
+  // Admin Console & GETIT Central Management System State
+  const [adminActiveTaxonomyTab, setAdminActiveTaxonomyTab] = useState('ceo_dashboard'); // 'ceo_dashboard' | 'staff_permissions' | 'finance_settlements' | 'business_rules' | 'approvals_queue' | 'accountability_audit' | 'regional_field' | 'hierarchy' | 'store_types' | 'requests' | 'pharmacies'
+  const [cmsStaffAccounts, setCmsStaffAccounts] = useState(INITIAL_STAFF_ACCOUNTS);
+  const [cmsActiveStaffId, setCmsActiveStaffId] = useState('GET-001');
+  const [cmsInspectStaffId, setCmsInspectStaffId] = useState('GET-003');
+  const [cmsBusinessRules, setCmsBusinessRules] = useState(INITIAL_BUSINESS_RULES);
+  const [cmsApprovalRequests, setCmsApprovalRequests] = useState(INITIAL_APPROVAL_REQUESTS);
+  const [cmsAuditLogs, setCmsAuditLogs] = useState(INITIAL_AUDIT_LOGS);
+  const [cmsSettlements, setCmsSettlements] = useState(INITIAL_MERCHANT_SETTLEMENTS);
+  const [adminSelectedDeptId, setAdminSelectedDeptId] = useState('meat_poultry');
+  const [adminSelectedSubId, setAdminSelectedSubId] = useState('goat_meat');
+  const [adminNewNodeLevel, setAdminNewNodeLevel] = useState('subcategory'); // 'department' | 'subcategory' | 'variety'
+  const [adminNewNodeName, setAdminNewNodeName] = useState('');
+  const [adminNewNodeIcon, setAdminNewNodeIcon] = useState('🐐');
+  const [adminNewNodeSubtitle, setAdminNewNodeSubtitle] = useState('');
+  const [adminEditingNode, setAdminEditingNode] = useState(null); // { level, deptId, subId, varId, label }
+
+  useEffect(() => {
+    let active = true;
+    getMarketplaceTaxonomy()
+      .then((tax) => {
+        if (active && tax && Array.isArray(tax.departments)) {
+          setMarketplaceTaxonomy(tax);
+        }
+      })
+      .catch(() => {});
+    getMerchantCategoryRequests()
+      .then((reqs) => {
+        if (active && Array.isArray(reqs)) {
+          setCategoryRequests(reqs);
+        }
+      })
+      .catch(() => {});
+
+    // Live Commercial Policy Handler (Syncs 10%/7% markups, 5% concierge, 20% bolt)
+    const applyLiveCommercialPolicy = (newPolicy) => {
+      if (!newPolicy || typeof newPolicy !== 'object') return;
+      setCmsBusinessRules((prev) => {
+        const changed =
+          Number(prev?.markupBelowThresholdPct) !== Number(newPolicy.markupBelowThresholdPct) ||
+          Number(prev?.markupAboveThresholdPct) !== Number(newPolicy.markupAboveThresholdPct) ||
+          Number(prev?.conciergePackagingPct) !== Number(newPolicy.conciergePackagingPct) ||
+          Number(prev?.boltDeliveryMarkupPct) !== Number(newPolicy.boltDeliveryMarkupPct) ||
+          Number(prev?.tierThresholdNaira) !== Number(newPolicy.tierThresholdNaira) ||
+          Number(prev?.standardMerchantCommissionPct) !== Number(newPolicy.standardMerchantCommissionPct) ||
+          JSON.stringify(prev?.markupTiers) !== JSON.stringify(newPolicy?.markupTiers) ||
+          JSON.stringify(prev?.conciergeTiers) !== JSON.stringify(newPolicy?.conciergeTiers) ||
+          prev?.version !== newPolicy.version;
+
+        if (!changed) return prev;
+        return {
+          ...prev,
+          ...newPolicy,
+        };
+      });
+    };
+
+    // 1. Initial Fetch of active Supabase commercial policy (10%/7% markups, 5% concierge, 20% bolt)
+    fetchActiveCommercialPolicy()
+      .then((policy) => {
+        if (active && policy) {
+          applyLiveCommercialPolicy(policy);
+        }
+      })
+      .catch(() => {});
+
+    // 2. High-speed Realtime WebSocket Broadcast & Table Update Subscriber (Sub-50ms)
+    const unsubscribePolicy = subscribeToCommercialPolicyUpdates((newPolicy) => {
+      if (newPolicy) {
+        applyLiveCommercialPolicy(newPolicy);
+      }
+    });
+
+    // 3. Fast Foreground Health Poller (Every 4s): Guarantees instant sync even if WebSocket reconnects
+    const policyFastPoller = setInterval(() => {
+      if (active) {
+        fetchActiveCommercialPolicy()
+          .then((policy) => {
+            if (active && policy) {
+              applyLiveCommercialPolicy(policy);
+            }
+          })
+          .catch(() => {});
+      }
+    }, 4000);
+
+    return () => {
+      active = false;
+      clearInterval(policyFastPoller);
+      unsubscribePolicy();
+    };
+  }, []);
+
+  // Store-specific catalog & category configuration (strictly tailored to the active merchant's store type/department)
+  const storeCatalogConfig = useMemo(() => {
+    let activeStore = null;
+    if (merchantStoreId) {
+      activeStore = storesList.find((s) => s.id === merchantStoreId) || null;
+    }
+    if (!activeStore && currentUser?.storeId) {
+      activeStore = storesList.find((s) => s.id === currentUser.storeId) || null;
+    }
+    if (!activeStore && currentUser?.role === 'seller') {
+      const uPhone = (currentUser.phone || '').replace(/\D/g, '');
+      activeStore =
+        storesList.find((st) => {
+          if (currentUser.id && st.ownerId && String(currentUser.id) === String(st.ownerId)) return true;
+          if (currentUser.email && st.ownerEmail && currentUser.email.toLowerCase().trim() === st.ownerEmail.toLowerCase().trim()) return true;
+          const sPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
+          if (uPhone.length >= 10 && sPhone.length >= 10 && uPhone.slice(-10) === sPhone.slice(-10)) return true;
+          return false;
+        }) || null;
+    }
+    if (!activeStore && currentUser?.role === 'seller' && currentUser?.businessName) {
+      activeStore = {
+        id: currentUser.storeId || 'merchant-store',
+        name: currentUser.businessName,
+        primaryDepartmentId: regPrimaryDepartmentId,
+        storeTypeFormat: regStoreTypeFormat,
+      };
+    }
+    return getStoreAllowedCatalogData(activeStore, marketplaceTaxonomy, NIGERIAN_GROCERIES_CATALOG);
+  }, [storesList, merchantStoreId, currentUser, marketplaceTaxonomy, regPrimaryDepartmentId, regStoreTypeFormat]);
+
+  // Keep category filters & custom product defaults aligned with the active store's allowed categories
+  useEffect(() => {
+    const validPillIds = new Set((storeCatalogConfig?.categoryFilterPills || []).map((p) => p.id));
+    if (!validPillIds.has(suggestedCategoryFilter)) {
+      setSuggestedCategoryFilter('All');
+    }
+    const allowedChips = storeCatalogConfig?.customCategoryChips || [];
+    if (allowedChips.length > 0 && !allowedChips.includes(customProductCategory)) {
+      setCustomProductCategory(allowedChips[0]);
+    }
+    const allowedEmojis = storeCatalogConfig?.customEmojiIcons || [];
+    if (allowedEmojis.length > 0 && !allowedEmojis.includes(customProductIcon)) {
+      setCustomProductIcon(allowedEmojis[0]);
+    }
+  }, [
+    merchantStoreId,
+    storeCatalogConfig?.primaryDepartmentId,
+    addProductModalVisible,
+  ]);
+
+  // High performance memoized filtered suggested catalog (strictly scoped to storeCatalogConfig.allowedProducts)
   const filteredSuggestedProducts = useMemo(() => {
     const query = suggestedSearch.trim().toLowerCase();
-    return NIGERIAN_GROCERIES_CATALOG.filter((item) => {
+    const baseProducts = storeCatalogConfig?.allowedProducts || [];
+    return baseProducts.filter((item) => {
       let matchesCat = true;
-      if (suggestedCategoryFilter === 'All') {
-        matchesCat = item.category !== 'Pharmacy';
-      } else {
-        matchesCat = item.category === suggestedCategoryFilter;
+      if (suggestedCategoryFilter !== 'All') {
+        matchesCat =
+          item.subcategoryId === suggestedCategoryFilter ||
+          item.category === suggestedCategoryFilter ||
+          item.departmentId === suggestedCategoryFilter ||
+          String(item.category || '').toLowerCase() === String(suggestedCategoryFilter).toLowerCase();
       }
       if (!matchesCat) return false;
       if (!query) return true;
       return (
-        item.name.toLowerCase().includes(query) ||
-        item.category.toLowerCase().includes(query) ||
-        (item.brand && item.brand.toLowerCase().includes(query))
+        String(item.name || '').toLowerCase().includes(query) ||
+        String(item.category || '').toLowerCase().includes(query) ||
+        String(item.description || '').toLowerCase().includes(query) ||
+        (item.brand && String(item.brand).toLowerCase().includes(query))
       );
     });
-  }, [suggestedCategoryFilter, suggestedSearch]);
+  }, [storeCatalogConfig, suggestedCategoryFilter, suggestedSearch]);
 
   // Active Orders & Tabs
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'orders' | 'messages' | 'profile'
@@ -1911,6 +2480,7 @@ export default function App() {
   const [collapsedBoltMapOrderIds, setCollapsedBoltMapOrderIds] = useState([]);
   const [collapsedItemsOrderIds, setCollapsedItemsOrderIds] = useState([]);
   const [expandedStopsTimelineOrderIds, setExpandedStopsTimelineOrderIds] = useState([]);
+  const [merchantProfileSubView, setMerchantProfileSubView] = useState(null); // null | 'profile' | 'settings' | 'business'
   const ordersRef = useRef(orders);
   useEffect(() => {
     ordersRef.current = orders;
@@ -2123,25 +2693,63 @@ export default function App() {
         prev.forEach((o) => orderMap.set(o.id, o));
         cloudOrders.forEach((co) => {
           const existing = orderMap.get(co.id);
+          const isRecentLocalMutation =
+            existing &&
+            lastOrderMutationTimestampRef.current[co.id] &&
+            Date.now() - lastOrderMutationTimestampRef.current[co.id] < 9000;
+          const isLocalStoreSwitched =
+            existing &&
+            (Boolean(existing.transferredFromStoreId) ||
+              existing.outOfStockProposal?.status === 'switched_full' ||
+              existing.outOfStockProposal?.status === 'switched_multistore') &&
+            !co.transferredFromStoreId &&
+            co.outOfStockProposal?.status !== 'switched_full' &&
+            co.outOfStockProposal?.status !== 'switched_multistore';
+          const preferLocalStoreAssignment = Boolean(isRecentLocalMutation || isLocalStoreSwitched);
+
           orderMap.set(
             co.id,
             existing
               ? {
                 ...existing,
-                replacementProposal:
-                  (existing.replacementProposal && existing.replacementProposal.status !== 'pending' && co.replacementProposal?.status === 'pending')
-                    ? existing.replacementProposal
-                    : ((co.replacementProposal !== undefined) ? co.replacementProposal : existing.replacementProposal),
+                storeId: preferLocalStoreAssignment ? existing.storeId : (co.storeId || existing.storeId),
+                storeName: preferLocalStoreAssignment ? existing.storeName : (co.storeName || existing.storeName),
+                isMultiStore: preferLocalStoreAssignment
+                  ? existing.isMultiStore
+                  : (co.isMultiStore !== undefined ? co.isMultiStore : existing.isMultiStore),
+                replacementProposal: mergeProposalField(existing.replacementProposal, co.replacementProposal),
+                outOfStockProposal: mergeProposalField(existing.outOfStockProposal, co.outOfStockProposal),
                 items:
-                  (existing.replacementProposal && existing.replacementProposal.status !== 'pending' && co.replacementProposal?.status === 'pending')
+                  preferLocalStoreAssignment ||
+                  (existing.replacementProposal && isProposalResolvedStatus(existing.replacementProposal.status) && co.replacementProposal?.status === 'pending') ||
+                  (existing.outOfStockProposal && isProposalResolvedStatus(existing.outOfStockProposal.status) && co.outOfStockProposal?.status === 'pending')
                     ? existing.items
                     : ((co.items && co.items.length > 0) ? co.items : existing.items),
-                subtotal: (co.subtotal !== undefined && co.subtotal > 0) ? co.subtotal : existing.subtotal,
-                total: (co.total !== undefined && co.total > 0) ? co.total : existing.total,
-                status: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.status || existing.status),
+                subtotal: preferLocalStoreAssignment ? existing.subtotal : ((co.subtotal !== undefined && co.subtotal > 0) ? co.subtotal : existing.subtotal),
+                total: preferLocalStoreAssignment ? existing.total : ((co.total !== undefined && co.total > 0) ? co.total : existing.total),
+                deliveryFee: preferLocalStoreAssignment ? existing.deliveryFee : (co.deliveryFee || existing.deliveryFee),
+                status: (existing.status === 'Delivered' || co.status === 'Delivered')
+                  ? 'Delivered'
+                  : preferLocalStoreAssignment
+                    ? existing.status
+                    : (co.status || existing.status),
                 eta: (existing.status === 'Delivered' || co.status === 'Delivered') ? 'Delivered' : (co.eta || existing.eta),
                 courierArrivedOutside: existing.courierArrivedOutside || co.courierArrivedOutside || Boolean(co.bolt_rider?.courierArrivedOutside) || false,
                 hasNotifiedArrived: existing.hasNotifiedArrived || co.hasNotifiedArrived || Boolean(co.bolt_rider?.hasNotifiedArrived) || false,
+                transferredFromStoreId: co.transferredFromStoreId || co.bolt_rider?.transferredFromStoreId || existing.transferredFromStoreId || null,
+                transferredFromStoreName: co.transferredFromStoreName || co.bolt_rider?.transferredFromStoreName || existing.transferredFromStoreName || null,
+                transferredFromStoreIds: Array.from(new Set([
+                  ...(Array.isArray(existing.transferredFromStoreIds) ? existing.transferredFromStoreIds : []),
+                  ...(Array.isArray(co.transferredFromStoreIds) ? co.transferredFromStoreIds : []),
+                  existing.transferredFromStoreId,
+                  co.transferredFromStoreId,
+                ].filter(Boolean).map(String))),
+                transferredFromStoreNames: Array.from(new Set([
+                  ...(Array.isArray(existing.transferredFromStoreNames) ? existing.transferredFromStoreNames : []),
+                  ...(Array.isArray(co.transferredFromStoreNames) ? co.transferredFromStoreNames : []),
+                  existing.transferredFromStoreName,
+                  co.transferredFromStoreName,
+                ].filter(Boolean).map((n) => String(n).trim().toLowerCase()))),
                 boltRider: co.boltRider || existing.boltRider || ((co.status === 'On the Way' || existing.status === 'On the Way') ? {
                   id: 'bolt-rider-01',
                   name: 'Musa Ibrahim',
@@ -2173,16 +2781,88 @@ export default function App() {
                   }
                   return merged;
                 })(),
-                stops: (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []),
-                roadRouteCoordinates: (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []),
-                roadLegs: (co.roadLegs && co.roadLegs.length > 0) ? co.roadLegs : (existing.roadLegs || []),
-                currentStopIndex: co.currentStopIndex !== undefined ? co.currentStopIndex : (existing.currentStopIndex || 0),
-                roadPointIndex: (co.currentStopIndex !== undefined && existing.currentStopIndex !== undefined && co.currentStopIndex !== existing.currentStopIndex)
-                  ? (co.roadPointIndex || 0)
-                  : Math.max(co.roadPointIndex || 0, existing.roadPointIndex || 0),
-                legStartedAt: (co.currentStopIndex !== undefined && existing.currentStopIndex !== undefined && co.currentStopIndex > existing.currentStopIndex)
-                  ? (co.legStartedAt || Date.now())
-                  : (existing.legStartedAt || co.legStartedAt || Date.now()),
+                stops: (() => {
+                  const exStops = Array.isArray(existing.stops) ? existing.stops : [];
+                  const clStops = Array.isArray(co.stops) ? co.stops : [];
+                  if (preferLocalStoreAssignment && exStops.length > 0) return exStops;
+                  if (clStops.length === 0) return exStops;
+                  if (exStops.length === 0) return clStops;
+                  const statusRank = (st) => {
+                    if (!st) return 0;
+                    if (st.pickupStatus === 'picked_up' || st.status === 'Completed') return 4;
+                    if (st.pickupStatus === 'ready' || st.status === 'Ready for Pickup') return 3;
+                    if (st.pickupStatus === 'preparing' || st.pickupStatus === 'in_progress_prep' || st.status === 'Preparing') return 2;
+                    if (st.status === 'Rejected' || st.pickupStatus === 'rejected') return 5;
+                    return 1;
+                  };
+                  return clStops.map((cs) => {
+                    // Match ONLY if it is genuinely the same store (never overwrite a newly switched store with the old store at index 0!)
+                    const es = exStops.find(
+                      (e) =>
+                        (e.storeId && cs.storeId && String(e.storeId) === String(cs.storeId)) ||
+                        (e.storeName && cs.storeName && e.storeName.trim().toLowerCase() === cs.storeName.trim().toLowerCase())
+                    );
+                    if (!es) return cs;
+                    const best = statusRank(es) > statusRank(cs) ? es : cs;
+                    return {
+                      ...best,
+                      ...cs,
+                      status: best.status || cs.status,
+                      pickupStatus: best.pickupStatus || cs.pickupStatus,
+                      pickedUpAt: best.pickedUpAt || cs.pickedUpAt,
+                      items: (cs.items && cs.items.length > 0) ? cs.items : (es.items || []),
+                      subtotal: cs.subtotal !== undefined ? cs.subtotal : es.subtotal,
+                      itemsCount: cs.itemsCount !== undefined ? cs.itemsCount : es.itemsCount,
+                      snappedLatitude: cs.snappedLatitude || es.snappedLatitude,
+                      snappedLongitude: cs.snappedLongitude || es.snappedLongitude,
+                    };
+                  });
+                })(),
+                roadRouteCoordinates: (() => {
+                  const expectedLegs = Math.max(1, (co.stops || existing.stops || []).length) + 1;
+                  if (co.roadLegs && co.roadLegs.length === expectedLegs && co.roadRouteCoordinates && co.roadRouteCoordinates.length > 1) {
+                    return co.roadRouteCoordinates;
+                  }
+                  if (existing.roadLegs && existing.roadLegs.length === expectedLegs && existing.roadRouteCoordinates && existing.roadRouteCoordinates.length > 1) {
+                    return existing.roadRouteCoordinates;
+                  }
+                  return (co.roadRouteCoordinates && co.roadRouteCoordinates.length > 0) ? co.roadRouteCoordinates : (existing.roadRouteCoordinates || []);
+                })(),
+                roadLegs: (() => {
+                  const expectedLegs = Math.max(1, (co.stops || existing.stops || []).length) + 1;
+                  if (co.roadLegs && co.roadLegs.length === expectedLegs) return co.roadLegs;
+                  if (existing.roadLegs && existing.roadLegs.length === expectedLegs) return existing.roadLegs;
+                  return [];
+                })(),
+                riderOrigin: co.riderOrigin || existing.riderOrigin || null,
+                currentStopIndex: (() => {
+                  const mergedSt = (co.stops && co.stops.length > 0) ? co.stops : (existing.stops || []);
+                  const firstUnpicked = mergedSt.findIndex((s) => s.pickupStatus !== 'picked_up' && s.status !== 'Completed');
+                  const maxAllowed = firstUnpicked === -1 ? mergedSt.length : firstUnpicked;
+                  const rawIdx = Math.max(Number(co.currentStopIndex) || 0, Number(existing.currentStopIndex) || 0);
+                  return Math.min(rawIdx, maxAllowed);
+                })(),
+                roadPointIndex: (() => {
+                  const isNowOnTheWay = co.status === 'On the Way' || existing.status === 'On the Way';
+                  if (!isNowOnTheWay) return 0;
+                  if (existing.status !== 'On the Way' && co.status === 'On the Way') {
+                    return Number(co.roadPointIndex) || 0;
+                  }
+                  if (co.currentStopIndex !== undefined && existing.currentStopIndex !== undefined && co.currentStopIndex !== existing.currentStopIndex) {
+                    return co.currentStopIndex > existing.currentStopIndex ? (Number(co.roadPointIndex) || 0) : (Number(existing.roadPointIndex) || 0);
+                  }
+                  return Math.max(Number(co.roadPointIndex) || 0, Number(existing.roadPointIndex) || 0);
+                })(),
+                legStartedAt: (() => {
+                  const isNowOnTheWay = co.status === 'On the Way' || existing.status === 'On the Way';
+                  if (!isNowOnTheWay) return 0;
+                  if (existing.status !== 'On the Way' && co.status === 'On the Way') {
+                    return Number(co.legStartedAt) || Date.now();
+                  }
+                  const coLegStart = Number(co.legStartedAt) || 0;
+                  const exLegStart = Number(existing.legStartedAt) || 0;
+                  return Math.max(coLegStart, exLegStart) || Date.now();
+                })(),
                 boltCoords: (existing.status === 'On the Way' && existing.boltCoords && !existing.courierArrivedOutside) ? existing.boltCoords : (co.boltCoords || existing.boltCoords),
               }
               : co
@@ -2199,15 +2879,33 @@ export default function App() {
     }
   };
 
+  const removedTestStoreIdSet = useMemo(
+    () => new Set(Array.isArray(REMOVED_TEST_STORE_IDS) ? REMOVED_TEST_STORE_IDS : []),
+    []
+  );
+
+  const dedupeStoreObjectsList = useCallback((list) => {
+    if (!Array.isArray(list)) return [];
+    const seenIds = new Set();
+    const seenNames = new Set();
+    const out = [];
+    for (const s of list) {
+      if (!s || !s.id) continue;
+      if (removedTestStoreIdSet.has(s.id)) continue;
+      if (seenIds.has(s.id)) continue;
+      const normName = String(s.name || '').trim().toLowerCase();
+      if (normName && seenNames.has(normName)) continue;
+      seenIds.add(s.id);
+      if (normName) seenNames.add(normName);
+      out.push(s);
+    }
+    return out;
+  }, [removedTestStoreIdSet]);
+
   const updateAndPersistStores = (updater) => {
     setStoresList((prev) => {
       const updated = typeof updater === 'function' ? updater(prev) : updater;
-      const seen = new Set();
-      const deduped = (Array.isArray(updated) ? updated : []).filter((s) => {
-        if (!s || !s.id || seen.has(s.id)) return false;
-        seen.add(s.id);
-        return true;
-      });
+      const deduped = dedupeStoreObjectsList(updated);
       try {
         AsyncStorage.setItem('getit_stores_list', JSON.stringify(deduped)).catch(console.warn);
       } catch (e) { }
@@ -2244,6 +2942,20 @@ export default function App() {
         const bLng = Number(ord.boltCoords.longitude);
         if (!isNaN(bLat) && !isNaN(bLng)) {
           points.push({ latitude: bLat, longitude: bLng });
+        }
+      }
+
+      if (ord?.riderOrigin?.latitude && ord?.riderOrigin?.longitude) {
+        const rLat = Number(ord.riderOrigin.latitude);
+        const rLng = Number(ord.riderOrigin.longitude);
+        if (!isNaN(rLat) && !isNaN(rLng)) {
+          points.push({ latitude: rLat, longitude: rLng });
+        }
+      } else if (ord?.stops?.[0]?.latitude && ord?.stops?.[0]?.longitude) {
+        const s0Lat = Number(ord.stops[0].latitude);
+        const s0Lng = Number(ord.stops[0].longitude);
+        if (!isNaN(s0Lat) && !isNaN(s0Lng)) {
+          points.push({ latitude: s0Lat - 0.0072, longitude: s0Lng - 0.0065 });
         }
       }
 
@@ -2630,13 +3342,17 @@ export default function App() {
   };
 
   const fetchedRoutesRef = useRef(new Set());
-  // Auto-fetch real-world street road directions for active orders
+  // Auto-fetch real-world street road directions for active orders (From Rider Origin -> Store 1 -> [Store 2] -> Customer Home)
   useEffect(() => {
     orders.forEach((ord) => {
+      const stopsList = ord.stops && ord.stops.length > 0 ? ord.stops : [];
+      const expectedLegsCount = Math.max(1, stopsList.length) + 1;
+      const routeCacheKey = ord.id + '_fulllegs_' + expectedLegsCount;
+
       const hasRealRoadLegs =
         ord.roadLegs &&
         Array.isArray(ord.roadLegs) &&
-        ord.roadLegs.length > 0 &&
+        ord.roadLegs.length === expectedLegsCount &&
         ord.roadLegs[0] &&
         ord.roadLegs[0].length > 2 &&
         !ord.isDirectFallback;
@@ -2645,43 +3361,56 @@ export default function App() {
         ord.status !== 'Cancelled' &&
         ord.status !== 'Delivered' &&
         !hasRealRoadLegs &&
-        !fetchedRoutesRef.current.has(ord.id)
+        !fetchedRoutesRef.current.has(routeCacheKey)
       ) {
-        const stopsList = ord.stops && ord.stops.length > 0 ? ord.stops : [];
-        const firstStore = stopsList[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
         const dest = ord.deliveryLocation || pinnedLocation || { latitude: 9.0882, longitude: 7.4933 };
+        const destLat = Number(dest.latitude) || 9.0882;
+        const destLng = Number(dest.longitude) || 7.4933;
 
-        // Waypoints strictly begin at rider origin, visit every participating store, and terminate at customer destination
-        const riderStart = ord.riderOrigin || {
-          latitude: Number(firstStore.latitude || 9.0882) - 0.0090,
-          longitude: Number(firstStore.longitude || 7.4933) - 0.0080,
-        };
+        // Waypoints strictly begin at Rider Origin, visit Store 1, any additional store stops, and terminate at customer destination
+        let storeWaypoints = [];
+        if (stopsList.length > 0) {
+          storeWaypoints = stopsList.map((s) => {
+            const stMatch = storesList.find((st) => st.id === s.storeId || st.name === s.storeName);
+            const lat = Number(s.latitude) || Number(stMatch?.latitude) || 9.124943;
+            const lng = Number(s.longitude) || Number(stMatch?.longitude) || 7.439559;
+            return { latitude: lat, longitude: lng };
+          });
+        } else {
+          const storeMatch = storesList.find((st) => st.id === ord.storeId || st.name === ord.storeName);
+          const lat = Number(ord.storeLocation?.latitude || ord.storeLatitude || storeMatch?.latitude || 9.124943);
+          const lng = Number(ord.storeLocation?.longitude || ord.storeLongitude || storeMatch?.longitude || 7.439559);
+          storeWaypoints = [{ latitude: lat, longitude: lng }];
+        }
+
+        const riderStart = ord.riderOrigin && ord.riderOrigin.latitude
+          ? { latitude: Number(ord.riderOrigin.latitude), longitude: Number(ord.riderOrigin.longitude) }
+          : {
+              latitude: storeWaypoints[0].latitude - 0.0072,
+              longitude: storeWaypoints[0].longitude - 0.0065,
+            };
+
         const waypoints = [
           riderStart,
-          ...(stopsList.length > 0
-            ? stopsList.map((s) => ({
-              latitude: Number(s.latitude) || 9.0882,
-              longitude: Number(s.longitude) || 7.4933,
-            }))
-            : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
+          ...storeWaypoints,
           {
-            latitude: Number(dest.latitude) || 9.0882,
-            longitude: Number(dest.longitude) || 7.4933,
+            latitude: destLat,
+            longitude: destLng,
           },
         ];
 
         fetchRealRoadDirections(waypoints).then((result) => {
           if (result && result.roadPoints && result.roadPoints.length > 0) {
             if (!result.isFallback) {
-              fetchedRoutesRef.current.add(ord.id);
+              fetchedRoutesRef.current.add(routeCacheKey);
             }
-            // Update stops with their snapped pinpoint coordinates directly on the road (sIdx 0 -> snappedWaypoints[1])
+            // Update stops with their snapped pinpoint coordinates directly on the road (sIdx + 1 since index 0 is riderStart)
             const updatedStops = (ord.stops || []).map((st, sIdx) => {
               const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx + 1] : null;
               return {
                 ...st,
-                snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.0882,
-                snappedLongitude: snapped ? snapped.longitude : Number(st.longitude) || 7.4933,
+                snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || storeWaypoints[sIdx]?.latitude || 9.124943,
+                snappedLongitude: snapped ? snapped.longitude : Number(st.longitude) || storeWaypoints[sIdx]?.longitude || 7.439559,
               };
             });
 
@@ -2691,26 +3420,30 @@ export default function App() {
                 : null;
 
             updateAndPersistOrders((prev) =>
-              prev.map((o) =>
-                o.id === ord.id
-                  ? {
-                    ...o,
-                    roadRouteCoordinates: result.roadPoints,
-                    roadLegs: result.legs,
-                    snappedWaypoints: result.snappedWaypoints,
-                    stops: updatedStops,
-                    snappedDeliveryLocation: snappedDest
-                      ? { ...o.deliveryLocation, latitude: snappedDest.latitude, longitude: snappedDest.longitude }
-                      : o.deliveryLocation,
-                    roadPointIndex: o.roadPointIndex || 0,
-                    boltCoords: (o.roadPointIndex && result.roadPoints[o.roadPointIndex]) || o.boltCoords || result.roadPoints[0],
-                    isDirectFallback: Boolean(result.isFallback),
-                  }
-                  : o
-              )
+              prev.map((o) => {
+                if (o.id !== ord.id) return o;
+                const activeStopIdx = Math.min(result.legs.length - 1, Math.max(0, o.currentStopIndex || 0));
+                const activeLeg = result.legs[activeStopIdx] || result.legs[0] || [];
+                const activePtIdx = Math.min(Math.max(0, o.roadPointIndex || 0), Math.max(0, activeLeg.length - 1));
+                return {
+                  ...o,
+                  riderOrigin: o.riderOrigin || riderStart,
+                  roadRouteCoordinates: result.roadPoints,
+                  roadLegs: result.legs,
+                  snappedWaypoints: result.snappedWaypoints,
+                  stops: updatedStops.length > 0 ? updatedStops : o.stops,
+                  snappedDeliveryLocation: snappedDest
+                    ? { ...o.deliveryLocation, latitude: snappedDest.latitude, longitude: snappedDest.longitude }
+                    : o.deliveryLocation,
+                  roadPointIndex: activePtIdx,
+                  boltCoords: activeLeg[activePtIdx] || o.boltCoords || result.roadPoints[0],
+                  isDirectFallback: Boolean(result.isFallback),
+                };
+              })
             );
 
             updateDatabaseOrderStatus(ord.id, {
+              riderOrigin: ord.riderOrigin || riderStart,
               roadRouteCoordinates: result.roadPoints,
               roadLegs: result.legs,
               snappedWaypoints: result.snappedWaypoints,
@@ -2725,70 +3458,84 @@ export default function App() {
   function calculateOrderRiderProgress(ord, now = Date.now()) {
     if (
       !ord ||
+      ord.status !== 'On the Way' ||
       ord.status === 'Cancelled' ||
-      ord.status === 'Delivered' ||
-      ord.courierArrivedOutside
+      ord.status === 'Delivered'
     ) {
       return ord;
     }
 
     if (!ord.boltRider || !ord.boltRider.name) {
-      if (ord.status === 'On the Way') {
-        ord = {
-          ...ord,
-          boltRider: {
-            id: 'bolt-rider-01',
-            name: 'Musa Ibrahim',
-            phone: '+234 803 294 1194',
-            rating: '4.95',
-            trips: 1420,
-            vehicle: 'Bajaj Boxer 150 (Red)',
-            plate: 'ABJ-492-KW',
-            avatar: '🛵',
-          },
-        };
-      } else {
-        return ord;
-      }
+      ord = {
+        ...ord,
+        boltRider: {
+          id: 'bolt-rider-01',
+          name: 'Musa Ibrahim',
+          phone: '+234 803 294 1194',
+          rating: '4.95',
+          trips: 1420,
+          vehicle: 'Bajaj Boxer 150 (Red)',
+          plate: 'ABJ-492-KW',
+          avatar: '🛵',
+        },
+      };
     }
 
-    const stops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
-    const currentStopIdx = ord.currentStopIndex || 0;
+    const stops =
+      Array.isArray(ord.stops) && ord.stops.length > 0
+        ? ord.stops
+        : [
+            {
+              stopNumber: 1,
+              storeId: ord.storeId || 'store-1792192743654',
+              storeName: ord.storeName || 'Mega Stores',
+              latitude: Number(ord.storeLocation?.latitude || ord.storeLatitude || 9.124943),
+              longitude: Number(ord.storeLocation?.longitude || ord.storeLongitude || 7.439559),
+              pickupPin: String(ord.pickupPin || '7731'),
+              pickupStatus: 'ready',
+              status: 'Ready for Pickup',
+            },
+          ];
 
-    // Strictly prior completed stops (idx < currentStopIdx) are verified.
-    // The active stop (idx === currentStopIdx) is in transit or arrived — NOT YET PICKED UP!
-    const verifiedStops = stops.map((st, idx) => {
-      if (idx < currentStopIdx && st.pickupStatus !== 'picked_up') {
-        return {
-          ...st,
-          pickupStatus: 'picked_up',
-          pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          status: 'Ready for Pickup',
-        };
-      }
-      return st;
-    });
+    const totalLegs = stops.length + 1; // Leg 0: Rider -> Store 0. Leg 1..N-1: Store to Store. Leg N: Last Store to Customer Home
+    const finalLegIndex = stops.length; // Last leg terminates at Customer Home
+
+    // Single source of truth for stop sequence: Rider cannot advance past any unpicked store stop!
+    const firstUnpickedIdx = stops.findIndex(
+      (st) => st.pickupStatus !== 'picked_up' && st.status !== 'Completed'
+    );
+    const allStopsPickedUp = firstUnpickedIdx === -1;
+    const currentStopIdx = allStopsPickedUp ? finalLegIndex : firstUnpickedIdx;
+    const verifiedStops = stops;
 
     const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
     const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
-    const destCoord = { latitude: homeLat, longitude: homeLng };
-    const totalLegs = (ord.roadLegs && ord.roadLegs.length > 0) ? ord.roadLegs.length : (verifiedStops.length + 1);
-    const finalLegIndex = Math.max(0, totalLegs - 1);
+    const destCoord = {
+      latitude: ord.snappedDeliveryLocation?.latitude || homeLat,
+      longitude: ord.snappedDeliveryLocation?.longitude || homeLng,
+    };
 
-    // If courier already arrived outside or beyond total legs:
-    if (ord.courierArrivedOutside || currentStopIdx >= totalLegs || currentStopIdx > stops.length) {
+    // If courier already arrived outside the gate (only valid after ALL store stops are picked up!):
+    if (ord.courierArrivedOutside && allStopsPickedUp) {
       const arrivedAlert = `🛵 Courier Musa Ibrahim has arrived outside your address! Provide Security PIN (${ord.deliveryPin || '2489'}) to receive packages.`;
-      if (!ord.hasNotifiedArrived && !ord.courierArrivedOutside) {
+      const arrivalTime = ord.arrivedOutsideAt || now;
+
+      if (!ord.hasNotifiedArrived) {
         notifyCourierArrived(ord);
         updateDatabaseOrderStatus(ord.id, {
           stops: verifiedStops,
+          currentStopIndex: finalLegIndex,
           boltCoords: destCoord,
           eta: 'Arrived outside gate',
           journeyAlert: arrivedAlert,
           courierArrivedOutside: true,
           hasNotifiedArrived: true,
+          arrivedOutsideAt: arrivalTime,
+          boltStatus: 'ARRIVED',
         }).catch(() => { });
       }
+
+      // Keep courier parked outside the customer's gate until the customer confirms handover via Security PIN!
       return {
         ...ord,
         stops: verifiedStops,
@@ -2796,51 +3543,77 @@ export default function App() {
         boltCoords: destCoord,
         hasNotifiedArrived: true,
         courierArrivedOutside: true,
+        arrivedOutsideAt: arrivalTime,
         eta: 'Arrived outside gate',
         journeyAlert: arrivedAlert,
         status: 'On the Way',
+        boltStatus: 'ARRIVED',
       };
     }
 
     let activeLegPts =
-      ord.roadLegs && ord.roadLegs[currentStopIdx] && ord.roadLegs[currentStopIdx].length > 1
+      ord.roadLegs &&
+      Array.isArray(ord.roadLegs) &&
+      ord.roadLegs.length === totalLegs &&
+      ord.roadLegs[currentStopIdx] &&
+      ord.roadLegs[currentStopIdx].length > 1
         ? ord.roadLegs[currentStopIdx]
         : null;
 
     if (!activeLegPts || activeLegPts.length === 0) {
-      const firstStore = verifiedStops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
-      const riderStart = ord.riderOrigin || {
-        latitude: Number(firstStore.latitude || 9.0882) - 0.0090,
-        longitude: Number(firstStore.longitude || 7.4933) - 0.0080,
-      };
-      const wps = [
+      const storeWaypoints = verifiedStops.map((s) => ({
+        latitude: Number(s.latitude) || 9.124943,
+        longitude: Number(s.longitude) || 7.439559,
+      }));
+      const riderStart = ord.riderOrigin && ord.riderOrigin.latitude
+        ? { latitude: Number(ord.riderOrigin.latitude), longitude: Number(ord.riderOrigin.longitude) }
+        : {
+            latitude: storeWaypoints[0].latitude - 0.0072,
+            longitude: storeWaypoints[0].longitude - 0.0065,
+          };
+      const directWps = [
         riderStart,
-        ...(verifiedStops && verifiedStops.length > 0
-          ? verifiedStops.map((s) => ({
-            latitude: Number(s.latitude) || 9.0882,
-            longitude: Number(s.longitude) || 7.4933,
-          }))
-          : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
+        ...storeWaypoints,
         { latitude: homeLat, longitude: homeLng },
       ];
-      const directFallback = buildDirectLegsBetweenWaypoints(wps);
-      activeLegPts = directFallback.legs[currentStopIdx] || directFallback.legs[directFallback.legs.length - 1] || [];
+      const directFallback = buildDirectLegsBetweenWaypoints(directWps);
+      activeLegPts = directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
     }
 
     const totalPoints = Math.max(2, activeLegPts.length);
-    const MS_PER_POINT = 2000; // Smooth 2 seconds per point for visible, responsive progress
+    const MS_PER_POINT = 2000; // Synchronized 2.0 seconds per road point across Store Tracker & Buyer Map
     const legDurationMs = (totalPoints - 1) * MS_PER_POINT;
 
+    // If currentStopIndex was corrected/clamped, reset legStartedAt to now so the leg starts cleanly at 0%
     let legStartedAt = Number(ord.legStartedAt);
-    if (!legStartedAt || isNaN(legStartedAt) || legStartedAt > (now + 1000)) {
+    if (
+      !legStartedAt ||
+      isNaN(legStartedAt) ||
+      legStartedAt <= 0 ||
+      legStartedAt > (now + 2000) ||
+      (ord.currentStopIndex !== undefined && ord.currentStopIndex !== currentStopIdx)
+    ) {
       legStartedAt = now;
     }
     const elapsedMs = Math.max(0, now - legStartedAt);
 
     if (elapsedMs < legDurationMs) {
-      // Courier is actively riding along this leg
+      // Courier is actively riding along this leg (0% -> 99%)
       const calculatedPointIdx = Math.min(totalPoints - 1, Math.floor(elapsedMs / MS_PER_POINT));
       const nextCoord = activeLegPts[calculatedPointIdx] || activeLegPts[0];
+      const remMins = Math.max(1, Math.ceil((legDurationMs - elapsedMs) / 15000));
+
+      const activeAlert =
+        currentStopIdx < finalLegIndex
+          ? (currentStopIdx === 0
+            ? `🛵 Courier Musa Ibrahim is heading to ${verifiedStops[0]?.storeName || 'the store'} to pick up your order.`
+            : `🔔 Picked up from ${verifiedStops[currentStopIdx - 1]?.storeName || 'Stop ' + currentStopIdx}! Courier Musa is now riding to ${verifiedStops[currentStopIdx]?.storeName || 'next shop'}.`)
+          : `🎉 All packages collected! Courier Musa Ibrahim is riding directly to your delivery address.`;
+
+      const activeEta =
+        currentStopIdx < finalLegIndex
+          ? `${remMins + 5}-${remMins + 10} mins (Heading to ${verifiedStops[currentStopIdx]?.storeName || 'Shop'})`
+          : `${remMins}-${remMins + 3} mins (Heading to You)`;
 
       return {
         ...ord,
@@ -2849,22 +3622,35 @@ export default function App() {
         stops: verifiedStops,
         currentStopIndex: currentStopIdx,
         legStartedAt: legStartedAt,
+        courierArrivedOutside: false,
+        boltStatus: currentStopIdx < finalLegIndex ? 'HEADING_TO_STORE' : 'IN_TRANSIT',
+        journeyAlert: activeAlert,
+        eta: activeEta,
         status: 'On the Way',
       };
     }
 
-    // Courier has reached the destination of this leg!
+    // Courier has reached the end of this leg (100% of activeLegPts)!
     const endOfLegCoord = activeLegPts[totalPoints - 1] || activeLegPts[0];
 
-    // Case A: Courier reached a shop (Autonomous Collection Handover & Swipe to Next Stop)
-    if (currentStopIdx < stops.length) {
-      const arrivedShop = stops[currentStopIdx];
-      const shopName = arrivedShop?.storeName || 'the shop';
-      const HANDOVER_WINDOW_MS = 4000; // 4s realistic package handover simulation
+    // Case A: Courier reached a shop for pickup (Leg < finalLegIndex)
+    if (currentStopIdx < finalLegIndex) {
+      const targetStore = verifiedStops[currentStopIdx];
+      const shopName = targetStore?.storeName || 'the store';
+      const isStoreReadyForHandover =
+        targetStore &&
+        (targetStore.status === 'Ready for Pickup' ||
+          targetStore.pickupStatus === 'ready' ||
+          targetStore.pickupStatus === 'picked_up' ||
+          targetStore.status === 'Completed');
 
-      if (elapsedMs < legDurationMs + HANDOVER_WINDOW_MS) {
-        // Courier is outside the shop collecting packages
-        const collectingAlert = `🛵 Courier Musa has arrived outside ${shopName}! Collecting packages...`;
+      const HANDOVER_DWELL_MS = 5000; // 5-second arrival dwell at shop before automatic Bolt pickup completion
+
+      // Wait at the shop if the store hasn't marked Ready yet, OR during the 5s arrival handover window
+      if (!isStoreReadyForHandover || elapsedMs < (legDurationMs + HANDOVER_DWELL_MS)) {
+        const waitingAlert = isStoreReadyForHandover
+          ? `📦 Courier Musa Ibrahim has arrived at ${shopName} and is collecting your package...`
+          : `🛵 Courier Musa Ibrahim has arrived outside ${shopName}! Waiting for store to finish packaging...`;
         return {
           ...ord,
           roadPointIndex: totalPoints - 1,
@@ -2872,45 +3658,57 @@ export default function App() {
           stops: verifiedStops,
           currentStopIndex: currentStopIdx,
           legStartedAt: legStartedAt,
-          journeyAlert: collectingAlert,
+          courierArrivedOutside: false,
+          journeyAlert: waitingAlert,
+          eta: `At ${shopName} (Collecting Package)`,
+          boltStatus: 'AT_STORE',
           status: 'On the Way',
         };
       }
 
-      // 🚀 Courier swiped to confirm collection! Move shop to Done and proceed to next stop
+      // Store package is ready and handover dwell completed! Advance to next leg (Next Shop or Customer Home)
       const nextStopIdx = currentStopIdx + 1;
-      const updatedStops = stops.map((st, idx) => {
-        if (idx === currentStopIdx) {
+      const isNextLegFinal = nextStopIdx === finalLegIndex;
+      const progressAlert = isNextLegFinal
+        ? `🚀 Package collected from ${shopName}! Musa Ibrahim is now riding directly to your delivery address!`
+        : `🚀 Package collected from ${shopName}! Musa Ibrahim is now riding to ${verifiedStops[nextStopIdx]?.storeName || 'the next shop'} for pickup.`;
+
+      const updatedStops = verifiedStops.map((st, idx) => {
+        if (idx <= currentStopIdx) {
           return {
             ...st,
             pickupStatus: 'picked_up',
             status: 'Completed',
-            pickedUpAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          };
-        }
-        if (idx < currentStopIdx) {
-          return {
-            ...st,
-            pickupStatus: 'picked_up',
-            status: 'Completed',
+            pickedUpAt: st.pickedUpAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           };
         }
         return st;
       });
 
-      const nextStoreName = stops[nextStopIdx]?.storeName || 'the next shop';
-      const progressAlert = nextStopIdx < stops.length
-        ? `🚀 Package collected from ${shopName}! Musa is riding to ${nextStoreName} for pickup.`
-        : `🚀 All store packages collected! Musa Ibrahim is en route directly to your delivery destination!`;
+      const nextLegPts =
+        ord.roadLegs &&
+        Array.isArray(ord.roadLegs) &&
+        ord.roadLegs.length === totalLegs &&
+        ord.roadLegs[nextStopIdx] &&
+        ord.roadLegs[nextStopIdx].length > 0
+          ? ord.roadLegs[nextStopIdx]
+          : null;
+      const nextStartCoord = (nextLegPts && nextLegPts[0]) || endOfLegCoord;
+      const nextEta = isNextLegFinal
+        ? '8-12 mins (Heading to Your Address)'
+        : `10-15 mins (Heading to ${verifiedStops[nextStopIdx]?.storeName || 'Next Shop'})`;
 
       updateDatabaseOrderStatus(ord.id, {
         stops: updatedStops,
         currentStopIndex: nextStopIdx,
         legStartedAt: now,
         roadPointIndex: 0,
-        boltCoords: endOfLegCoord,
+        boltCoords: nextStartCoord,
         journeyAlert: progressAlert,
+        eta: nextEta,
+        courierArrivedOutside: false,
         status: 'On the Way',
+        boltStatus: isNextLegFinal ? 'IN_TRANSIT' : 'HEADING_TO_STORE',
       }).catch(() => { });
 
       broadcastLiveEvent('ORDER_UPDATE', {
@@ -2919,11 +3717,13 @@ export default function App() {
         currentStopIndex: nextStopIdx,
         legStartedAt: now,
         roadPointIndex: 0,
-        boltCoords: endOfLegCoord,
+        boltCoords: nextStartCoord,
         journeyAlert: progressAlert,
+        eta: nextEta,
+        courierArrivedOutside: false,
         status: 'On the Way',
         boltRider: ord.boltRider,
-        boltStatus: 'IN_TRANSIT',
+        boltStatus: isNextLegFinal ? 'IN_TRANSIT' : 'HEADING_TO_STORE',
       });
 
       return {
@@ -2932,39 +3732,49 @@ export default function App() {
         currentStopIndex: nextStopIdx,
         legStartedAt: now,
         roadPointIndex: 0,
-        boltCoords: endOfLegCoord,
+        boltCoords: nextStartCoord,
         journeyAlert: progressAlert,
+        eta: nextEta,
+        courierArrivedOutside: false,
         status: 'On the Way',
+        boltStatus: isNextLegFinal ? 'IN_TRANSIT' : 'HEADING_TO_STORE',
       };
     }
 
-    // Case B: Courier reached the customer destination!
-    // Courier parks outside client's residence and announces arrival with Security PIN. Awaits client handover confirmation!
+    // Case B: Final Leg completed! Courier reached customer destination!
     const arrivedAlert = `🛵 Courier Musa Ibrahim has arrived outside your address! Provide Security PIN (${ord.deliveryPin || '2489'}) to receive packages.`;
+    const arrivalTime = ord.arrivedOutsideAt || (ord.hasNotifiedArrived ? (legStartedAt + legDurationMs) : now);
+
     if (!ord.hasNotifiedArrived && !ord.courierArrivedOutside) {
       notifyCourierArrived(ord);
-      updateDatabaseOrderStatus(ord.id, {
+      const arrivalPayload = {
         stops: verifiedStops,
         boltCoords: destCoord,
         eta: 'Arrived outside gate',
         journeyAlert: arrivedAlert,
         courierArrivedOutside: true,
         hasNotifiedArrived: true,
-      }).catch(() => { });
+        arrivedOutsideAt: now,
+        boltStatus: 'ARRIVED',
+        status: 'On the Way',
+      };
+      updateDatabaseOrderStatus(ord.id, arrivalPayload).catch(() => { });
 
       broadcastLiveEvent('ORDER_UPDATE', {
         orderId: ord.id,
-        stops: verifiedStops,
-        boltCoords: destCoord,
-        eta: 'Arrived outside gate',
-        journeyAlert: arrivedAlert,
+        ...arrivalPayload,
         boltRider: ord.boltRider,
-        boltStatus: 'ARRIVED',
-        courierArrivedOutside: true,
-        hasNotifiedArrived: true,
       });
+
+      return {
+        ...ord,
+        ...arrivalPayload,
+        currentStopIndex: finalLegIndex,
+        roadPointIndex: totalPoints - 1,
+      };
     }
 
+    // Courier remains parked outside the customer's gate until the customer confirms delivery handover
     return {
       ...ord,
       stops: verifiedStops,
@@ -2973,9 +3783,11 @@ export default function App() {
       roadPointIndex: totalPoints - 1,
       hasNotifiedArrived: true,
       courierArrivedOutside: true,
+      arrivedOutsideAt: arrivalTime,
       eta: 'Arrived outside gate',
       journeyAlert: arrivedAlert,
       status: 'On the Way',
+      boltStatus: 'ARRIVED',
     };
   }
 
@@ -2987,6 +3799,7 @@ export default function App() {
         const now = Date.now();
         const next = prev.map((ord) => {
           if (
+            ord.status !== 'On the Way' ||
             ord.status === 'Cancelled' ||
             ord.status === 'Delivered' ||
             !ord.boltRider ||
@@ -3028,6 +3841,8 @@ export default function App() {
         const item = payload.new;
         updateAndPersistOrders((prev) => {
           if (prev.some((o) => o.id === item.id)) return prev;
+          const riderMeta = (typeof item.bolt_rider === 'object' && item.bolt_rider) ? item.bolt_rider : {};
+          const insStops = Array.isArray(riderMeta.stops) ? riderMeta.stops : [];
           // 🔔 Audio Beep & Push: Only notify on truly brand-new external orders
           notifyOrderPlaced({
             id: item.id,
@@ -3048,8 +3863,18 @@ export default function App() {
               deliveryFee: Number(item.delivery_fee),
               boltStatus: item.bolt_status,
               boltTrackingCode: item.bolt_tracking_code,
-              boltRider: item.bolt_rider,
+              boltRider: (item.status === 'On the Way' && riderMeta.name) ? riderMeta : null,
               boltCoords: item.bolt_coords,
+              riderOrigin: riderMeta.riderOrigin || null,
+              stops: insStops,
+              roadRouteCoordinates: Array.isArray(riderMeta.roadRouteCoordinates) ? riderMeta.roadRouteCoordinates : [],
+              roadLegs: Array.isArray(riderMeta.roadLegs) ? riderMeta.roadLegs : [],
+              snappedWaypoints: Array.isArray(riderMeta.snappedWaypoints) ? riderMeta.snappedWaypoints : [],
+              isMultiStore: Boolean(riderMeta.isMultiStore || insStops.length > 1),
+              currentStopIndex: Number(riderMeta.currentStopIndex) || 0,
+              roadPointIndex: Number(riderMeta.roadPointIndex) || 0,
+              legStartedAt: item.status === 'On the Way' ? (Number(riderMeta.legStartedAt) || Date.now()) : 0,
+              journeyAlert: riderMeta.journeyAlert || null,
               status: item.status,
               eta: item.eta,
               deliveryPin: item.delivery_pin,
@@ -3069,40 +3894,127 @@ export default function App() {
         });
       } else if (payload.eventType === 'UPDATE' && payload.new) {
         const updated = payload.new;
-        updateAndPersistOrders((prev) =>
-          prev.map((o) => {
-            if (o.id === updated.id) {
-              const riderPayload = (typeof updated.bolt_rider === 'object' && updated.bolt_rider) ? updated.bolt_rider : {};
-              const stops = (riderPayload.stops && Array.isArray(riderPayload.stops) && riderPayload.stops.length > 0)
-                ? riderPayload.stops
-                : o.stops;
-              const isOrderOnTheWay = updated.status === 'On the Way' || o.status === 'On the Way';
-              const hasRider = Boolean(riderPayload.name && riderPayload.phone);
-              const riderObj = hasRider ? {
-                id: riderPayload.id || 'bolt-rider-01',
-                name: riderPayload.name,
-                phone: riderPayload.phone,
-                rating: riderPayload.rating || '4.95',
-                trips: riderPayload.trips || 1420,
-                vehicle: riderPayload.vehicle || 'Bajaj Boxer 150 (Red)',
-                plate: riderPayload.plate || 'ABJ-492-KW',
-                avatar: riderPayload.avatar || '🛵',
-              } : (isOrderOnTheWay ? {
-                id: 'bolt-rider-01',
-                name: 'Musa Ibrahim',
-                phone: '+234 803 294 1194',
-                rating: '4.95',
-                trips: 1420,
-                vehicle: 'Bajaj Boxer 150 (Red)',
-                plate: 'ABJ-492-KW',
-                avatar: '🛵',
-              } : null);
+        updateAndPersistOrders((prev) => {
+          const exists = prev.some((o) => o.id === updated.id);
+          const riderPayload = (typeof updated.bolt_rider === 'object' && updated.bolt_rider) ? updated.bolt_rider : {};
+          const stops = (riderPayload.stops && Array.isArray(riderPayload.stops) && riderPayload.stops.length > 0)
+            ? riderPayload.stops
+            : (Array.isArray(updated.stops) ? updated.stops : []);
+          const isOrderOnTheWay = updated.status === 'On the Way';
+          const hasRider = Boolean(riderPayload.name && riderPayload.phone);
+          const riderObj = hasRider ? {
+            id: riderPayload.id || 'bolt-rider-01',
+            name: riderPayload.name,
+            phone: riderPayload.phone,
+            rating: riderPayload.rating || '4.95',
+            trips: riderPayload.trips || 1420,
+            vehicle: riderPayload.vehicle || 'Bajaj Boxer 150 (Red)',
+            plate: riderPayload.plate || 'ABJ-492-KW',
+            avatar: riderPayload.avatar || '🛵',
+          } : (isOrderOnTheWay ? {
+            id: 'bolt-rider-01',
+            name: 'Musa Ibrahim',
+            phone: '+234 803 294 1194',
+            rating: '4.95',
+            trips: 1420,
+            vehicle: 'Bajaj Boxer 150 (Red)',
+            plate: 'ABJ-492-KW',
+            avatar: '🛵',
+          } : null);
 
+          if (!exists) {
+            // Newly routed order or multi-store transfer not yet present in local state
+            const newOrderObj = {
+              id: updated.id,
+              storeId: updated.store_id,
+              storeName: updated.store_name,
+              itemsCount: updated.items_count || (updated.items ? updated.items.length : 1),
+              items: updated.items || [],
+              subtotal: Number(updated.subtotal) || 0,
+              total: Number(updated.total) || 0,
+              vendorPayout: Number(updated.vendor_payout) || 0,
+              deliveryPartner: updated.delivery_partner || 'bolt',
+              deliveryFee: Number(updated.delivery_fee) || 1200,
+              boltStatus: updated.bolt_status,
+              boltTrackingCode: updated.bolt_tracking_code,
+              boltRider: riderObj,
+              boltCoords: updated.bolt_coords,
+              status: updated.status || 'New Order',
+              eta: updated.eta,
+              deliveryPin: updated.delivery_pin,
+              pickupPin: updated.pickup_pin,
+              customerName: updated.customer_name,
+              customerPhone: updated.customer_phone,
+              customerAddress: updated.customer_address,
+              deliveryLocation: {
+                latitude: updated.delivery_lat,
+                longitude: updated.delivery_lng,
+              },
+              stops: stops,
+              isMultiStore: riderPayload.isMultiStore !== undefined ? riderPayload.isMultiStore : (stops.length > 1),
+              currentStopIndex: Number(riderPayload.currentStopIndex) || 0,
+              roadPointIndex: Number(riderPayload.roadPointIndex) || 0,
+              legStartedAt: Number(riderPayload.legStartedAt) || 0,
+              journeyAlert: riderPayload.journeyAlert,
+              messages: (riderPayload.messages && Array.isArray(riderPayload.messages)) ? riderPayload.messages : [],
+              outOfStockProposal: riderPayload.outOfStockProposal,
+              replacementProposal: riderPayload.replacementProposal,
+              createdAt: updated.created_at
+                ? new Date(updated.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : '12:00 PM',
+              timestamp: updated.created_at ? new Date(updated.created_at).getTime() : Date.now(),
+            };
+
+            const myStoreId = currentMerchantStoreRef.current?.id;
+            const hasStopForMyStore = stops.some((st) => st.storeId === myStoreId);
+            if (appModeRef.current === 'merchant' && hasStopForMyStore) {
+              try {
+                playAudioBeep('merchant_new_order');
+              } catch (e) {}
+              try {
+                notifyOrderPlaced({
+                  id: newOrderObj.id,
+                  storeId: myStoreId,
+                  storeName: currentMerchantStoreRef.current?.name || updated.store_name,
+                  itemsCount: newOrderObj.itemsCount,
+                  total: newOrderObj.total,
+                });
+              } catch (e) {}
+            }
+
+            return [newOrderObj, ...prev];
+          }
+
+          return prev.map((o) => {
+            if (o.id === updated.id) {
               return {
                 ...o,
+                storeId: updated.store_id || o.storeId,
+                storeName: updated.store_name || o.storeName,
+                transferredFromStoreId: riderPayload.transferredFromStoreId !== undefined ? riderPayload.transferredFromStoreId : (o.transferredFromStoreId || null),
+                transferredFromStoreName: riderPayload.transferredFromStoreName !== undefined ? riderPayload.transferredFromStoreName : (o.transferredFromStoreName || null),
+                transferredFromStoreIds: Array.from(new Set([
+                  ...(Array.isArray(o.transferredFromStoreIds) ? o.transferredFromStoreIds : []),
+                  ...(Array.isArray(riderPayload.transferredFromStoreIds) ? riderPayload.transferredFromStoreIds : []),
+                  o.transferredFromStoreId,
+                  riderPayload.transferredFromStoreId,
+                ].filter(Boolean).map(String))),
+                transferredFromStoreNames: Array.from(new Set([
+                  ...(Array.isArray(o.transferredFromStoreNames) ? o.transferredFromStoreNames : []),
+                  ...(Array.isArray(riderPayload.transferredFromStoreNames) ? riderPayload.transferredFromStoreNames : []),
+                  o.transferredFromStoreName,
+                  riderPayload.transferredFromStoreName,
+                ].filter(Boolean).map((n) => String(n).trim().toLowerCase()))),
                 status: updated.status || o.status,
-                stops: stops,
-                journeyAlert: riderPayload.journeyAlert || o.journeyAlert,
+                stops: stops.length > 0 ? stops : o.stops,
+                isMultiStore: riderPayload.isMultiStore !== undefined ? riderPayload.isMultiStore : (stops.length > 1 ? true : o.isMultiStore),
+                items: (updated.items && updated.items.length > 0) ? updated.items : o.items,
+                itemsCount: updated.items_count || (updated.items ? updated.items.length : o.itemsCount),
+                subtotal: updated.subtotal !== undefined ? Number(updated.subtotal) : o.subtotal,
+                total: updated.total !== undefined ? Number(updated.total) : o.total,
+                deliveryFee: updated.delivery_fee !== undefined ? Number(updated.delivery_fee) : o.deliveryFee,
+                outOfStockProposal: mergeProposalField(o.outOfStockProposal, riderPayload.outOfStockProposal),
+                replacementProposal: mergeProposalField(o.replacementProposal, riderPayload.replacementProposal),
                 boltStatus: updated.bolt_status || o.boltStatus,
                 boltRider: riderObj || o.boltRider,
                 boltCoords: updated.bolt_coords || o.boltCoords,
@@ -3122,14 +4034,30 @@ export default function App() {
                   }
                   return merged;
                 })(),
-                currentStopIndex: riderPayload.currentStopIndex !== undefined ? Number(riderPayload.currentStopIndex) : o.currentStopIndex,
+                currentStopIndex: (() => {
+                  const mergedSt = stops.length > 0 ? stops : (o.stops || []);
+                  const firstUnpicked = mergedSt.findIndex((s) => s.pickupStatus !== 'picked_up' && s.status !== 'Completed');
+                  const maxAllowed = firstUnpicked === -1 ? mergedSt.length : firstUnpicked;
+                  const rawIdx = riderPayload.currentStopIndex !== undefined ? Number(riderPayload.currentStopIndex) : (o.currentStopIndex || 0);
+                  return Math.min(Math.max(0, rawIdx), maxAllowed);
+                })(),
                 roadPointIndex: riderPayload.roadPointIndex !== undefined ? Number(riderPayload.roadPointIndex) : o.roadPointIndex,
-                legStartedAt: riderPayload.legStartedAt !== undefined ? Number(riderPayload.legStartedAt) : o.legStartedAt,
+                legStartedAt: (updated.status === 'On the Way' || o.status === 'On the Way')
+                  ? (Math.max(Number(riderPayload.legStartedAt) || 0, Number(o.legStartedAt) || 0) || Date.now())
+                  : 0,
+                riderOrigin: riderPayload.riderOrigin || o.riderOrigin || null,
+                roadLegs: (Array.isArray(riderPayload.roadLegs) && riderPayload.roadLegs.length === Math.max(1, (stops.length || o.stops?.length || 1)) + 1)
+                  ? riderPayload.roadLegs
+                  : o.roadLegs,
+                roadRouteCoordinates: (Array.isArray(riderPayload.roadRouteCoordinates) && riderPayload.roadRouteCoordinates.length > 1)
+                  ? riderPayload.roadRouteCoordinates
+                  : o.roadRouteCoordinates,
+                journeyAlert: riderPayload.journeyAlert || o.journeyAlert,
               };
             }
             return o;
-          })
-        );
+          });
+        });
       }
     });
 
@@ -3176,20 +4104,71 @@ export default function App() {
                   ? Boolean(meta.isOpen)
                   : true));
 
-          const rawImg = meta.image || (isPharmacy
-            ? 'https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=500&q=65'
-            : 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=500&q=65');
+          const defaultStoreMatch = STORES_AROUND_ME.find((s) => s.id === dbStore.id);
+          const inferredProfile = normalizeStoreTaxonomyProfile({
+            ...(defaultStoreMatch || {}),
+            ...dbStore,
+            primaryDepartmentId: meta.primaryDepartmentId || defaultStoreMatch?.primaryDepartmentId || (isPharmacy ? 'pharmacy' : undefined),
+            storeTypeFormat: meta.storeTypeFormat || defaultStoreMatch?.storeTypeFormat || (isPharmacy ? 'pharmacy' : undefined),
+            storeTypeLabel: meta.storeTypeLabel || defaultStoreMatch?.storeTypeLabel,
+          });
+          const resolvedDeptId =
+            meta.primaryDepartmentId ||
+            inferredProfile.primaryDepartmentId ||
+            defaultStoreMatch?.primaryDepartmentId ||
+            (isPharmacy ? 'pharmacy' : 'grocery');
+          const resolvedFormat =
+            meta.storeTypeFormat ||
+            inferredProfile.storeTypeFormat ||
+            defaultStoreMatch?.storeTypeFormat ||
+            (isPharmacy ? 'pharmacy' : 'supermarket');
+          const categoryDefaultImg = getDefaultStoreCoverImage(
+            resolvedDeptId,
+            resolvedFormat,
+            dbStore.name || dbStore.category
+          );
+          const isGenericSupermarketImg =
+            meta.image &&
+            meta.image.includes('photo-1578916171728-46686eac8d58') &&
+            resolvedDeptId &&
+            resolvedDeptId !== 'grocery' &&
+            dbStore.id !== 'store-1792192743654';
+          const rawImg = (!isGenericSupermarketImg && meta.image) || defaultStoreMatch?.image || categoryDefaultImg;
 
           const optimizedImg = optimizeImageUrl(rawImg, 500, 65);
 
           return {
+            ...(defaultStoreMatch || {}),
             id: dbStore.id,
             name: dbStore.name,
             storeType: isPharmacy ? 'pharmacy' : 'grocery',
+            primaryDepartmentId: resolvedDeptId,
+            storeTypeFormat: resolvedFormat,
+            storeTypeLabel:
+              meta.storeTypeLabel ||
+              inferredProfile.storeTypeLabel ||
+              defaultStoreMatch?.storeTypeLabel ||
+              (isPharmacy ? 'Licensed Pharmacy & Healthcare' : 'Supermarket & Hypermarket'),
+            additionalDepartmentIds:
+              Array.isArray(meta.additionalDepartmentIds) && meta.additionalDepartmentIds.length > 0
+                ? meta.additionalDepartmentIds
+                : (resolvedDeptId === 'grocery' ? (defaultStoreMatch?.additionalDepartmentIds || []) : []),
+            specialisationSubcategories:
+              Array.isArray(meta.specialisationSubcategories) && meta.specialisationSubcategories.length > 0
+                ? meta.specialisationSubcategories
+                : (inferredProfile.specialisationSubcategories || defaultStoreMatch?.specialisationSubcategories || []),
+            specialisationProducts:
+              Array.isArray(meta.specialisationProducts) && meta.specialisationProducts.length > 0
+                ? meta.specialisationProducts
+                : (defaultStoreMatch?.specialisationProducts || []),
+            regulatoryStatus: meta.regulatoryStatus || (isPharmacy ? 'verified' : 'not_applicable'),
+            pcnLicenseNo: meta.pcnLicenseNo || '',
+            premisesLicenseNo: meta.premisesLicenseNo || '',
+            dispensingScope: Array.isArray(meta.dispensingScope) ? meta.dispensingScope : [],
             category: categoryKey,
             categoryLabel: isPharmacy
               ? 'Licensed Community Pharmacy'
-              : (dbStore.category || 'Gourmet & Groceries'),
+              : (meta.storeTypeLabel || inferredProfile.storeTypeLabel || defaultStoreMatch?.categoryLabel || dbStore.category || 'Supermarket & Hypermarket'),
             pharmacist:
               meta.pharmacist ||
               (isPharmacy
@@ -3206,8 +4185,8 @@ export default function App() {
             deliveryTime: '20-30 min',
             deliveryFee: dbStore.delivery_fee ? `₦${Number(dbStore.delivery_fee).toLocaleString()}` : '₦1,200',
             freeDeliveryThreshold: 25000,
-            tag: isPharmacy ? 'VERIFIED PHARMACY' : 'VERIFIED MERCHANT',
-            badgeColor: isPharmacy ? '#2563EB' : COLORS.emeraldPrimary,
+            tag: isPharmacy ? 'VERIFIED PHARMACY' : (inferredProfile.badgeLabel || 'VERIFIED MERCHANT'),
+            badgeColor: isPharmacy ? '#2563EB' : (inferredProfile.badgeColor || COLORS.emeraldPrimary),
             address: dbStore.address || 'Abuja, Nigeria',
             district: dbStore.district || 'Maitama, Abuja',
             latitude: Number(dbStore.latitude) || 9.0882,
@@ -3226,6 +4205,12 @@ export default function App() {
             closeTime: meta.closeTime,
             operatingDays: meta.operatingDays,
             is24Hours: meta.is24Hours,
+            allowCustomerMessaging:
+              meta.allowCustomerMessaging !== undefined
+                ? meta.allowCustomerMessaging
+                : (dbStore.allowCustomerMessaging !== undefined
+                    ? Boolean(dbStore.allowCustomerMessaging)
+                    : (dbStore.allow_customer_messaging !== undefined ? Boolean(dbStore.allow_customer_messaging) : true)),
           };
         };
 
@@ -3240,11 +4225,40 @@ export default function App() {
             return {
               ...existing,
               ...dbStore,
+              primaryDepartmentId: dbStore.primaryDepartmentId || existing.primaryDepartmentId,
+              storeTypeFormat: dbStore.storeTypeFormat || existing.storeTypeFormat,
+              storeTypeLabel: dbStore.storeTypeLabel || existing.storeTypeLabel,
+              additionalDepartmentIds:
+                Array.isArray(dbStore.additionalDepartmentIds) && dbStore.additionalDepartmentIds.length > 0
+                  ? dbStore.additionalDepartmentIds
+                  : (existing.additionalDepartmentIds || []),
+              specialisationSubcategories:
+                Array.isArray(dbStore.specialisationSubcategories) && dbStore.specialisationSubcategories.length > 0
+                  ? dbStore.specialisationSubcategories
+                  : (existing.specialisationSubcategories || []),
+              specialisationProducts:
+                Array.isArray(dbStore.specialisationProducts) && dbStore.specialisationProducts.length > 0
+                  ? dbStore.specialisationProducts
+                  : (existing.specialisationProducts || []),
+              image: optimizeImageUrl(dbStore.image || existing.image, 800, 80),
               products: (existing.products && existing.products.length > 0) ? existing.products : dbStore.products,
             };
           });
-          AsyncStorage.setItem('getit_stores_list', JSON.stringify(mergedCloud)).catch(console.warn);
-          return mergedCloud;
+          // Ensure featured default stores (like Mega Stores) never disappear if not yet in cloudStores
+          const cloudIds = new Set(mergedCloud.map((s) => s.id));
+          STORES_AROUND_ME.forEach((defStore) => {
+            if (!cloudIds.has(defStore.id)) {
+              const existingDef = prevMap.get(defStore.id) || defStore;
+              mergedCloud.push({
+                ...defStore,
+                ...existingDef,
+                image: optimizeImageUrl(existingDef.image || defStore.image, 800, 80),
+              });
+            }
+          });
+          const finalCloudList = dedupeStoreObjectsList(mergedCloud);
+          AsyncStorage.setItem('getit_stores_list', JSON.stringify(finalCloudList)).catch(console.warn);
+          return finalCloudList;
         });
 
         // Fast parallel prefetching for all store images
@@ -3267,10 +4281,16 @@ export default function App() {
         });
 
         // 2. Fetch custom store inventories in the background without blocking the UI
+        const allStoreIdsToFetch = Array.from(
+          new Set([
+            ...cloudStores.map((dbStore) => dbStore.id),
+            ...STORES_AROUND_ME.map((defStore) => defStore.id),
+          ].filter(Boolean))
+        );
         Promise.all(
-          cloudStores.map(async (dbStore) => {
-            const inventory = await getStoreInventory(dbStore.id);
-            return { storeId: dbStore.id, inventory };
+          allStoreIdsToFetch.map(async (storeId) => {
+            const inventory = await getStoreInventory(storeId);
+            return { storeId, inventory };
           })
         )
           .then((invList) => {
@@ -3315,8 +4335,19 @@ export default function App() {
         const newStoreObj = {
           id: dbStore.id,
           name: dbStore.name,
+          storeType: meta.primaryDepartmentId === 'pharmacy' || categoryKey === 'pharmacy' ? 'pharmacy' : 'grocery',
+          primaryDepartmentId: meta.primaryDepartmentId || undefined,
+          storeTypeFormat: meta.storeTypeFormat || undefined,
+          storeTypeLabel: meta.storeTypeLabel || undefined,
+          additionalDepartmentIds: Array.isArray(meta.additionalDepartmentIds) ? meta.additionalDepartmentIds : [],
+          specialisationSubcategories: Array.isArray(meta.specialisationSubcategories) ? meta.specialisationSubcategories : [],
+          specialisationProducts: Array.isArray(meta.specialisationProducts) ? meta.specialisationProducts : [],
+          regulatoryStatus: meta.regulatoryStatus || 'not_applicable',
+          pcnLicenseNo: meta.pcnLicenseNo || '',
+          premisesLicenseNo: meta.premisesLicenseNo || '',
+          dispensingScope: Array.isArray(meta.dispensingScope) ? meta.dispensingScope : [],
           category: categoryKey,
-          categoryLabel: dbStore.category || 'Gourmet & Groceries',
+          categoryLabel: meta.storeTypeLabel || dbStore.category || 'Gourmet & Groceries',
           rating: Number(dbStore.rating) || 5.0,
           reviewCount: 'New',
           distance: '0.8 km',
@@ -3339,6 +4370,12 @@ export default function App() {
           closeTime: meta.closeTime,
           operatingDays: meta.operatingDays,
           is24Hours: is24H,
+          allowCustomerMessaging:
+            meta.allowCustomerMessaging !== undefined
+              ? meta.allowCustomerMessaging
+              : (dbStore.allowCustomerMessaging !== undefined
+                  ? Boolean(dbStore.allowCustomerMessaging)
+                  : (dbStore.allow_customer_messaging !== undefined ? Boolean(dbStore.allow_customer_messaging) : true)),
         };
 
         if (newStoreObj.image) Image.prefetch(newStoreObj.image).catch(() => {});
@@ -3380,14 +4417,31 @@ export default function App() {
                 ? 'heritage'
                 : 'gourmet';
 
+        const messagingAllowed =
+          meta.allowCustomerMessaging !== undefined
+            ? meta.allowCustomerMessaging
+            : (dbStore.allowCustomerMessaging !== undefined
+                ? Boolean(dbStore.allowCustomerMessaging)
+                : (dbStore.allow_customer_messaging !== undefined ? Boolean(dbStore.allow_customer_messaging) : undefined));
+
         updateAndPersistStores((prev) =>
           prev.map((s) => {
             if (s.id !== dbStore.id) return s;
             return {
               ...s,
               name: dbStore.name || s.name,
+              primaryDepartmentId: meta.primaryDepartmentId || s.primaryDepartmentId,
+              storeTypeFormat: meta.storeTypeFormat || s.storeTypeFormat,
+              storeTypeLabel: meta.storeTypeLabel || s.storeTypeLabel,
+              additionalDepartmentIds: Array.isArray(meta.additionalDepartmentIds) ? meta.additionalDepartmentIds : (s.additionalDepartmentIds || []),
+              specialisationSubcategories: Array.isArray(meta.specialisationSubcategories) ? meta.specialisationSubcategories : (s.specialisationSubcategories || []),
+              specialisationProducts: Array.isArray(meta.specialisationProducts) ? meta.specialisationProducts : (s.specialisationProducts || []),
+              regulatoryStatus: meta.regulatoryStatus || s.regulatoryStatus,
+              pcnLicenseNo: meta.pcnLicenseNo || s.pcnLicenseNo,
+              premisesLicenseNo: meta.premisesLicenseNo || s.premisesLicenseNo,
+              dispensingScope: Array.isArray(meta.dispensingScope) ? meta.dispensingScope : (s.dispensingScope || []),
               category: categoryKey || s.category,
-              categoryLabel: dbStore.category || s.categoryLabel,
+              categoryLabel: meta.storeTypeLabel || dbStore.category || s.categoryLabel,
               address: dbStore.address || s.address,
               district: dbStore.district || s.district,
               latitude: Number(dbStore.latitude) || s.latitude,
@@ -3402,6 +4456,10 @@ export default function App() {
               closeTime: meta.closeTime || s.closeTime,
               operatingDays: meta.operatingDays || s.operatingDays,
               is24Hours: is24H,
+              allowCustomerMessaging:
+                messagingAllowed !== undefined
+                  ? messagingAllowed
+                  : (s.allowCustomerMessaging !== undefined ? s.allowCustomerMessaging : true),
               image: optimizeImageUrl(meta.image || s.image, 500, 65),
             };
           })
@@ -3430,6 +4488,10 @@ export default function App() {
             closeTime: meta.closeTime || prev.closeTime,
             operatingDays: meta.operatingDays || prev.operatingDays,
             is24Hours: is24H,
+            allowCustomerMessaging:
+              messagingAllowed !== undefined
+                ? messagingAllowed
+                : (prev.allowCustomerMessaging !== undefined ? prev.allowCustomerMessaging : true),
             image: meta.image || prev.image,
           };
         });
@@ -3576,6 +4638,17 @@ export default function App() {
         handleStorePayload({ eventType: 'INSERT', new: event.store });
       } else if (event.eventType === 'STORE_DELETE') {
         handleStorePayload({ eventType: 'DELETE', old: { id: event.storeId } });
+      } else if (event.eventType === 'TAXONOMY_UPDATE' && event.taxonomy) {
+        setMarketplaceTaxonomy(event.taxonomy);
+      } else if (event.eventType === 'CATEGORY_REQUEST_UPDATE') {
+        if (Array.isArray(event.requests)) {
+          setCategoryRequests(event.requests);
+        } else if (event.request) {
+          setCategoryRequests((prev) => [
+            event.request,
+            ...prev.filter((r) => r.id !== event.request.id),
+          ]);
+        }
       } else if (event.eventType === 'INVENTORY_INSERT' || event.eventType === 'INVENTORY_UPDATE') {
         handleInventoryPayload({ eventType: event.eventType === 'INVENTORY_INSERT' ? 'INSERT' : 'UPDATE', new: event.item });
       } else if (event.eventType === 'INVENTORY_DELETE') {
@@ -4048,12 +5121,112 @@ export default function App() {
           incomingAudioQueueRef.current.push(burstPayload.audioBase64);
           processIncomingAudioQueue();
         }
-      } else if (event.eventType === 'ORDER_UPDATE') {
-        const payload = event.payload || event;
-        if (payload.replacementProposal && payload.replacementProposal.status === 'pending') {
-          setCustomerDismissedReplacementId(null);
-          if (lastChimedReplacementProposalRef) {
+      } else if (event.eventType === 'MERCHANT_ORDER_CANCELLED') {
+        const rawPayload = event.payload || event;
+        const payload = rawPayload.order ? { ...rawPayload.order, ...rawPayload } : rawPayload;
+        const ordId = payload.orderId || payload.id;
+        const myStoreId = currentMerchantStoreRef.current?.id;
+        const myStoreName = (currentMerchantStoreRef.current?.name || '').toLowerCase();
+
+        const isCancelledForMe =
+          (payload.storeId && String(payload.storeId) === String(myStoreId)) ||
+          (payload.storeName && myStoreName && payload.storeName.toLowerCase() === myStoreName);
+
+        // Always update order state cleanly so transferred orders move to the new store and leave the old store
+        updateAndPersistOrders((prev) =>
+          prev.map((o) => {
+            if (o.id !== ordId) return o;
+            const fromId = payload.storeId || o.transferredFromStoreId || myStoreId;
+            const fromName = payload.storeName || o.transferredFromStoreName || currentMerchantStoreRef.current?.name;
+            return {
+              ...o,
+              ...(rawPayload.order ? rawPayload.order : {}),
+              transferredFromStoreId: fromId,
+              transferredFromStoreName: fromName,
+              transferredFromStoreIds: Array.from(new Set([
+                ...(Array.isArray(o.transferredFromStoreIds) ? o.transferredFromStoreIds : []),
+                fromId,
+              ].filter(Boolean).map(String))),
+              transferredFromStoreNames: Array.from(new Set([
+                ...(Array.isArray(o.transferredFromStoreNames) ? o.transferredFromStoreNames : []),
+                fromName,
+              ].filter(Boolean).map((n) => String(n).trim().toLowerCase()))),
+              storeId: payload.newStoreId || rawPayload.order?.storeId || o.storeId,
+              storeName: payload.newStoreName || rawPayload.order?.storeName || o.storeName,
+              stops: rawPayload.order?.stops || payload.stops || o.stops,
+              items: rawPayload.order?.items || payload.items || o.items,
+              status: payload.newStoreId || rawPayload.order ? 'New Order' : 'Cancelled',
+              outOfStockProposal: mergeProposalField(o.outOfStockProposal, rawPayload.order?.outOfStockProposal || payload.outOfStockProposal),
+              cancellationReason: payload.reason || 'Order transferred to another store',
+            };
+          })
+        );
+
+        if (isCancelledForMe && appModeRef.current === 'merchant') {
+          Alert.alert(
+            '⚠️ Order Transferred to Another Store',
+            payload.reason || `Order #${ordId} was transferred to another store by the customer due to out-of-stock items. It has been removed from your active queue.`
+          );
+        }
+      } else if (event.eventType === 'ORDER_UPDATE' || event.eventType === 'MERCHANT_NEW_ORDER') {
+        const rawPayload = event.payload || event;
+        const payload = rawPayload.order ? { ...rawPayload.order, ...rawPayload } : rawPayload;
+        const ordId = payload.orderId || payload.id;
+        const myStoreId = currentMerchantStoreRef.current?.id;
+        const myStoreName = (currentMerchantStoreRef.current?.name || '').trim().toLowerCase();
+
+        // Check if this merchant owns any stop in the payload
+        const isTargetedToMyStore =
+          (myStoreId && (String(payload.storeId) === String(myStoreId) || String(payload.targetStoreId) === String(myStoreId))) ||
+          (myStoreName && payload.storeName && payload.storeName.trim().toLowerCase() === myStoreName) ||
+          (Array.isArray(payload.stops) &&
+            payload.stops.some(
+              (st) =>
+                (myStoreId && st.storeId && String(st.storeId) === String(myStoreId)) ||
+                (myStoreName && st.storeName && st.storeName.trim().toLowerCase() === myStoreName)
+            ));
+
+        if (appModeRef.current === 'merchant' && isTargetedToMyStore && event.eventType === 'MERCHANT_NEW_ORDER') {
+          try {
+            playAudioBeep('merchant_new_order');
+          } catch (e) {}
+          Alert.alert(
+            '🔔 New Order Received!',
+            `Order #${ordId} has items assigned to ${currentMerchantStoreRef.current?.name || 'your store'}. Tap to review and prepare!`
+          );
+        }
+
+        // If order does not exist in local state on this device, insert immediately if full order provided and also sync cloud
+        const existsLocally = ordersRef.current?.some((o) => o.id === ordId);
+        if (!existsLocally) {
+          if (rawPayload.order && rawPayload.order.id) {
+            updateAndPersistOrders((prev) =>
+              prev.some((o) => o.id === rawPayload.order.id) ? prev : [rawPayload.order, ...prev]
+            );
+          }
+          syncOrdersFromCloud(false);
+        }
+
+        if (
+          payload.replacementProposal &&
+          payload.replacementProposal.status === 'pending' &&
+          (!payload.replacementProposal.id || !resolvedProposalIdsRef.current.has(payload.replacementProposal.id))
+        ) {
+          const propId = payload.replacementProposal.id || ordId;
+          if (lastChimedReplacementProposalRef.current !== propId) {
+            setCustomerDismissedReplacementId(null);
             lastChimedReplacementProposalRef.current = null;
+          }
+        }
+        if (
+          payload.outOfStockProposal &&
+          payload.outOfStockProposal.status === 'pending' &&
+          (!payload.outOfStockProposal.id || !resolvedProposalIdsRef.current.has(payload.outOfStockProposal.id))
+        ) {
+          const propId = payload.outOfStockProposal.id || ordId;
+          if (lastChimedOutOfStockProposalRef.current !== propId) {
+            setCustomerDismissedOutOfStockId(null);
+            lastChimedOutOfStockProposalRef.current = null;
           }
         }
 
@@ -4064,7 +5237,6 @@ export default function App() {
         ) {
           const prop = payload.replacementProposal;
           const isAccepted = prop.status === 'accepted';
-          const ordId = payload.orderId || payload.id;
           const decisionKey = `${ordId}_${prop.id || 'prop'}_${prop.status}`;
 
           // Check if order is already at or past Ready stage
@@ -4103,21 +5275,52 @@ export default function App() {
 
         updateAndPersistOrders((prev) =>
           prev.map((o) => {
-            if (o.id === payload.orderId) {
+            if (o.id === ordId) {
               return {
                 ...o,
-                status: payload.status || o.status,
-                replacementProposal: payload.replacementProposal !== undefined ? payload.replacementProposal : o.replacementProposal,
-                items: payload.items || o.items,
+                transferredFromStoreId: payload.transferredFromStoreId !== undefined ? payload.transferredFromStoreId : o.transferredFromStoreId,
+                transferredFromStoreName: payload.transferredFromStoreName !== undefined ? payload.transferredFromStoreName : o.transferredFromStoreName,
+                transferredFromStoreIds: Array.from(new Set([
+                  ...(Array.isArray(o.transferredFromStoreIds) ? o.transferredFromStoreIds : []),
+                  ...(Array.isArray(payload.transferredFromStoreIds) ? payload.transferredFromStoreIds : []),
+                  o.transferredFromStoreId,
+                  payload.transferredFromStoreId,
+                ].filter(Boolean).map(String))),
+                transferredFromStoreNames: Array.from(new Set([
+                  ...(Array.isArray(o.transferredFromStoreNames) ? o.transferredFromStoreNames : []),
+                  ...(Array.isArray(payload.transferredFromStoreNames) ? payload.transferredFromStoreNames : []),
+                  o.transferredFromStoreName,
+                  payload.transferredFromStoreName,
+                ].filter(Boolean).map((n) => String(n).trim().toLowerCase()))),
+                storeId: payload.storeId || o.storeId,
+                storeName: payload.storeName || o.storeName,
+                replacementProposal: mergeProposalField(o.replacementProposal, payload.replacementProposal),
+                outOfStockProposal: mergeProposalField(o.outOfStockProposal, payload.outOfStockProposal),
+                items: (payload.items && Array.isArray(payload.items) && payload.items.length > 0) ? payload.items : o.items,
+                itemsCount: payload.itemsCount || (payload.items ? payload.items.length : o.itemsCount),
                 subtotal: payload.subtotal !== undefined ? payload.subtotal : o.subtotal,
                 total: payload.total !== undefined ? payload.total : o.total,
+                deliveryFee: payload.deliveryFee !== undefined ? payload.deliveryFee : o.deliveryFee,
+                status: payload.status || o.status,
                 boltStatus: payload.boltStatus || o.boltStatus,
-                boltRider: payload.boltRider || o.boltRider || (payload.status === 'On the Way' || o.status === 'On the Way' ? { id: 'bolt-rider-01', name: 'Musa Ibrahim', phone: '+234 803 294 1194', rating: '4.95', trips: 1420, vehicle: 'Bajaj Boxer 150 (Red)', plate: 'ABJ-492-KW', avatar: '🛵' } : null),
-                stops: payload.stops || o.stops,
-                currentStopIndex: payload.currentStopIndex !== undefined ? payload.currentStopIndex : o.currentStopIndex,
+                boltRider: payload.boltRider !== undefined ? payload.boltRider : (o.boltRider || (payload.status === 'On the Way' || o.status === 'On the Way' ? { id: 'bolt-rider-01', name: 'Musa Ibrahim', phone: '+234 803 294 1194', rating: '4.95', trips: 1420, vehicle: 'Bajaj Boxer 150 (Red)', plate: 'ABJ-492-KW', avatar: '🛵' } : null)),
+                stops: (payload.stops && Array.isArray(payload.stops) && payload.stops.length > 0) ? payload.stops : o.stops,
+                isMultiStore: payload.isMultiStore !== undefined ? payload.isMultiStore : (payload.stops && payload.stops.length > 1 ? true : (payload.stops && payload.stops.length === 1 ? false : o.isMultiStore)),
+                currentStopIndex: (() => {
+                  const mergedSt = payload.stops || o.stops || [];
+                  const firstUnpicked = mergedSt.findIndex((s) => s.pickupStatus !== 'picked_up' && s.status !== 'Completed');
+                  const maxAllowed = firstUnpicked === -1 ? mergedSt.length : firstUnpicked;
+                  const rawIdx = payload.currentStopIndex !== undefined ? Number(payload.currentStopIndex) : (o.currentStopIndex || 0);
+                  return Math.min(Math.max(0, rawIdx), maxAllowed);
+                })(),
                 roadPointIndex: payload.roadPointIndex !== undefined ? payload.roadPointIndex : o.roadPointIndex,
                 legStartedAt: payload.legStartedAt !== undefined ? payload.legStartedAt : o.legStartedAt,
                 boltCoords: payload.boltCoords || o.boltCoords,
+                riderOrigin: payload.riderOrigin || o.riderOrigin,
+                roadLegs: (payload.roadLegs && payload.roadLegs.length > 0) ? payload.roadLegs : o.roadLegs,
+                roadRouteCoordinates: (payload.roadRouteCoordinates && payload.roadRouteCoordinates.length > 0) ? payload.roadRouteCoordinates : o.roadRouteCoordinates,
+                courierArrivedOutside: payload.courierArrivedOutside !== undefined ? Boolean(payload.courierArrivedOutside) : Boolean(o.courierArrivedOutside),
+                hasNotifiedArrived: payload.hasNotifiedArrived !== undefined ? Boolean(payload.hasNotifiedArrived) : Boolean(o.hasNotifiedArrived),
                 journeyAlert: payload.journeyAlert || o.journeyAlert,
                 eta: payload.eta || o.eta,
                 courierSearching: payload.courierSearching !== undefined ? payload.courierSearching : o.courierSearching,
@@ -4134,6 +5337,13 @@ export default function App() {
       if (isMounted) {
         loadCloudStores();
         syncOrdersFromCloud(false);
+        fetchActiveCommercialPolicy()
+          .then((policy) => {
+            if (isMounted && policy) {
+              setCmsBusinessRules((prev) => ({ ...prev, ...policy }));
+            }
+          })
+          .catch(() => {});
       }
     }, 30000);
 
@@ -4144,6 +5354,13 @@ export default function App() {
         setOrders((prev) => prev.map((ord) => calculateOrderRiderProgress(ord, Date.now())));
         loadCloudStores();
         syncOrdersFromCloud(false);
+        fetchActiveCommercialPolicy()
+          .then((policy) => {
+            if (isMounted && policy) {
+              setCmsBusinessRules((prev) => ({ ...prev, ...policy }));
+            }
+          })
+          .catch(() => {});
       }
     });
 
@@ -4178,10 +5395,91 @@ export default function App() {
           } catch (e) { }
         }
 
-        // Hydrate timing, live status, and image for EVERY store in the list
+        // Hydrate timing, live status, and image for EVERY store in the list (and normalize any raw DB rows)
         const hydratedStores = await Promise.all(
           baseStores.map(async (st) => {
-            let updated = { ...st };
+            const meta = parseStoreMetadata(st);
+            const isPharm =
+              st.storeType === 'pharmacy' ||
+              meta.storeType === 'pharmacy' ||
+              (st.category || '').toLowerCase().includes('pharm') ||
+              (st.name || '').toLowerCase().includes('pharm');
+            const defaultStoreMatch = STORES_AROUND_ME.find((d) => d.id === st.id);
+            const inferredLocalProfile = normalizeStoreTaxonomyProfile({
+              ...(defaultStoreMatch || {}),
+              ...st,
+              primaryDepartmentId: st.primaryDepartmentId || meta.primaryDepartmentId || defaultStoreMatch?.primaryDepartmentId || (isPharm ? 'pharmacy' : undefined),
+              storeTypeFormat: st.storeTypeFormat || meta.storeTypeFormat || defaultStoreMatch?.storeTypeFormat || (isPharm ? 'pharmacy' : undefined),
+              storeTypeLabel: st.storeTypeLabel || meta.storeTypeLabel || defaultStoreMatch?.storeTypeLabel,
+            });
+            const resolvedDeptId =
+              st.primaryDepartmentId ||
+              meta.primaryDepartmentId ||
+              inferredLocalProfile.primaryDepartmentId ||
+              defaultStoreMatch?.primaryDepartmentId ||
+              (isPharm ? 'pharmacy' : 'grocery');
+            const resolvedFormat =
+              st.storeTypeFormat ||
+              meta.storeTypeFormat ||
+              inferredLocalProfile.storeTypeFormat ||
+              defaultStoreMatch?.storeTypeFormat ||
+              (isPharm ? 'pharmacy' : 'supermarket');
+            const fallbackImg =
+              defaultStoreMatch?.image ||
+              getDefaultStoreCoverImage(resolvedDeptId, resolvedFormat, st.name || st.category);
+            const candidateImg = st.image || meta.image;
+            const isGenericSupermarketOnSpecialist =
+              candidateImg &&
+              candidateImg.includes('photo-1578916171728-46686eac8d58') &&
+              resolvedDeptId &&
+              resolvedDeptId !== 'grocery' &&
+              st.id !== 'store-1792192743654';
+
+            let updated = {
+              ...(defaultStoreMatch || {}),
+              ...st,
+              primaryDepartmentId: resolvedDeptId,
+              storeTypeFormat: resolvedFormat,
+              storeTypeLabel:
+                st.storeTypeLabel ||
+                meta.storeTypeLabel ||
+                inferredLocalProfile.storeTypeLabel ||
+                defaultStoreMatch?.storeTypeLabel,
+              additionalDepartmentIds:
+                Array.isArray(st.additionalDepartmentIds) && st.additionalDepartmentIds.length > 0
+                  ? st.additionalDepartmentIds
+                  : (resolvedDeptId === 'grocery' ? (defaultStoreMatch?.additionalDepartmentIds || []) : []),
+              specialisationSubcategories:
+                Array.isArray(st.specialisationSubcategories) && st.specialisationSubcategories.length > 0
+                  ? st.specialisationSubcategories
+                  : (inferredLocalProfile.specialisationSubcategories || defaultStoreMatch?.specialisationSubcategories || []),
+              specialisationProducts:
+                Array.isArray(st.specialisationProducts) && st.specialisationProducts.length > 0
+                  ? st.specialisationProducts
+                  : (defaultStoreMatch?.specialisationProducts || []),
+              storeType: st.storeType || (isPharm ? 'pharmacy' : 'grocery'),
+              category: st.category && ['gourmet', 'organic', 'bakery', 'cellar', 'heritage', 'pharmacy'].includes(st.category)
+                ? st.category
+                : (isPharm ? 'pharmacy' : 'gourmet'),
+              categoryLabel:
+                inferredLocalProfile.storeTypeLabel ||
+                st.categoryLabel ||
+                (isPharm ? 'Licensed Community Pharmacy' : (st.category || 'Supermarket & Hypermarket')),
+              rating: Number(st.rating) || 5.0,
+              reviewCount: st.reviewCount || 'Verified',
+              distance: st.distance || '0.8 km',
+              deliveryTime: st.deliveryTime || '15-25 min',
+              deliveryFee: st.deliveryFee || (st.delivery_fee ? `₦${Number(st.delivery_fee).toLocaleString()}` : '₦1,200'),
+              freeDeliveryThreshold: st.freeDeliveryThreshold || 25000,
+              tag: isPharm ? 'VERIFIED PHARMACY' : (inferredLocalProfile.badgeLabel || st.tag || 'VERIFIED MERCHANT'),
+              badgeColor: isPharm ? '#2563EB' : (inferredLocalProfile.badgeColor || st.badgeColor || COLORS.emeraldPrimary),
+              description: st.description || `${st.name || 'Store'} — fresh provisions, artisan goods and rapid doorstep delivery across Abuja.`,
+              openTime: st.openTime || meta.openTime || '08:00 AM',
+              closeTime: st.closeTime || meta.closeTime || '10:00 PM',
+              operatingDays: st.operatingDays || meta.operatingDays || 'Mon - Sun (Daily)',
+              is24Hours: st.is24Hours !== undefined ? Boolean(st.is24Hours) : Boolean(meta.is24Hours),
+              image: optimizeImageUrl((!isGenericSupermarketOnSpecialist && candidateImg) || fallbackImg, 800, 80),
+            };
             try {
               const timingJson = await AsyncStorage.getItem(`getit_store_timing_${st.id}`);
               if (timingJson) {
@@ -4195,18 +5493,23 @@ export default function App() {
               }
               const imgVal = await AsyncStorage.getItem(`getit_store_image_${st.id}`);
               if (imgVal) {
-                updated.image = imgVal;
+                updated.image = optimizeImageUrl(imgVal, 800, 80);
               }
             } catch (e) { }
             return updated;
           })
         );
-        const seenHydrated = new Set();
-        const dedupedHydrated = hydratedStores.filter((s) => {
-          if (!s || !s.id || seenHydrated.has(s.id)) return false;
-          seenHydrated.add(s.id);
-          return true;
+        const combinedHydrated = [...hydratedStores];
+        const existingHydratedIds = new Set(combinedHydrated.map((s) => s?.id).filter(Boolean));
+        STORES_AROUND_ME.forEach((defStore) => {
+          if (!existingHydratedIds.has(defStore.id)) {
+            combinedHydrated.push({
+              ...defStore,
+              image: optimizeImageUrl(defStore.image, 800, 80),
+            });
+          }
         });
+        const dedupedHydrated = dedupeStoreObjectsList(combinedHydrated);
         setStoresList(dedupedHydrated);
         await AsyncStorage.setItem('getit_stores_list', JSON.stringify(dedupedHydrated));
 
@@ -4226,6 +5529,9 @@ export default function App() {
             } catch (vErr) {
               // Network/offline: retain local session
             }
+            if (userToSet && userToSet.storeId === 'store-1794007983242') {
+              userToSet.storeId = 'store-1794007984220';
+            }
             if (userToSet && (userToSet.id || userToSet.fullName || userToSet.name || userToSet.phone)) {
               setCurrentUser(userToSet);
               setIsLoggedIn(true);
@@ -4235,6 +5541,10 @@ export default function App() {
                   setMerchantStoreId(userToSet.storeId);
                   activeMerchantStoreId = userToSet.storeId;
                 }
+              } else {
+                setAppMode('customer');
+                setMerchantStoreId(null);
+                activeMerchantStoreId = null;
               }
             }
           } catch (e) {
@@ -4243,6 +5553,9 @@ export default function App() {
         } else {
           setCurrentUser(null);
           setIsLoggedIn(false);
+          setAppMode('customer');
+          setMerchantStoreId(null);
+          activeMerchantStoreId = null;
         }
 
         // 3. Restore active store's timing and live toggle state
@@ -4663,7 +5976,7 @@ export default function App() {
       notes: riderDeliveryNote || mapNotes,
     };
     setPinnedLocation(updated);
-    setSelectedLocation(updated.name);
+    setSelectedLocation(updated.name || updated.district || 'Maitama, Abuja');
     setAcknowledgedDiffLocation(false);
     AsyncStorage.setItem('getit_buyer_pinned_location', JSON.stringify(updated)).catch(() => { });
     closeLocationModal();
@@ -4699,7 +6012,7 @@ export default function App() {
       notes: riderDeliveryNote || mapNotes || '',
     };
     setPinnedLocation(updated);
-    setSelectedLocation(updated.name);
+    setSelectedLocation(updated.name || updated.district || 'Current Location, Abuja');
     setMapCoords({ latitude, longitude });
     setMapStreetAddress(updated.name);
     setAcknowledgedDiffLocation(true);
@@ -4734,12 +6047,59 @@ export default function App() {
     }
   };
 
+  // Tiered Product Markup Calculator (Dynamic multi-tier thresholds, synced to Supabase)
+  const getProductDisplayPrice = (rawPrice) => {
+    const base = Math.max(0, Number(rawPrice) || 0);
+
+    // Dynamic multi-tier markup
+    if (Array.isArray(cmsBusinessRules?.markupTiers) && cmsBusinessRules.markupTiers.length > 0) {
+      const sorted = [...cmsBusinessRules.markupTiers].sort((a, b) => {
+        const capA = (a.threshold !== null && a.threshold !== undefined && a.threshold !== '') ? Number(a.threshold) : Infinity;
+        const capB = (b.threshold !== null && b.threshold !== undefined && b.threshold !== '') ? Number(b.threshold) : Infinity;
+        return capA - capB;
+      });
+      let appliedRate = Number(sorted[sorted.length - 1]?.percent ?? 10.0);
+      for (const t of sorted) {
+        const cap = (t.threshold !== null && t.threshold !== undefined && t.threshold !== '') ? Number(t.threshold) : Infinity;
+        if (base < cap) {
+          appliedRate = Number(t.percent ?? 10.0);
+          break;
+        }
+      }
+      const markup = Math.round(base * (appliedRate / 100));
+      return base + markup;
+    }
+
+    // Legacy 2-tier fallback
+    const threshold = Number(cmsBusinessRules?.tierThresholdNaira ?? 50000);
+    const lowRate = Number(cmsBusinessRules?.markupBelowThresholdPct ?? 10.0);
+    const highRate = Number(cmsBusinessRules?.markupAboveThresholdPct ?? 7.0);
+    const appliedRatePct = base < threshold ? lowRate : highRate;
+    const markup = Math.round(base * (appliedRatePct / 100));
+    return base + markup;
+  };
+
   // Add to cart with store open check
   const addToCart = (product, store) => {
     const targetStore =
       store ||
       selectedStore ||
       storesList.find((s) => s.id === product.storeId || s.name === product.storeName);
+
+    const isMerchantOwner = Boolean(
+      appMode === 'merchant' ||
+      (merchantStoreId && (targetStore?.id === merchantStoreId || targetStore?.id === currentMerchantStore?.id)) ||
+      (currentUser?.role === 'seller' && (targetStore?.id === currentUser?.storeId || targetStore?.id === currentMerchantStore?.id))
+    );
+
+    if (isMerchantOwner) {
+      Alert.alert(
+        "Can't Add to Basket",
+        'Store merchants cannot purchase items from their own supermarket store in live preview mode.',
+        [{ text: 'Understood', style: 'default' }]
+      );
+      return;
+    }
 
     if (product && product.outOfStock) {
       Alert.alert(
@@ -4766,10 +6126,13 @@ export default function App() {
           item.id === product.id ? { ...item, qty: item.qty + 1 } : item
         );
       }
+      const displayPrice = getProductDisplayPrice(product.price);
       return [
         ...prev,
         {
           ...product,
+          merchantBasePrice: product.price,
+          price: displayPrice,
           qty: 1,
           storeName: targetStore?.name || store?.name || 'GETIT Store',
           storeId: targetStore?.id || store?.id,
@@ -4802,6 +6165,28 @@ export default function App() {
     );
   };
 
+  // When commercial policy markup rates change, dynamically refresh active cart item prices based on their merchantBasePrice
+  useEffect(() => {
+    setCart((prevCart) => {
+      if (!prevCart || prevCart.length === 0) return prevCart;
+      return prevCart.map((item) => {
+        const raw = item.merchantBasePrice ?? item.basePrice ?? item.price;
+        const newDisplayPrice = getProductDisplayPrice(raw);
+        if (item.price === newDisplayPrice) return item;
+        return {
+          ...item,
+          merchantBasePrice: raw,
+          price: newDisplayPrice,
+        };
+      });
+    });
+  }, [
+    cmsBusinessRules?.markupBelowThresholdPct,
+    cmsBusinessRules?.markupAboveThresholdPct,
+    cmsBusinessRules?.tierThresholdNaira,
+    cmsBusinessRules?.markupTiers,
+  ]);
+
   const cartSubtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
 
   // Group cart items by store for multi-store basket display and split dispatch
@@ -4833,14 +6218,35 @@ export default function App() {
     return storeOrder.map((id) => groups[id]);
   }, [cart, storesList]);
 
-  // Multi-Stop Courier Fee Calculation
-  // Base fee for first store dispatch + ₦700 per additional pickup stop
-  const baseCourierFee = cart.length > 0 ? (selectedDeliveryTier === 'bolt' ? 1200 : 2500) : 0;
+  // Multi-Stop Courier Fee Calculation with Bolt Logistics Markup (20% default or dynamically from cmsBusinessRules)
+  const boltMarkupPct = Number(cmsBusinessRules?.boltDeliveryMarkupPct ?? 20.0);
+  const rawCourierBase = selectedDeliveryTier === 'bolt' ? 1000 : 2000;
+  const baseCourierFee = cart.length > 0
+    ? Math.round(rawCourierBase * (1 + boltMarkupPct / 100))
+    : 0;
   const multiStopCount = Math.max(0, cartGroupedByStore.length - 1);
   const multiStopFeePerShop = 700;
   const multiStopSurcharge = multiStopCount * multiStopFeePerShop;
   const deliveryFee = cart.length > 0 ? baseCourierFee + multiStopSurcharge : 0;
-  const conciergeFee = Math.round(cartSubtotal * 0.04);
+
+  // Dynamic Multi-Tier Concierge & Packaging App Fee
+  let conciergeRateVal = Number(cmsBusinessRules?.conciergePackagingPct ?? 5.0);
+  if (Array.isArray(cmsBusinessRules?.conciergeTiers) && cmsBusinessRules.conciergeTiers.length > 0) {
+    const sortedC = [...cmsBusinessRules.conciergeTiers].sort((a, b) => {
+      const capA = (a.threshold !== null && a.threshold !== undefined && a.threshold !== '') ? Number(a.threshold) : Infinity;
+      const capB = (b.threshold !== null && b.threshold !== undefined && b.threshold !== '') ? Number(b.threshold) : Infinity;
+      return capA - capB;
+    });
+    conciergeRateVal = Number(sortedC[sortedC.length - 1]?.percent ?? 5.0);
+    for (const t of sortedC) {
+      const cap = (t.threshold !== null && t.threshold !== undefined && t.threshold !== '') ? Number(t.threshold) : Infinity;
+      if (cartSubtotal < cap) {
+        conciergeRateVal = Number(t.percent ?? 5.0);
+        break;
+      }
+    }
+  }
+  const conciergeFee = Math.round(cartSubtotal * (conciergeRateVal / 100));
   const cartTotal = cartSubtotal + deliveryFee + conciergeFee;
 
   // Participating stores list for the map with assigned sequential stop numbers
@@ -5426,8 +6832,18 @@ export default function App() {
       }
     });
 
-    return Array.from(groupedMap.values()).sort((a, b) => (b.time || 0) - (a.time || 0));
-  }, [myCustomerOrders, getOrderLatestMessageTime]);
+    return Array.from(groupedMap.values())
+      .filter((c) => {
+        if (c.isCourier) return true;
+        if (c.storeType === 'pharmacy') return true;
+        const isMsgOn = isStoreMessagingEnabled(c.targetStore || c.order || { id: c.storeId, name: c.storeName });
+        if (!isMsgOn) {
+          return (c.messages || []).length > 0;
+        }
+        return true;
+      })
+      .sort((a, b) => (b.time || 0) - (a.time || 0));
+  }, [myCustomerOrders, getOrderLatestMessageTime, storesList, currentMerchantStore]);
 
   // Cleanly sorted & filtered buyer orders list:
   // - Shows only orders belonging to the authenticated account
@@ -5755,6 +7171,12 @@ export default function App() {
 
   // Synchronize Push Token with Supabase when active user/mode/store changes
   useEffect(() => {
+    setCurrentNotificationContext({
+      role: appMode,
+      storeId: currentMerchantStore?.id,
+      userId: currentUser?.id,
+    });
+
     AsyncStorage.getItem('getit_push_token').then((token) => {
       if (token) {
         registerDevicePushToken({
@@ -5771,9 +7193,14 @@ export default function App() {
   const lastMerchantReminderRef = useRef({});
 
   useEffect(() => {
+    if (appMode !== 'merchant' && currentUser?.role !== 'seller') {
+      lastMerchantReminderRef.current = {};
+      return;
+    }
+
     // Check every 10 seconds for orders requiring a 1-minute reminder
     const reminderInterval = setInterval(() => {
-      if (!currentUser) return;
+      if (appMode !== 'merchant' && currentUser?.role !== 'seller') return;
 
       const myOrders = merchantOrders;
       if (!myOrders || myOrders.length === 0) {
@@ -5786,7 +7213,7 @@ export default function App() {
 
       // 1. Orders awaiting acceptance (New Order)
       const awaitingAcceptance = myOrders.filter(
-        (o) => getMerchantStopStatus(o, currentMerchantStore) === 'New Order'
+        (o) => o.status !== 'Cancelled' && o.status !== 'Delivered' && getMerchantStopStatus(o, currentMerchantStore) === 'New Order'
       );
 
       if (awaitingAcceptance.length > 0) {
@@ -5807,7 +7234,7 @@ export default function App() {
 
       // 2. Orders currently in preparation (Preparing)
       const inPreparation = myOrders.filter(
-        (o) => getMerchantStopStatus(o, currentMerchantStore) === 'Preparing'
+        (o) => o.status !== 'Cancelled' && o.status !== 'Delivered' && getMerchantStopStatus(o, currentMerchantStore) === 'Preparing'
       );
 
       if (inPreparation.length > 0) {
@@ -5828,7 +7255,7 @@ export default function App() {
     }, 10000);
 
     return () => clearInterval(reminderInterval);
-  }, [merchantOrders, currentMerchantStore, currentUser]);
+  }, [merchantOrders, currentMerchantStore, currentUser, appMode]);
 
   // Auto-launch Rating & Reviews sheet as soon as the courier delivers the order (Bolt delivery style)
   // CRITICAL: The rating experience is exclusively for the buyer/customer, NEVER for the shops/merchants!
@@ -6064,6 +7491,26 @@ export default function App() {
 
   const openChatModal = (order, partnerRole = 'merchant', targetStore = null) => {
     if (!order) return;
+
+    if (appMode !== 'merchant' && partnerRole === 'merchant') {
+      const storeToCheck = targetStore || order;
+      if (!isStoreMessagingEnabled(storeToCheck)) {
+        const storeDisplayName = (targetStore && (targetStore.storeName || targetStore.name)) || order.storeName || 'This store';
+        const storePhone = (targetStore && targetStore.phone) || order.storePhone || '';
+        Alert.alert(
+          '🔇 Messaging Disabled',
+          `"${storeDisplayName}" has turned off direct in-app messaging. Please call their phone line directly.`,
+          [
+            storePhone
+              ? { text: '📞 Call Store', onPress: () => Linking.openURL(`tel:${storePhone}`) }
+              : null,
+            { text: 'Understood', style: 'default' },
+          ].filter(Boolean)
+        );
+        return;
+      }
+    }
+
     ensureLiveBroadcastConnected();
     setTargetChatOrder(order);
 
@@ -7546,7 +8993,9 @@ export default function App() {
       setTargetChatOrder(activeOrder);
       setTargetChatPartner({
         id: activeOrder.customerId || 'patient',
-        name: activeOrder.customerName || 'Customer',
+        name: (activeOrder.customerName && activeOrder.customerName !== 'Patient')
+          ? activeOrder.customerName
+          : ((activeOrder.messages || []).find((m) => m.senderRole === 'buyer' && m.senderName && m.senderName !== 'Patient')?.senderName || 'Customer'),
         role: 'buyer',
         roleLabel: 'Patient',
       });
@@ -7878,14 +9327,14 @@ export default function App() {
                 avatar: '🛵',
               },
               riderOrigin: {
-                latitude: storeLat - 0.0090,
-                longitude: storeLng - 0.0080,
+                latitude: storeLat - 0.0072,
+                longitude: storeLng - 0.0065,
               },
               boltCoords: {
-                latitude: storeLat - 0.0090,
-                longitude: storeLng - 0.0080,
+                latitude: storeLat - 0.0072,
+                longitude: storeLng - 0.0065,
               },
-              eta: '15-20 mins (Courier En Route)',
+              eta: '15-20 mins (Courier Dispatched)',
             };
 
             setLastPlacedOrderId(prescriptionDeliveryOrder.id);
@@ -7894,19 +9343,9 @@ export default function App() {
             broadcastLiveEvent('ORDER_INSERT', { order: prescriptionDeliveryOrder });
             dispatchMerchantNewOrderRemotePush(prescriptionDeliveryOrder).catch(() => { });
 
-            // Calculate road route for smooth real-time rider progression
-            const defaultAssignedRider = {
-              name: 'Musa Ibrahim',
-              phone: '+234 803 294 1194',
-              rating: '4.95',
-              vehicle: 'Bajaj Boxer 150 (Red)',
-              plate: 'ABJ-492-KW',
-              latitude: storeLat - 0.0090,
-              longitude: storeLng - 0.0080,
-            };
-
+            // Calculate road route: [Rider -> Pharmacy -> Customer Home]
             fetchRealRoadDirections([
-              { latitude: defaultAssignedRider.latitude, longitude: defaultAssignedRider.longitude },
+              { latitude: storeLat - 0.0072, longitude: storeLng - 0.0065 },
               { latitude: storeLat, longitude: storeLng },
               { latitude: destLat, longitude: destLng },
             ]).then((result) => {
@@ -8016,10 +9455,17 @@ export default function App() {
       const grpTotal = storeSubtotal + grpDeliveryFee + grpConciergeFee;
       const pickupPin = `${Math.floor(1000 + Math.random() * 9000)}`;
 
+      const stopStoreObj = storesList.find(
+        (s) => (grp.storeId && String(s.id) === String(grp.storeId)) ||
+               (grp.storeName && (s.name || '').trim().toLowerCase() === grp.storeName.trim().toLowerCase())
+      );
+      const isStopChatAllowed = isStoreMessagingEnabled(stopStoreObj || { id: grp.storeId, name: grp.storeName });
+
       return {
         stopNumber: index + 1,
         storeId: grp.storeId,
         storeName: grp.storeName,
+        allowCustomerMessaging: isStopChatAllowed,
         latitude: Number(grp.latitude) || 9.0882,
         longitude: Number(grp.longitude) || 7.4933,
         distanceFromPrevKm: grp.distanceFromPrevKm || null,
@@ -8042,6 +9488,12 @@ export default function App() {
       };
     });
 
+    const firstStopStore = storesList.find(
+      (s) => (stops[0]?.storeId && String(s.id) === String(stops[0].storeId)) ||
+             (stops[0]?.storeName && (s.name || '').trim().toLowerCase() === (stops[0].storeName || '').trim().toLowerCase())
+    );
+    const isMasterChatAllowed = isStoreMessagingEnabled(firstStopStore || { id: stops[0]?.storeId, name: stops[0]?.storeName });
+
     const masterOrder = {
       id: masterOrderId,
       isMultiStore,
@@ -8059,6 +9511,7 @@ export default function App() {
       storeName: isMultiStore
         ? `Multi-Store Order (${stops.map((s) => s.storeName).join(' ➔ ')})`
         : stops[0]?.storeName || currentMerchantStore?.name || 'GETIT Store',
+      allowCustomerMessaging: isMasterChatAllowed,
       stops: stops,
       itemsCount: cart.reduce((sum, i) => sum + i.qty, 0),
       items: cart.map((i) => ({
@@ -8089,12 +9542,12 @@ export default function App() {
       boltRider: null,
       boltStatus: 'PENDING_STORE_READY',
       riderOrigin: {
-        latitude: Number(stops[0]?.latitude) || 9.0882,
-        longitude: Number(stops[0]?.longitude) || 7.4933,
+        latitude: (Number(stops[0]?.latitude) || 9.124943) - 0.0072,
+        longitude: (Number(stops[0]?.longitude) || 7.439559) - 0.0065,
       },
       boltCoords: {
-        latitude: Number(stops[0]?.latitude) || 9.0882,
-        longitude: Number(stops[0]?.longitude) || 7.4933,
+        latitude: (Number(stops[0]?.latitude) || 9.124943) - 0.0072,
+        longitude: (Number(stops[0]?.longitude) || 7.439559) - 0.0065,
       },
       eta: isMultiStore ? '25-35 mins' : '15-20 mins',
       timestamp: Date.now(),
@@ -8107,25 +9560,31 @@ export default function App() {
     // 🔔 Trigger immediate push notification + audio chime for buyer & merchant!
     notifyOrderPlaced(masterOrder);
 
-    // Fetch real road street network directions: [RiderOrigin -> Shop 1 -> Shop 2 -> Customer]
-    const riderStart = {
-      latitude: Number(stops[0]?.latitude || 9.0882) - 0.0090,
-      longitude: Number(stops[0]?.longitude || 7.4933) - 0.0080,
+    // Fetch real road street network directions: [Rider Origin -> Shop 1 -> (Shop 2) -> Customer Home]
+    const firstStoreLat = Number(stops[0]?.latitude) || 9.124943;
+    const firstStoreLng = Number(stops[0]?.longitude) || 7.439559;
+    const initialRiderOrigin = {
+      latitude: firstStoreLat - 0.0072,
+      longitude: firstStoreLng - 0.0065,
     };
+    const storeWaypoints = stops.map((s) => ({
+      latitude: Number(s.latitude) || firstStoreLat,
+      longitude: Number(s.longitude) || firstStoreLng,
+    }));
     const roadWaypoints = [
-      riderStart,
-      ...stops.map((s) => ({ latitude: Number(s.latitude) || 9.0882, longitude: Number(s.longitude) || 7.4933 })),
+      initialRiderOrigin,
+      ...storeWaypoints,
       masterOrder.deliveryLocation,
     ];
     fetchRealRoadDirections(roadWaypoints).then((result) => {
       if (result && result.roadPoints && result.roadPoints.length > 0) {
         const updatedStops = masterOrder.stops.map((st, sIdx) => {
-          // sIdx 0 corresponds to snappedWaypoints[1] since snappedWaypoints[0] is riderStart
+          // sIdx 0 corresponds to snappedWaypoints[1] since snappedWaypoints[0] is initialRiderOrigin
           const snapped = result.snappedWaypoints ? result.snappedWaypoints[sIdx + 1] : null;
           return {
             ...st,
-            snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || 9.0882,
-            snappedLongitude: snapped ? snapped.longitude : Number(st.longitude) || 7.4933,
+            snappedLatitude: snapped ? snapped.latitude : Number(st.latitude) || storeWaypoints[sIdx]?.latitude || firstStoreLat,
+            snappedLongitude: snapped ? snapped.longitude : Number(st.longitude) || storeWaypoints[sIdx]?.longitude || firstStoreLng,
           };
         });
         const snappedDest =
@@ -8153,15 +9612,10 @@ export default function App() {
         );
 
         updateDatabaseOrderStatus(masterOrder.id, {
-          boltRider: {
-            ...masterOrder.boltRider,
-            stops: updatedStops,
-            roadRouteCoordinates: result.roadPoints,
-            roadLegs: result.legs,
-            isMultiStore: masterOrder.isMultiStore,
-            currentStopIndex: masterOrder.currentStopIndex || 0,
-            journeyAlert: masterOrder.journeyAlert,
-          },
+          stops: updatedStops,
+          roadRouteCoordinates: result.roadPoints,
+          roadLegs: result.legs,
+          snappedWaypoints: result.snappedWaypoints,
           boltCoords: result.roadPoints[0],
         }).catch(console.warn);
       }
@@ -8235,24 +9689,34 @@ export default function App() {
     }).catch(() => { });
   };
 
-  // Merchant Helper Computations & Actions: Supports Multi-Store Ownership (Groceries + Pharmacy)
+  // Merchant Helper Computations & Actions: Strictly requires currentUser to have role === 'seller'
   const merchantOwnedStores = storesList.filter((st) => {
-    if (!currentUser) return false;
-    if (merchantStoreId && st.id === merchantStoreId) return true;
+    // 1. Strict Role Guard: Only accounts registered as 'seller' can own merchant stores!
+    if (!currentUser || currentUser.role !== 'seller') return false;
+
+    // 2. Direct storeId assignment
     if (currentUser.storeId && st.id === currentUser.storeId) return true;
-    if (currentUser.id && st.ownerId && currentUser.id === st.ownerId) return true;
+
+    // 3. Direct ownerId match
+    if (currentUser.id && st.ownerId && String(currentUser.id) === String(st.ownerId)) return true;
+
+    // 4. Owner email match
+    if (currentUser.email && st.ownerEmail && currentUser.email.toLowerCase().trim() === st.ownerEmail.toLowerCase().trim()) return true;
+
+    // 5. Strict phone match (minimum 10 digits to prevent false positives)
     const uPhone = (currentUser.phone || '').replace(/\D/g, '');
     const sPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
-    if (uPhone.length >= 8 && sPhone.length >= 8) {
-      if (uPhone.slice(-8) === sPhone.slice(-8)) return true;
+    if (uPhone.length >= 10 && sPhone.length >= 10 && uPhone.slice(-10) === sPhone.slice(-10)) {
+      return true;
     }
     return false;
   });
 
-  const currentMerchantStore =
-    merchantOwnedStores.find((s) => s.id === (merchantStoreId || currentUser?.storeId)) ||
-    merchantOwnedStores[0] ||
-    (currentUser?.role === 'seller' && currentUser.storeId ? { id: currentUser.storeId, name: currentUser.businessName || 'My Store' } : null);
+  const currentMerchantStore = currentUser?.role === 'seller'
+    ? (merchantOwnedStores.find((s) => s.id === (merchantStoreId || currentUser?.storeId)) ||
+       merchantOwnedStores[0] ||
+       (currentUser.storeId ? { id: currentUser.storeId, name: currentUser.businessName || 'My Store' } : null))
+    : null;
 
   useEffect(() => {
     currentUserRef.current = currentUser;
@@ -8261,6 +9725,15 @@ export default function App() {
   useEffect(() => {
     currentMerchantStoreRef.current = currentMerchantStore;
   }, [currentMerchantStore]);
+
+  // Strict Security Guard: Never permit a non-seller account to stay in merchant mode
+  useEffect(() => {
+    if (appMode === 'merchant' && (!currentUser || currentUser.role !== 'seller')) {
+      console.warn('⚠️ Security Guard: Non-seller user attempted to access merchant mode. Reverting to customer mode.');
+      setAppMode('customer');
+      setMerchantStoreId(null);
+    }
+  }, [appMode, currentUser]);
 
   const getMerchantStopForOrder = (ord, store = currentMerchantStore) => {
     if (!ord) return null;
@@ -8295,7 +9768,11 @@ export default function App() {
       if (matchingStop.pickupStatus === 'ready' || matchingStop.status === 'Ready for Pickup') return 'Ready for Pickup';
       if (matchingStop.pickupStatus === 'in_progress_prep' || matchingStop.pickupStatus === 'preparing' || matchingStop.status === 'Preparing') return 'Preparing';
       if (matchingStop.pickupStatus === 'rejected' || matchingStop.status === 'Rejected') return 'Rejected';
-      if (matchingStop.status && matchingStop.status !== 'On the Way') return matchingStop.status;
+      if (matchingStop.status && matchingStop.status !== 'On the Way') {
+        if (matchingStop.status === 'pending') return 'New Order';
+        return matchingStop.status;
+      }
+      return 'New Order';
     }
     if (ord.status === 'Completed' || ord.status === 'Delivered') return 'Completed';
     if (ord.currentStopIndex > 0 || (Array.isArray(ord.stops) && ord.stops.length > 0 && ord.stops.every((s) => s.pickupStatus === 'picked_up'))) {
@@ -8311,6 +9788,7 @@ export default function App() {
     (o) =>
       o.replacementProposal &&
       o.replacementProposal.status === 'pending' &&
+      (!o.replacementProposal.id || !resolvedProposalIdsRef.current.has(o.replacementProposal.id)) &&
       o.status !== 'Cancelled' &&
       o.status !== 'Delivered' &&
       o.status !== 'Completed'
@@ -8321,13 +9799,37 @@ export default function App() {
   useEffect(() => {
     if (appMode === 'customer' && pendingReplacementOrder?.replacementProposal && pendingReplacementOrder.replacementProposal.status === 'pending') {
       const propId = pendingReplacementOrder.replacementProposal.id || pendingReplacementOrder.id;
-      if (lastChimedReplacementProposalRef.current !== propId) {
+      if (lastChimedReplacementProposalRef.current !== propId && !resolvedProposalIdsRef.current.has(propId)) {
         lastChimedReplacementProposalRef.current = propId;
         setCustomerDismissedReplacementId(null);
         playAudioBeep('default');
       }
     }
   }, [appMode, pendingReplacementOrder]);
+
+  const pendingOutOfStockOrder = (myCustomerOrders || []).find(
+    (o) =>
+      o.outOfStockProposal &&
+      o.outOfStockProposal.status === 'pending' &&
+      (!o.outOfStockProposal.id || !resolvedProposalIdsRef.current.has(o.outOfStockProposal.id)) &&
+      o.status !== 'Cancelled' &&
+      o.status !== 'Delivered' &&
+      o.status !== 'Completed'
+  );
+
+  // --- BUYER SOUND CHIME ON PENDING OUT OF STOCK RESOLUTION PROPOSAL ---
+  const lastChimedOutOfStockProposalRef = useRef(null);
+  useEffect(() => {
+    if (appMode === 'customer' && pendingOutOfStockOrder?.outOfStockProposal && pendingOutOfStockOrder.outOfStockProposal.status === 'pending') {
+      const propId = pendingOutOfStockOrder.outOfStockProposal.id || pendingOutOfStockOrder.id;
+      if (lastChimedOutOfStockProposalRef.current !== propId && !resolvedProposalIdsRef.current.has(propId)) {
+        lastChimedOutOfStockProposalRef.current = propId;
+        setCustomerDismissedOutOfStockId(null);
+        setSelectedAlternativeIndex(0);
+        playAudioBeep('default');
+      }
+    }
+  }, [appMode, pendingOutOfStockOrder]);
 
   const merchantOrders = useMemo(() => {
     if (!currentUser) return [];
@@ -8349,13 +9851,59 @@ export default function App() {
     }
 
     const activeId = activeStore.id;
-    const activeName = (activeStore.name || '').toLowerCase();
+    const activeName = (activeStore.name || '').trim().toLowerCase();
 
     const filtered = orders.filter((o) => {
-      if (o.storeId === activeId || (o.storeName && o.storeName.toLowerCase() === activeName)) {
-        return true;
+      const isSwitchedTarget =
+        (o.outOfStockProposal?.switchedStoreId && String(o.outOfStockProposal.switchedStoreId) === String(activeId)) ||
+        (activeName && o.outOfStockProposal?.switchedStoreName && o.outOfStockProposal.switchedStoreName.trim().toLowerCase() === activeName);
+
+      // 1. If this order was transferred in full to another store, DO NOT show it in the old store!
+      if (!isSwitchedTarget) {
+        if (
+          o.transferredFromStoreId &&
+          (String(o.transferredFromStoreId) === String(activeId) ||
+            (activeName && o.transferredFromStoreName && o.transferredFromStoreName.trim().toLowerCase() === activeName))
+        ) {
+          return false;
+        }
+        if (
+          Array.isArray(o.transferredFromStoreIds) &&
+          o.transferredFromStoreIds.some((id) => String(id) === String(activeId))
+        ) {
+          return false;
+        }
+        if (
+          activeName &&
+          Array.isArray(o.transferredFromStoreNames) &&
+          o.transferredFromStoreNames.some((nm) => String(nm).trim().toLowerCase() === activeName)
+        ) {
+          return false;
+        }
+        if (
+          o.outOfStockProposal?.status === 'switched_full' &&
+          o.outOfStockProposal?.switchedStoreId &&
+          String(o.outOfStockProposal.switchedStoreId) !== String(activeId)
+        ) {
+          return false;
+        }
       }
-      if (Array.isArray(o.stops) && o.stops.some((st) => st.storeId === activeId || (st.storeName && st.storeName.toLowerCase() === activeName))) {
+
+      if (o.status === 'Cancelled' && o.cancellationReason && o.cancellationReason.includes('transferred')) {
+        return false;
+      }
+
+      // 2. When stops array is present, a store is part of the order ONLY if it has an active stop in o.stops
+      if (Array.isArray(o.stops) && o.stops.length > 0) {
+        return o.stops.some(
+          (st) =>
+            st.status !== 'Transferred' &&
+            ((st.storeId && String(st.storeId) === String(activeId)) ||
+              (activeName && st.storeName && st.storeName.trim().toLowerCase() === activeName))
+        );
+      }
+
+      if (String(o.storeId) === String(activeId) || (activeName && o.storeName && o.storeName.trim().toLowerCase() === activeName)) {
         return true;
       }
       return false;
@@ -8379,6 +9927,18 @@ export default function App() {
     const storeNameLower = (currentMerchantStore.name || '').trim().toLowerCase();
 
     const filtered = orders.filter((o) => {
+      // If order was transferred away from this pharmacy dispensary, exclude it!
+      if (
+        o.transferredFromStoreId &&
+        (String(o.transferredFromStoreId) === storeIdStr ||
+          (storeNameLower && o.transferredFromStoreName && o.transferredFromStoreName.toLowerCase() === storeNameLower))
+      ) {
+        return false;
+      }
+      if (o.status === 'Cancelled' && o.cancellationReason && o.cancellationReason.includes('transferred')) {
+        return false;
+      }
+
       // 1. Direct match on master order
       const isDirectStore =
         (o.storeId && String(o.storeId) === storeIdStr) ||
@@ -8825,6 +10385,14 @@ Support: help@getit.ng | Abuja, Nigeria`;
   };
 
   const acceptMerchantOrder = (orderId) => {
+    const existingOrder = orders.find((o) => o.id === orderId);
+    if (existingOrder?.outOfStockProposal?.status === 'pending') {
+      Alert.alert(
+        'Awaiting Customer Decision ⏳',
+        'An out-of-stock resolution is currently pending customer response. Order progression is paused until the customer decides.'
+      );
+      return;
+    }
     if (lastMerchantReminderRef.current) {
       delete lastMerchantReminderRef.current.newOrdersInit;
       delete lastMerchantReminderRef.current.lastNewReminder;
@@ -8862,12 +10430,13 @@ Support: help@getit.ng | Abuja, Nigeria`;
               : `🍳 ${storeAcceptedName} accepted & is preparing! Awaiting other stores.`)
             : `🍳 Store has accepted your order • Preparing your provisions.`;
 
+          const isAlreadyDispatched = o.status === 'On the Way' || Boolean(o.boltRider?.name);
           return {
             ...o,
-            status: 'Preparing',
+            status: isAlreadyDispatched ? 'On the Way' : 'Preparing',
             stops: updatedStopsList.length > 0 ? updatedStopsList : o.stops,
-            journeyAlert: dynamicAlert,
-            boltRider: null,
+            journeyAlert: isAlreadyDispatched ? o.journeyAlert : dynamicAlert,
+            boltRider: isAlreadyDispatched ? o.boltRider : null,
           };
         }
         return o;
@@ -8885,14 +10454,24 @@ Support: help@getit.ng | Abuja, Nigeria`;
         : `🍳 ${storeAcceptedName} accepted & is preparing! Awaiting other stores.`)
       : `🍳 Store has accepted your order • Preparing your provisions.`;
 
+    const isAlreadyDispatchedOrder = existingOrder?.status === 'On the Way' || Boolean(existingOrder?.boltRider?.name);
     updateDatabaseOrderStatus(orderId, {
-      status: 'Preparing',
+      status: isAlreadyDispatchedOrder ? 'On the Way' : 'Preparing',
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
-      journeyAlert: alertToSend,
+      journeyAlert: isAlreadyDispatchedOrder ? existingOrder.journeyAlert : alertToSend,
     }).catch(() => { });
 
-    // Remote push to customer device
+    broadcastLiveEvent('ORDER_UPDATE', {
+      orderId,
+      status: isAlreadyDispatchedOrder ? 'On the Way' : 'Preparing',
+      stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
+      journeyAlert: isAlreadyDispatchedOrder ? existingOrder.journeyAlert : alertToSend,
+    });
+
+    // Notify buyer that order has been accepted & preparation started
     const targetOrder = orders.find((o) => o.id === orderId);
+    notifyMerchantOrderAccepted(targetOrder || { id: orderId, storeName: storeAcceptedName }, storeAcceptedName);
+
     if (targetOrder?.customerId) {
       dispatchCustomerStatusRemotePush({
         customerId: targetOrder.customerId,
@@ -8909,6 +10488,18 @@ Support: help@getit.ng | Abuja, Nigeria`;
   };
 
   const readyMerchantOrder = (orderId) => {
+    const targetOrder = orders.find((o) => o.id === orderId);
+    if (
+      targetOrder?.outOfStockProposal?.status === 'pending' ||
+      targetOrder?.replacementProposal?.status === 'pending'
+    ) {
+      Alert.alert(
+        'Awaiting Customer Decision ⏳',
+        'An out-of-stock resolution or replacement proposal is pending customer response. Further packaging and courier dispatch is paused until the customer responds.'
+      );
+      return;
+    }
+
     if (lastMerchantReminderRef.current) {
       delete lastMerchantReminderRef.current.prepOrdersInit;
       delete lastMerchantReminderRef.current.lastPrepReminder;
@@ -8926,7 +10517,6 @@ Support: help@getit.ng | Abuja, Nigeria`;
     let allStopsReady = true;
     let updatedStopsList = [];
 
-    const targetOrder = orders.find((o) => o.id === orderId);
     const stops = Array.isArray(targetOrder?.stops) && targetOrder.stops.length > 0 ? targetOrder.stops : [];
     if (stops.length > 0) {
       updatedStopsList = stops.map((st) => {
@@ -8942,14 +10532,24 @@ Support: help@getit.ng | Abuja, Nigeria`;
       allStopsReady = updatedStopsList.every((st) => st.status === 'Ready for Pickup');
     }
 
-    const isFirstStopReady = updatedStopsList[0] && (updatedStopsList[0].status === 'Ready for Pickup' || updatedStopsList[0].pickupStatus === 'ready');
-    const shouldDispatch = allStopsReady || updatedStopsList.length <= 1 || isFirstStopReady;
-    const initialStatus = shouldDispatch ? 'Looking for Courier' : 'Preparing';
-    const initialAlert = stops.length > 1
-      ? (allStopsReady
-        ? `📦 All packages packed & ready! Looking for available nearby courier... 🚴‍♂️`
-        : `📦 ${storeReadyName} has packed your package! Waiting for remaining stores.`)
-      : `📦 Package packed & ready at ${storeReadyName}! Looking for available nearby courier... 🚴‍♂️`;
+    const isAlreadyDispatched = targetOrder?.status === 'On the Way' || Boolean(targetOrder?.boltRider?.name);
+    const isFirstStopReady = updatedStopsList[0] && (updatedStopsList[0].status === 'Ready for Pickup' || updatedStopsList[0].pickupStatus === 'ready' || updatedStopsList[0].pickupStatus === 'picked_up');
+    const shouldDispatch = !isAlreadyDispatched && (allStopsReady || updatedStopsList.length <= 1 || isFirstStopReady);
+    const initialStatus = isAlreadyDispatched
+      ? 'On the Way'
+      : shouldDispatch
+        ? 'Looking for Courier'
+        : 'Preparing';
+    const initialAlert = isAlreadyDispatched
+      ? (targetOrder?.journeyAlert || `📦 ${storeReadyName} has packed your package! Courier Musa Ibrahim is en route.`)
+      : stops.length > 1
+        ? (allStopsReady
+          ? `📦 All packages packed & ready! Looking for available nearby courier... 🚴‍♂️`
+          : `📦 ${storeReadyName} has packed your package! Waiting for remaining stores.`)
+        : `📦 Package packed & ready at ${storeReadyName}! Looking for available nearby courier... 🚴‍♂️`;
+
+    // Notify buyer that items are bagged and ready
+    notifyOrderReadyForCourier(targetOrder || { id: orderId, storeName: storeReadyName }, storeReadyName);
 
     updateAndPersistOrders((prev) =>
       prev.map((o) => {
@@ -8968,9 +10568,11 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
     Alert.alert(
       'Order Ready for Pickup 📦',
-      shouldDispatch
-        ? `Order ${orderId} is packaged for ${storeReadyName}. Looking for nearby available courier...`
-        : `Order ${orderId} packaged for ${storeReadyName}. Waiting for remaining shops.`
+      isAlreadyDispatched
+        ? `Order ${orderId} is packaged for ${storeReadyName}. Courier Musa Ibrahim is already assigned and en route.`
+        : shouldDispatch
+          ? `Order ${orderId} is packaged for ${storeReadyName}. Looking for nearby available courier...`
+          : `Order ${orderId} packaged for ${storeReadyName}. Waiting for remaining shops.`
     );
 
     updateDatabaseOrderStatus(orderId, {
@@ -8978,6 +10580,14 @@ Support: help@getit.ng | Abuja, Nigeria`;
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
       journeyAlert: initialAlert,
     }).catch(() => { });
+
+    broadcastLiveEvent('ORDER_UPDATE', {
+      orderId,
+      status: initialStatus,
+      stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
+      journeyAlert: initialAlert,
+      courierSearching: shouldDispatch,
+    });
 
     // Courier Dispatch Sequence: Look for available courier, match, and notify!
     if (shouldDispatch) {
@@ -8993,40 +10603,62 @@ Support: help@getit.ng | Abuja, Nigeria`;
           avatar: '🛵',
         };
 
-        const firstStop = (updatedStopsList && updatedStopsList[0]) || { latitude: 9.0882, longitude: 7.4933 };
-        const targetOrder = orders.find((o) => o.id === orderId);
+        const firstStop = (updatedStopsList && updatedStopsList[0]) || { latitude: 9.124943, longitude: 7.439559 };
         const riderStartCoords = targetOrder?.riderOrigin || {
-          latitude: Number(firstStop.latitude || 9.0882) - 0.0090,
-          longitude: Number(firstStop.longitude || 7.4933) - 0.0080,
+          latitude: (Number(firstStop.latitude) || 9.124943) - 0.0072,
+          longitude: (Number(firstStop.longitude) || 7.439559) - 0.0065,
         };
 
-        const dispatchedAlert = `🚴 Courier ${assignedRider.name} matched! Heading to ${storeReadyName} for pickup.`;
+        const firstStopName = firstStop?.storeName || storeReadyName;
+        const dispatchedAlert = `🚴 Courier ${assignedRider.name} matched! En route to ${firstStopName} for pickup.`;
         const dispatchNow = Date.now();
 
-        const dispatchPayload = {
-          status: 'On the Way',
-          boltStatus: 'IN_TRANSIT',
-          boltRider: assignedRider,
-          boltCoords: riderStartCoords,
-          journeyAlert: dispatchedAlert,
-          courierSearching: false,
-          eta: '12-15 mins (Courier Matched)',
-          legStartedAt: dispatchNow,
-          roadPointIndex: 0,
-          currentStopIndex: 0,
-        };
+        let latestStopsForBroadcast = updatedStopsList;
 
         updateAndPersistOrders((prev) =>
           prev.map((o) => {
             if (o.id === orderId) {
+              const mergedStops = (Array.isArray(o.stops) && o.stops.length > 0) ? o.stops : updatedStopsList;
+              latestStopsForBroadcast = mergedStops;
+              const startCoord = (o.roadLegs && o.roadLegs[0] && o.roadLegs[0][0]) || riderStartCoords;
               return {
                 ...o,
-                ...dispatchPayload,
+                status: 'On the Way',
+                boltStatus: 'HEADING_TO_STORE',
+                boltRider: assignedRider,
+                boltCoords: startCoord,
+                riderOrigin: riderStartCoords,
+                stops: mergedStops,
+                journeyAlert: dispatchedAlert,
+                courierSearching: false,
+                courierArrivedOutside: false,
+                hasNotifiedArrived: false,
+                eta: `12-15 mins (Heading to ${firstStopName})`,
+                legStartedAt: dispatchNow,
+                roadPointIndex: 0,
+                currentStopIndex: 0,
               };
             }
             return o;
           })
         );
+
+        const dispatchPayload = {
+          status: 'On the Way',
+          boltStatus: 'HEADING_TO_STORE',
+          boltRider: assignedRider,
+          boltCoords: (targetOrder?.roadLegs && targetOrder.roadLegs[0] && targetOrder.roadLegs[0][0]) || riderStartCoords,
+          riderOrigin: riderStartCoords,
+          stops: latestStopsForBroadcast,
+          journeyAlert: dispatchedAlert,
+          courierSearching: false,
+          courierArrivedOutside: false,
+          hasNotifiedArrived: false,
+          eta: `12-15 mins (Heading to ${firstStopName})`,
+          legStartedAt: dispatchNow,
+          roadPointIndex: 0,
+          currentStopIndex: 0,
+        };
 
         // Immediate sub-50ms peer-to-peer broadcast so buyer screen sees rider dispatched instantly
         broadcastLiveEvent('ORDER_UPDATE', {
@@ -9034,7 +10666,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
           ...dispatchPayload,
         });
 
-        notifyCourierDispatched({ id: orderId, storeName: storeReadyName }, assignedRider.name);
+        notifyCourierDispatched({ id: orderId, storeName: firstStopName }, assignedRider.name);
 
         updateDatabaseOrderStatus(orderId, dispatchPayload).catch(() => { });
       }, 3500);
@@ -9090,21 +10722,34 @@ Support: help@getit.ng | Abuja, Nigeria`;
         }
 
         // Snap rider coordinates to the handed-over store's location
+        const firstStop = (updatedStopsList && updatedStopsList[0]) || { latitude: 9.124943, longitude: 7.439559 };
         const storeCoords = {
-          latitude: Number(targetStore?.latitude) || Number(o.stops?.[0]?.latitude) || 9.0882,
-          longitude: Number(targetStore?.longitude) || Number(o.stops?.[0]?.longitude) || 7.4933,
+          latitude: Number(targetStore?.latitude) || Number(firstStop.latitude) || 9.124943,
+          longitude: Number(targetStore?.longitude) || Number(firstStop.longitude) || 7.439559,
         };
         newBoltCoords = storeCoords;
 
-        const firstPendingIdx = updatedStopsList.findIndex((st) => st.pickupStatus !== 'picked_up');
-        if (firstPendingIdx !== -1) {
+        const allStopsDone = updatedStopsList.every((st) => st.pickupStatus === 'picked_up');
+        if (!allStopsDone) {
+          const firstPendingIdx = updatedStopsList.findIndex((st) => st.pickupStatus !== 'picked_up');
           nextStopIndex = firstPendingIdx;
-          const nextStoreName = updatedStopsList[firstPendingIdx].storeName || 'the next shop';
+          const nextStoreName = updatedStopsList[firstPendingIdx]?.storeName || 'the next shop';
           newAlert = `🔔 Picked up from ${merchantStoreName}! Courier Musa Ibrahim is now riding to ${nextStoreName}.`;
         } else {
-          nextStopIndex = Math.max(1, updatedStopsList.length);
+          // All store pickups completed: Rider is now on final leg to Customer Address
+          nextStopIndex = updatedStopsList.length;
           newAlert = `🎉 All packages collected! Courier Musa Ibrahim has departed ${merchantStoreName} and is now riding directly to your address.`;
         }
+
+        // Start rider at the exact beginning of the new leg (Store -> Next Store or Store -> Home)
+        const nextLegStartPt =
+          o.roadLegs &&
+          Array.isArray(o.roadLegs) &&
+          o.roadLegs[nextStopIndex] &&
+          o.roadLegs[nextStopIndex][0]
+            ? o.roadLegs[nextStopIndex][0]
+            : storeCoords;
+        newBoltCoords = nextLegStartPt;
 
         const assignedRider = o.boltRider || {
           id: 'bolt-rider-01',
@@ -9125,9 +10770,11 @@ Support: help@getit.ng | Abuja, Nigeria`;
           roadPointIndex: 0,
           legStartedAt: now,
           boltCoords: newBoltCoords,
+          courierArrivedOutside: false,
+          hasNotifiedArrived: false,
           journeyAlert: newAlert,
           status: 'On the Way',
-          boltStatus: 'IN_TRANSIT',
+          boltStatus: allStopsDone ? 'IN_TRANSIT' : 'HEADING_TO_STORE',
           boltRider: assignedRider,
         };
       })
@@ -9150,15 +10797,18 @@ Support: help@getit.ng | Abuja, Nigeria`;
     };
 
     const handoverTime = Date.now();
+    const isNowFinalLeg = updatedStopsList.length > 0 && updatedStopsList.every((st) => st.pickupStatus === 'picked_up');
     updateDatabaseOrderStatus(orderId, {
       stops: updatedStopsList.length > 0 ? updatedStopsList : undefined,
       currentStopIndex: nextStopIndex,
       roadPointIndex: 0,
       legStartedAt: handoverTime,
       boltCoords: newBoltCoords,
+      courierArrivedOutside: false,
+      hasNotifiedArrived: false,
       journeyAlert: newAlert,
       status: 'On the Way',
-      boltStatus: 'IN_TRANSIT',
+      boltStatus: isNowFinalLeg ? 'IN_TRANSIT' : 'HEADING_TO_STORE',
       boltRider: defaultCourier,
     }).catch(() => { });
 
@@ -9170,8 +10820,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
       roadPointIndex: 0,
       legStartedAt: handoverTime,
       boltCoords: newBoltCoords,
+      courierArrivedOutside: false,
+      hasNotifiedArrived: false,
       journeyAlert: newAlert,
-      boltStatus: 'IN_TRANSIT',
+      boltStatus: isNowFinalLeg ? 'IN_TRANSIT' : 'HEADING_TO_STORE',
       boltRider: defaultCourier,
     });
   };
@@ -9271,6 +10923,44 @@ Support: help@getit.ng | Abuja, Nigeria`;
     }).catch((e) => console.log('Supabase inventory stock update error:', e?.message));
   };
 
+  const restockAllOutOfStock = () => {
+    const targetStoreId = currentMerchantStore?.id || merchantStoreId;
+    const outOfStockItems = (currentMerchantStore?.products || []).filter((p) => p.outOfStock);
+    if (outOfStockItems.length === 0) return;
+
+    updateAndPersistStores((prev) =>
+      prev.map((store) => {
+        if (store.id === targetStoreId) {
+          return {
+            ...store,
+            products: (store.products || []).map((p) =>
+              p.outOfStock ? { ...p, outOfStock: false } : p
+            ),
+          };
+        }
+        return store;
+      })
+    );
+
+    setSelectedStore((prev) => {
+      if (!prev || prev.id !== targetStoreId) return prev;
+      return {
+        ...prev,
+        products: (prev.products || []).map((p) =>
+          p.outOfStock ? { ...p, outOfStock: false } : p
+        ),
+      };
+    });
+
+    outOfStockItems.forEach((item) => {
+      updateStoreInventoryItem(item.id, {
+        outOfStock: false,
+        storeId: targetStoreId,
+        productObj: item,
+      }).catch((e) => console.log('Supabase restock error:', e?.message));
+    });
+  };
+
   const setProductOutOfStock = (productId) => {
     if (!productId) return;
     const targetStoreId = currentMerchantStore?.id || merchantStoreId;
@@ -9325,73 +11015,49 @@ Support: help@getit.ng | Abuja, Nigeria`;
     // 1. Mark product as out-of-stock in merchant catalog
     setProductOutOfStock(item.id || item.productId);
 
-    // 2. Refund amount to customer wallet balance
-    setCustomerWalletBalance((prev) => prev + refundAmount);
+    // 2. Create Out-of-Stock Resolution Proposal for the customer
+    const oosProposal = {
+      id: 'oos_' + Date.now(),
+      type: 'out_of_stock_resolution',
+      originalItemId: item.id || item.productId,
+      originalItemName: item.name,
+      originalPrice: Number(item.price),
+      quantity: qty,
+      refundAmount: refundAmount,
+      storeId: currentMerchantStore?.id || stop?.storeId || order.storeId,
+      storeName: currentMerchantStore?.name || stop?.storeName || order.storeName,
+      status: 'pending',
+      proposedAt: Date.now(),
+    };
 
-    // 3. Synchronously compute updated order object
-    const updatedItems = (order.items || []).map((it) => {
-      if ((it.id && it.id === item.id) || it.name === item.name) {
-        return { ...it, status: 'refunded', refunded: true, refundAmount };
-      }
-      return it;
-    });
-
-    const activeSubtotal = updatedItems.reduce(
-      (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
-      0
-    );
-    const activeTotal = activeSubtotal + (Number(order.deliveryFee) || 0);
-
-    let updatedStops = order.stops;
-    if (Array.isArray(order.stops) && order.stops.length > 0) {
-      updatedStops = order.stops.map((st) => {
-        if (stop && (st.storeId === stop.storeId || st.storeName === stop.storeName)) {
-          const stopItems = (st.items || []).map((it) => {
-            if ((it.id && it.id === item.id) || it.name === item.name) {
-              return { ...it, status: 'refunded', refunded: true, refundAmount };
-            }
-            return it;
-          });
-          const stopSub = stopItems.reduce(
-            (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
-            0
-          );
-          return { ...st, items: stopItems, subtotal: stopSub };
-        }
-        return st;
-      });
+    lastOrderMutationTimestampRef.current[order.id] = Date.now();
+    setCustomerDismissedOutOfStockId(null);
+    if (lastChimedOutOfStockProposalRef) {
+      lastChimedOutOfStockProposalRef.current = null;
     }
 
     const updatedOrderObj = {
       ...order,
-      items: updatedItems,
-      subtotal: activeSubtotal,
-      total: activeTotal,
-      stops: updatedStops,
-      replacementProposal: null,
+      outOfStockProposal: oosProposal,
     };
 
     updateAndPersistOrders((prev) =>
       prev.map((o) => (o.id === order.id ? updatedOrderObj : o))
     );
 
-    // 4. Send customer in-app notification & push
-    notifyItemRefunded(order, item, refundAmount);
+    // 3. Send customer in-app notification & push
+    notifyOutOfStockProposed(order, item, refundAmount);
 
-    // 5. Update database & WebSocket
+    // 4. Update database & WebSocket
     updateDatabaseOrderStatus(order.id, {
-      items: updatedOrderObj.items,
-      subtotal: updatedOrderObj.subtotal,
-      total: updatedOrderObj.total,
-      stops: updatedOrderObj.stops,
-      replacementProposal: null,
-    }).catch((err) => console.log('Supabase direct refund error:', err?.message));
+      outOfStockProposal: oosProposal,
+    }).catch((err) => console.log('Supabase out of stock proposal error:', err?.message));
 
     setReplaceModalVisible(false);
     setItemToReplaceContext(null);
     Alert.alert(
-      'Item Refunded ✅',
-      `${item.name} has been marked Out of Stock and ${formatNaira(refundAmount)} was credited to the customer's wallet. Please proceed with preparing remaining items.`
+      'Resolution Sent to Customer 📩',
+      `${item.name} marked Out of Stock. Customer has been sent options to explore alternative nearby shops with stock or accept a ${formatNaira(refundAmount)} wallet refund.`
     );
   };
 
@@ -9427,6 +11093,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
     };
 
     // Reset dismissal and chime tracking so the proposal modal immediately pops up on buyer side
+    lastOrderMutationTimestampRef.current[order.id] = Date.now();
     setCustomerDismissedReplacementId(null);
     if (lastChimedReplacementProposalRef) {
       lastChimedReplacementProposalRef.current = null;
@@ -9464,11 +11131,14 @@ Support: help@getit.ng | Abuja, Nigeria`;
     if (!order?.replacementProposal) return;
     const proposal = order.replacementProposal;
     const proposalId = proposal.id || order.id;
+    if (proposal.status !== 'pending' || resolvedProposalIdsRef.current.has(proposalId)) return;
+
+    resolvedProposalIdsRef.current.add(proposalId);
+    lastOrderMutationTimestampRef.current[order.id] = Date.now();
+    setCustomerDismissedReplacementId(proposalId);
+
     const qty = proposal.quantity || 1;
     const priceDiff = Number(proposal.priceDiff) || 0;
-
-    // Immediately dismiss modal on customer's device
-    setCustomerDismissedReplacementId(proposalId);
 
     // Financial reconciliation
     if (priceDiff < 0) {
@@ -9567,14 +11237,14 @@ Support: help@getit.ng | Abuja, Nigeria`;
     if (!order?.replacementProposal) return;
     const proposal = order.replacementProposal;
     const proposalId = proposal.id || order.id;
-    const qty = proposal.quantity || 1;
-    const refundAmount = Number(proposal.originalPrice) * qty;
+    if (proposal.status !== 'pending' || resolvedProposalIdsRef.current.has(proposalId)) return;
 
-    // Immediately dismiss modal on customer's device
+    resolvedProposalIdsRef.current.add(proposalId);
+    lastOrderMutationTimestampRef.current[order.id] = Date.now();
     setCustomerDismissedReplacementId(proposalId);
 
-    // Refund full original item amount to customer wallet
-    setCustomerWalletBalance((prev) => prev + refundAmount);
+    const qty = proposal.quantity || 1;
+    const refundAmount = Number(proposal.originalPrice) * qty;
 
     const updatedItems = (order.items || []).map((it) => {
       if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
@@ -9588,16 +11258,22 @@ Support: help@getit.ng | Abuja, Nigeria`;
       return it;
     });
 
+    const allItemsRefunded = updatedItems.length > 0 && updatedItems.every((it) => it.refunded || it.status === 'refunded');
+    const totalRefundToCredit = allItemsRefunded ? refundAmount + (Number(order.deliveryFee) || 0) : refundAmount;
+
+    // Refund item amount (plus delivery fee if entire order is now refunded) to customer wallet
+    setCustomerWalletBalance((prev) => prev + totalRefundToCredit);
+
     const activeSubtotal = updatedItems.reduce(
       (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
       0
     );
-    const activeTotal = activeSubtotal + (Number(order.deliveryFee) || 0);
+    const activeTotal = allItemsRefunded ? 0 : activeSubtotal + (Number(order.deliveryFee) || 0);
 
     let updatedStops = order.stops;
     if (Array.isArray(order.stops) && order.stops.length > 0) {
       updatedStops = order.stops.map((st) => {
-        const stopItems = (st.items || []).map((it) => {
+        const stopItems = ((st.items && st.items.length > 0) ? st.items : updatedItems).map((it) => {
           if ((it.id && it.id === proposal.originalItemId) || it.name === proposal.originalItemName) {
             return {
               ...it,
@@ -9612,7 +11288,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
           (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
           0
         );
-        return { ...st, items: stopItems, subtotal: stopSub };
+        return {
+          ...st,
+          items: stopItems,
+          subtotal: stopSub,
+          ...(allItemsRefunded ? { status: 'Rejected', pickupStatus: 'rejected' } : {}),
+        };
       });
     }
 
@@ -9624,6 +11305,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
       subtotal: activeSubtotal,
       total: activeTotal,
       stops: updatedStops,
+      status: allItemsRefunded ? 'Cancelled' : order.status,
+      cancellationReason: allItemsRefunded ? 'All items out of stock & refunded to wallet' : order.cancellationReason,
       replacementProposal: declinedProposal,
     };
 
@@ -9638,13 +11321,775 @@ Support: help@getit.ng | Abuja, Nigeria`;
       subtotal: updatedOrderObj.subtotal,
       total: updatedOrderObj.total,
       stops: updatedOrderObj.stops,
+      status: updatedOrderObj.status,
       replacementProposal: declinedProposal,
     }).catch((err) => console.log('Supabase decline error:', err?.message));
 
     Alert.alert(
       'Replacement Declined ❌',
-      `Full refund of ${formatNaira(refundAmount)} has been credited to your wallet balance. Remaining order items will be prepared and delivered.`
+      allItemsRefunded
+        ? `Full refund of ${formatNaira(totalRefundToCredit)} (including delivery fee) has been credited to your wallet balance.`
+        : `Full refund of ${formatNaira(refundAmount)} has been credited to your wallet balance. Remaining order items will be prepared and delivered.`
     );
+  };
+
+  // --- OUT OF STOCK SMART STORE ALTERNATIVE MATCHING ENGINE ---
+  const getAlternativeShopsForOutOfStock = (order, proposal) => {
+    if (!order || !proposal) return [];
+
+    const candidateStores = [
+      ...(Array.isArray(storesList) ? storesList : []),
+      ...(Array.isArray(INITIAL_PHARMACY_STORES) ? INITIAL_PHARMACY_STORES : []),
+    ].filter((s, idx, self) => s && s.id && self.findIndex((x) => String(x.id) === String(s.id)) === idx);
+
+    if (candidateStores.length === 0) return [];
+
+    const originStoreId = String(proposal.storeId || order.storeId || '');
+    const originStoreName = (proposal.storeName || order.storeName || '').trim().toLowerCase().replace(/['’]/g, '');
+    const excludedIds = new Set(
+      [
+        originStoreId,
+        order.storeId,
+        order.transferredFromStoreId,
+        ...(Array.isArray(order.transferredFromStoreIds) ? order.transferredFromStoreIds : []),
+      ]
+        .filter(Boolean)
+        .map(String)
+    );
+    const excludedNames = new Set(
+      [
+        originStoreName,
+        (order.storeName || '').trim().toLowerCase().replace(/['’]/g, ''),
+        (order.transferredFromStoreName || '').trim().toLowerCase().replace(/['’]/g, ''),
+        ...(Array.isArray(order.transferredFromStoreNames) ? order.transferredFromStoreNames : []),
+      ].filter(Boolean)
+    );
+
+    const originStoreObj = candidateStores.find(
+      (s) => String(s.id) === originStoreId || (s.name && (s.name || '').trim().toLowerCase().replace(/['’]/g, '') === originStoreName)
+    );
+    const originStoreType = (
+      order.storeType ||
+      proposal.storeType ||
+      originStoreObj?.storeType ||
+      (originStoreObj?.category === 'Pharmacy' || originStoreObj?.category === 'pharmacy' ? 'pharmacy' : null) ||
+      (order.id?.startsWith('RX-') || order.isPrescriptionOrder ? 'pharmacy' : 'supermarket')
+    ).toLowerCase();
+
+    const targetItemName = (proposal.originalItemName || '').toLowerCase().trim();
+    const qty = Number(proposal.quantity) || 1;
+    const origUnitPrice = Number(proposal.originalPrice) || 0;
+    const origItemTotal = origUnitPrice * qty;
+
+    // Generic words that do NOT define the product identity (modifiers, sizes, packaging, dosage forms)
+    const GENERIC_STOP_WORDS = new Set([
+      'original', 'classic', 'bottle', 'can', 'pack', 'fresh', 'premium', 'super',
+      'size', 'large', 'small', 'mini', 'pet', 'natural', 'pure', 'best', 'flavour',
+      'flavor', 'taste', 'quality', 'product', 'item', 'brand', 'bag', 'tin', 'box',
+      'piece', 'pieces', 'pcs', 'slice', 'sliced', 'net', 'weight', 'wt', 'new',
+      'refill', 'standard', 'regular', 'daily', 'everyday', 'and', 'the', 'for', 'with',
+      'rich', 'deluxe', 'special', 'cold', 'hot', 'frozen', 'dry', 'extra',
+      // Pharmacy specific forms
+      'tablet', 'tablets', 'tabs', 'tab', 'capsule', 'capsules', 'cap', 'caps',
+      'syrup', 'suspension', 'drops', 'injection', 'cream', 'gel', 'ointment', 'solution'
+    ]);
+
+    const cleanProductName = (name = '') => {
+      return name
+        .toLowerCase()
+        .replace(/\([^)]*\)/g, ' ') // Strip content in parentheses (e.g. 1.5 L, PET bottle)
+        .replace(/\[[^\]]*\]/g, ' ')
+        .replace(/\b\d+(\.\d+)?\s*(l|ml|cl|g|kg|mg|oz|pack|pcs|cl)\b/gi, ' ') // Strip volume/weight
+        .replace(/[^a-z0-9\s-]/g, ' ')
+        .trim();
+    };
+
+    const extractCoreKeywords = (name = '') => {
+      const cleaned = cleanProductName(name);
+      return cleaned
+        .split(/\s+/)
+        .map((w) => w.trim())
+        .filter((w) => w.length >= 3 && !GENERIC_STOP_WORDS.has(w));
+    };
+
+    // Checks whether candidate product is genuinely the same item as any reference item name
+    const isGenuineProductMatchForName = (refName = '', candidateName = '') => {
+      const refLower = (refName || '').toLowerCase().trim();
+      const candLower = (candidateName || '').toLowerCase().trim();
+      if (!refLower || !candLower) return false;
+      if (candLower === refLower) return true;
+
+      const cleanCand = cleanProductName(candLower);
+      const cleanRef = cleanProductName(refLower);
+
+      if (cleanCand && cleanRef && (cleanCand === cleanRef || cleanCand.includes(cleanRef) || cleanRef.includes(cleanCand))) {
+        return true;
+      }
+
+      const refKeywords = extractCoreKeywords(refLower);
+      if (refKeywords.length === 0) return false;
+
+      const candKeywords = new Set(extractCoreKeywords(candLower));
+      let matchCount = 0;
+      for (const kw of refKeywords) {
+        if (candKeywords.has(kw) || candLower.includes(kw)) {
+          matchCount++;
+        }
+      }
+
+      if (refKeywords.length === 1) {
+        return matchCount === 1;
+      }
+
+      return matchCount >= Math.ceil(refKeywords.length * 0.6);
+    };
+
+    const isTargetOutOfStockItem = (it) =>
+      (it.id && proposal.originalItemId && String(it.id) === String(proposal.originalItemId)) ||
+      (it.productId && proposal.originalItemId && String(it.productId) === String(proposal.originalItemId)) ||
+      (it.name || '').toLowerCase().trim() === targetItemName;
+
+    // Remaining items in the order that also need to be satisfied if doing a full transfer
+    const otherOrderItems = (order.items || []).filter(
+      (it) => !isTargetOutOfStockItem(it) && !it.refunded && it.status !== 'refunded'
+    );
+
+    const alternatives = [];
+
+    candidateStores.forEach((store) => {
+      // 1. Strictly exclude the origin store (and any previously transferred store) that reported out-of-stock!
+      const currentStoreId = String(store.id || '');
+      const currentStoreName = (store.name || '').trim().toLowerCase().replace(/['’]/g, '');
+
+      if (currentStoreId && excludedIds.has(currentStoreId)) return;
+      if (currentStoreName && excludedNames.has(currentStoreName)) return;
+
+      // 2. Strict store category isolation:
+      const candidateStoreType = (store.storeType || (store.category === 'Pharmacy' ? 'pharmacy' : 'supermarket')).toLowerCase();
+      if (originStoreType === 'pharmacy' && candidateStoreType !== 'pharmacy') return;
+      if (originStoreType !== 'pharmacy' && candidateStoreType === 'pharmacy') return;
+
+      const prods = Array.isArray(store.products) ? store.products : [];
+      if (prods.length === 0) return;
+
+      // 3. Find matching item in this store (Must be in stock and genuinely match!)
+      const matchedProd = prods.find((p) => {
+        if (p.outOfStock || p.inStock === false) return false;
+        return isGenuineProductMatchForName(targetItemName, p.name);
+      });
+
+      if (!matchedProd) return;
+
+      const newUnitPrice = Number(matchedProd.price) || origUnitPrice;
+      const newItemTotal = newUnitPrice * qty;
+      const itemPriceDiff = newItemTotal - origItemTotal;
+
+      // Check if this store has ALL other items in the order
+      let allOtherItemsFound = true;
+      let otherItemsNewTotal = 0;
+      let otherItemsOrigTotal = 0;
+
+      for (const otherItem of otherOrderItems) {
+        const oName = (otherItem.name || '').toLowerCase().trim();
+        const oQty = Number(otherItem.qty) || 1;
+        const matchingOther = prods.find((p) => {
+          if (p.outOfStock || p.inStock === false) return false;
+          return isGenuineProductMatchForName(oName, p.name);
+        });
+
+        if (matchingOther) {
+          otherItemsNewTotal += (Number(matchingOther.price) || Number(otherItem.price)) * oQty;
+          otherItemsOrigTotal += Number(otherItem.price) * oQty;
+        } else {
+          allOtherItemsFound = false;
+          break;
+        }
+      }
+
+      const isFullTransfer = otherOrderItems.length === 0 || allOtherItemsFound;
+
+      // Delivery fee adjustment:
+      // If Full Transfer: order moves to single store -> extra delivery fee is 0
+      // If Multi-Store: adds 1 extra pickup stop -> +₦700 multiStopFeePerShop
+      const extraDeliveryFee = isFullTransfer ? 0 : 700;
+
+      let netDiff = 0;
+      if (isFullTransfer) {
+        const otherItemsDiff = otherItemsNewTotal - otherItemsOrigTotal;
+        netDiff = itemPriceDiff + otherItemsDiff + extraDeliveryFee;
+      } else {
+        netDiff = itemPriceDiff + extraDeliveryFee;
+      }
+
+      alternatives.push({
+        store,
+        storeId: store.id,
+        storeName: store.name,
+        storeRating: store.rating || '4.9',
+        storeAddress: store.address || 'Abuja, Nigeria',
+        storeImage: store.image || store.imageUrl || null,
+        isFullTransfer,
+        matchedProduct: matchedProd,
+        newUnitPrice,
+        origUnitPrice,
+        itemPriceDiff,
+        extraDeliveryFee,
+        netDiff,
+        isMoreExpensive: netDiff > 0,
+        isCheaper: netDiff < 0,
+        isEven: netDiff === 0,
+      });
+    });
+
+    // Prioritize Full Transfer first, then lowest net difference
+    alternatives.sort((a, b) => {
+      if (a.isFullTransfer && !b.isFullTransfer) return -1;
+      if (!a.isFullTransfer && b.isFullTransfer) return 1;
+      return a.netDiff - b.netDiff;
+    });
+
+    return alternatives.slice(0, 3);
+  };
+
+  const handleAcceptOutOfStockRefund = (order) => {
+    if (!order || !order.outOfStockProposal) return;
+    const proposal = order.outOfStockProposal;
+    const proposalId = proposal.id || ('oos_' + order.id);
+    if (proposal.status !== 'pending' || resolvedProposalIdsRef.current.has(proposalId)) return;
+
+    // Immediately lock & dismiss modal so it can never recur
+    resolvedProposalIdsRef.current.add(proposalId);
+    lastOrderMutationTimestampRef.current[order.id] = Date.now();
+    setCustomerDismissedOutOfStockId(proposalId);
+
+    const refundAmount = Number(proposal.refundAmount) || 0;
+
+    // Mark item as refunded in order.items
+    const updatedItems = (order.items || []).map((it) => {
+      if (
+        (it.id && proposal.originalItemId && String(it.id) === String(proposal.originalItemId)) ||
+        (it.productId && proposal.originalItemId && String(it.productId) === String(proposal.originalItemId)) ||
+        it.name === proposal.originalItemName
+      ) {
+        return { ...it, status: 'refunded', refunded: true, refundAmount };
+      }
+      return it;
+    });
+
+    const allItemsRefunded = updatedItems.length > 0 && updatedItems.every((it) => it.refunded || it.status === 'refunded');
+    const totalRefundToCredit = allItemsRefunded ? refundAmount + (Number(order.deliveryFee) || 0) : refundAmount;
+
+    // 1. Credit wallet
+    setCustomerWalletBalance((prev) => prev + totalRefundToCredit);
+
+    // 2. Mark in stops
+    let updatedStops = order.stops;
+    if (Array.isArray(order.stops) && order.stops.length > 0) {
+      updatedStops = order.stops.map((st) => {
+        if (st.storeId === proposal.storeId || st.storeName === proposal.storeName || order.stops.length === 1) {
+          const baseStopItems = (st.items && st.items.length > 0) ? st.items : updatedItems;
+          const stopItems = baseStopItems.map((it) => {
+            if (
+              (it.id && proposal.originalItemId && String(it.id) === String(proposal.originalItemId)) ||
+              (it.productId && proposal.originalItemId && String(it.productId) === String(proposal.originalItemId)) ||
+              it.name === proposal.originalItemName
+            ) {
+              return { ...it, status: 'refunded', refunded: true, refundAmount };
+            }
+            return it;
+          });
+          const stopSub = stopItems.reduce(
+            (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+            0
+          );
+          return {
+            ...st,
+            items: stopItems,
+            subtotal: stopSub,
+            ...(allItemsRefunded ? { status: 'Rejected', pickupStatus: 'rejected' } : {}),
+          };
+        }
+        return st;
+      });
+    }
+
+    const activeSubtotal = updatedItems.reduce(
+      (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+      0
+    );
+    const activeTotal = allItemsRefunded ? 0 : activeSubtotal + (Number(order.deliveryFee) || 0);
+
+    const resolvedProposal = {
+      ...proposal,
+      status: 'refunded',
+      resolvedAt: Date.now(),
+    };
+
+    const updatedOrderObj = {
+      ...order,
+      items: updatedItems,
+      subtotal: activeSubtotal,
+      total: activeTotal,
+      stops: updatedStops,
+      status: allItemsRefunded ? 'Cancelled' : order.status,
+      cancellationReason: allItemsRefunded ? 'All items out of stock & refunded to wallet' : order.cancellationReason,
+      outOfStockProposal: resolvedProposal,
+    };
+
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => (o.id === order.id ? updatedOrderObj : o))
+    );
+
+    notifyOutOfStockDecision(
+      order,
+      { name: proposal.originalItemName },
+      allItemsRefunded
+        ? `Customer accepted full refund of ₦${Number(totalRefundToCredit).toLocaleString()}. Order is now closed.`
+        : `Customer accepted ₦${Number(refundAmount).toLocaleString()} refund. Please proceed with preparing remaining items.`,
+      false
+    );
+
+    updateDatabaseOrderStatus(order.id, {
+      items: updatedOrderObj.items,
+      subtotal: updatedOrderObj.subtotal,
+      total: updatedOrderObj.total,
+      stops: updatedOrderObj.stops,
+      status: updatedOrderObj.status,
+      outOfStockProposal: resolvedProposal,
+    }).catch((err) => console.log('Supabase refund error:', err?.message));
+
+    Alert.alert(
+      'Refund Credited to Wallet ✅',
+      allItemsRefunded
+        ? `${formatNaira(totalRefundToCredit)} (including delivery fee) has been credited to your GETIT wallet balance.`
+        : `${formatNaira(refundAmount)} has been credited to your GETIT wallet balance. ${proposal.storeName} will prepare and deliver your remaining items.`
+    );
+  };
+
+  const handleSwitchStoreForOutOfStock = (order, selectedAlternative) => {
+    if (!order || !order.outOfStockProposal || !selectedAlternative) return;
+    const proposal = order.outOfStockProposal;
+    const proposalId = proposal.id || ('oos_' + order.id);
+    if (proposal.status !== 'pending' || resolvedProposalIdsRef.current.has(proposalId)) return;
+
+    // Immediately lock & dismiss modal so it can NEVER pop up again on customer device
+    resolvedProposalIdsRef.current.add(proposalId);
+    lastOrderMutationTimestampRef.current[order.id] = Date.now();
+    setCustomerDismissedOutOfStockId(proposalId);
+
+    const netDiff = selectedAlternative.netDiff || 0;
+    const targetStore = selectedAlternative.store;
+    const matchedProduct = selectedAlternative.matchedProduct;
+    const qty = Number(proposal.quantity) || 1;
+    const targetItemName = (proposal.originalItemName || '').toLowerCase().trim();
+
+    const isTargetOutOfStockItem = (it) =>
+      (it.id && proposal.originalItemId && String(it.id) === String(proposal.originalItemId)) ||
+      (it.productId && proposal.originalItemId && String(it.productId) === String(proposal.originalItemId)) ||
+      (it.name || '').toLowerCase().trim() === targetItemName;
+
+    const remainingActiveOriginItems = (order.items || []).filter(
+      (it) => !isTargetOutOfStockItem(it) && !it.refunded && it.status !== 'refunded'
+    );
+
+    // If the origin store has no other active items left, always treat as Full Store Transfer!
+    const isFullTransfer = Boolean(selectedAlternative.isFullTransfer || remainingActiveOriginItems.length === 0);
+
+    // 1. Handle financial balance adjustment
+    if (netDiff > 0) {
+      setCustomerWalletBalance((prev) => Math.max(0, prev - netDiff));
+    } else if (netDiff < 0) {
+      setCustomerWalletBalance((prev) => prev + Math.abs(netDiff));
+    }
+
+    const fromStoreId = proposal.storeId || order.storeId;
+    const fromStoreName = proposal.storeName || order.storeName;
+    const nextTransferredIds = Array.from(
+      new Set([
+        ...(Array.isArray(order.transferredFromStoreIds) ? order.transferredFromStoreIds : []),
+        order.transferredFromStoreId,
+        fromStoreId,
+      ].filter(Boolean).map(String))
+    );
+    const nextTransferredNames = Array.from(
+      new Set([
+        ...(Array.isArray(order.transferredFromStoreNames) ? order.transferredFromStoreNames : []),
+        order.transferredFromStoreName,
+        fromStoreName,
+      ].filter(Boolean).map((n) => String(n).trim().toLowerCase()))
+    );
+
+    let updatedOrderObj = null;
+
+    if (isFullTransfer) {
+      // --- FULL STORE TRANSFER ---
+      const targetCatalog = Array.isArray(targetStore.products) ? targetStore.products : [];
+      const activeSourceItems = (order.items || []).filter((it) => !it.refunded && it.status !== 'refunded');
+
+      const updatedItems = activeSourceItems.map((it) => {
+        if (isTargetOutOfStockItem(it)) {
+          return {
+            ...it,
+            id: matchedProduct.id || ('swp_' + Date.now()),
+            productId: matchedProduct.id,
+            name: matchedProduct.name,
+            price: Number(matchedProduct.price),
+            image: matchedProduct.image || it.image,
+            imageUrl: matchedProduct.imageUrl || it.imageUrl,
+            category: matchedProduct.category || it.category,
+            storeId: targetStore.id,
+            storeName: targetStore.name,
+            status: 'pending',
+            refunded: false,
+          };
+        }
+        const itNameLower = (it.name || '').toLowerCase().trim();
+        const matchedOther = targetCatalog.find((p) => {
+          if (p.outOfStock || p.inStock === false) return false;
+          const pName = (p.name || '').toLowerCase().trim();
+          return pName === itNameLower || pName.includes(itNameLower) || itNameLower.includes(pName);
+        });
+        return {
+          ...it,
+          id: matchedOther?.id || it.id,
+          productId: matchedOther?.id || it.productId || it.id,
+          name: matchedOther?.name || it.name,
+          price: matchedOther ? Number(matchedOther.price) : Number(it.price),
+          image: matchedOther?.image || it.image,
+          imageUrl: matchedOther?.imageUrl || it.imageUrl,
+          category: matchedOther?.category || it.category,
+          storeId: targetStore.id,
+          storeName: targetStore.name,
+          status: 'pending',
+          refunded: false,
+        };
+      });
+
+      const newSubtotal = updatedItems.reduce(
+        (sum, it) => sum + Number(it.price) * (Number(it.qty) || 1),
+        0
+      );
+      const deliveryFee = Number(order.deliveryFee) || 1200;
+      const newTotal = newSubtotal + deliveryFee;
+      const totalItemsQty = updatedItems.reduce((sum, it) => sum + (Number(it.qty) || 1), 0);
+
+      const singleStop = {
+        stopNumber: 1,
+        storeId: targetStore.id,
+        storeName: targetStore.name,
+        latitude: Number(targetStore.latitude) || 9.0765,
+        longitude: Number(targetStore.longitude) || 7.3986,
+        items: updatedItems,
+        itemsCount: totalItemsQty,
+        subtotal: newSubtotal,
+        total: newTotal,
+        vendorPayout: Math.round(newSubtotal * 0.9),
+        pickupPin: String(Math.floor(1000 + Math.random() * 9000)),
+        pickupStatus: 'in_progress',
+        status: 'New Order',
+        isAnchorStore: true,
+      };
+
+      const resolvedProposal = {
+        ...proposal,
+        status: 'switched_full',
+        switchedStoreId: targetStore.id,
+        switchedStoreName: targetStore.name,
+        netDiff,
+        resolvedAt: Date.now(),
+      };
+
+      fetchedRoutesRef.current.delete(order.id);
+      fetchedRoutesRef.current.delete(order.id + '_stops_1');
+
+      updatedOrderObj = {
+        ...order,
+        transferredFromStoreId: fromStoreId,
+        transferredFromStoreName: fromStoreName,
+        transferredFromStoreIds: nextTransferredIds,
+        transferredFromStoreNames: nextTransferredNames,
+        storeId: targetStore.id,
+        storeName: targetStore.name,
+        storeLatitude: Number(targetStore.latitude) || order.storeLatitude,
+        storeLongitude: Number(targetStore.longitude) || order.storeLongitude,
+        items: updatedItems,
+        itemsCount: totalItemsQty,
+        subtotal: newSubtotal,
+        total: newTotal,
+        isMultiStore: false,
+        stopsCount: 1,
+        stops: [singleStop],
+        status: 'New Order',
+        boltStatus: 'PENDING_STORE_READY',
+        boltRider: null,
+        journeyAlert: `🔄 Order moved to ${targetStore.name} • Awaiting shop confirmation.`,
+        currentStopIndex: 0,
+        legStartedAt: Date.now(),
+        roadPointIndex: 0,
+        roadLegs: null,
+        roadRouteCoordinates: null,
+        isDirectFallback: false,
+        courierArrivedOutside: false,
+        hasNotifiedArrived: false,
+        replacementProposal: null,
+        outOfStockProposal: resolvedProposal,
+      };
+
+      // Broadcast transfer/removal to old shop so their device removes the order from active queues immediately
+      broadcastLiveEvent('MERCHANT_ORDER_CANCELLED', {
+        orderId: order.id,
+        storeId: fromStoreId,
+        storeName: fromStoreName,
+        newStoreId: targetStore.id,
+        newStoreName: targetStore.name,
+        order: updatedOrderObj,
+        reason: `Order #${order.id} was moved in full to ${targetStore.name} by the customer.`,
+      });
+
+      // Notify previous store
+      notifyOutOfStockDecision(
+        order,
+        { name: proposal.originalItemName },
+        `Order #${order.id} transferred to ${targetStore.name} due to out-of-stock items.`,
+        true
+      );
+
+      // Notify new store for pickup (Push + Local in-app notification)
+      try {
+        notifyOrderPlaced({
+          id: order.id,
+          storeId: targetStore.id,
+          storeName: targetStore.name,
+          itemsCount: totalItemsQty,
+          subtotal: newSubtotal,
+          total: newTotal,
+        });
+      } catch (nErr) {}
+
+      try {
+        dispatchMerchantNewOrderRemotePush({
+          orderId: order.id,
+          storeId: targetStore.id,
+          storeName: targetStore.name,
+          customerName: order.customerName || 'Customer',
+          total: newTotal,
+          itemsCount: totalItemsQty,
+        });
+      } catch (pErr) {}
+
+      broadcastLiveEvent('MERCHANT_NEW_ORDER', {
+        orderId: order.id,
+        storeId: targetStore.id,
+        storeName: targetStore.name,
+        order: updatedOrderObj,
+        customerName: order.customerName || 'Customer',
+        total: newTotal,
+      });
+
+    } else {
+      // --- MULTI-STORE 2-STOP INJECTION ---
+      const baseStops =
+        Array.isArray(order.stops) && order.stops.length > 0
+          ? order.stops
+          : [
+              {
+                stopNumber: 1,
+                storeId: fromStoreId,
+                storeName: fromStoreName,
+                latitude: Number(order.storeLatitude) || 9.124943,
+                longitude: Number(order.storeLongitude) || 7.439559,
+                items: order.items || [],
+                pickupStatus: 'in_progress',
+                status: order.status || 'Preparing',
+                isAnchorStore: true,
+              },
+            ];
+
+      // 1. Remove out-of-stock item from original store stop (falling back to order.items if st.items was empty)
+      let updatedStops = baseStops
+        .map((st) => {
+          if (
+            String(st.storeId) === String(fromStoreId) ||
+            (st.storeName && fromStoreName && st.storeName.trim().toLowerCase() === fromStoreName.trim().toLowerCase()) ||
+            baseStops.length === 1
+          ) {
+            const sourceItems = (st.items && st.items.length > 0) ? st.items : (order.items || []);
+            const stopItems = sourceItems.filter((it) => !isTargetOutOfStockItem(it));
+            const stopSub = stopItems.reduce(
+              (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+              0
+            );
+            const stopQty = stopItems.reduce((sum, it) => sum + (Number(it.qty) || 1), 0);
+            return { ...st, items: stopItems, subtotal: stopSub, itemsCount: stopQty };
+          }
+          return st;
+        })
+        .filter((st) => !Array.isArray(st.items) || st.items.length > 0);
+
+      // 2. Add Stop B for the alternative store
+      const newStopItem = {
+        id: matchedProduct.id || ('st2_' + Date.now()),
+        productId: matchedProduct.id,
+        name: matchedProduct.name,
+        price: Number(matchedProduct.price),
+        qty,
+        image: matchedProduct.image,
+        imageUrl: matchedProduct.imageUrl,
+        category: matchedProduct.category || 'General',
+        storeId: targetStore.id,
+        storeName: targetStore.name,
+        status: 'New Order',
+      };
+
+      const stopNumber = updatedStops.length + 1;
+      const secondStop = {
+        stopNumber,
+        storeId: targetStore.id,
+        storeName: targetStore.name,
+        latitude: Number(targetStore.latitude) || 9.0820,
+        longitude: Number(targetStore.longitude) || 7.4913,
+        items: [newStopItem],
+        itemsCount: qty,
+        subtotal: Number(matchedProduct.price) * qty,
+        total: Number(matchedProduct.price) * qty,
+        vendorPayout: Math.round(Number(matchedProduct.price) * qty * 0.9),
+        pickupPin: String(Math.floor(1000 + Math.random() * 9000)),
+        pickupStatus: 'queued',
+        status: 'New Order',
+        isAnchorStore: false,
+        distanceFromPrevKm: '1.5',
+      };
+
+      updatedStops.push(secondStop);
+
+      // Invalidate route cache so multi-store route is freshly fetched with all stops
+      fetchedRoutesRef.current.delete(order.id);
+      fetchedRoutesRef.current.delete(order.id + '_stops_1');
+      fetchedRoutesRef.current.delete(order.id + '_stops_' + updatedStops.length);
+
+      // 3. Update master items list
+      const updatedItems = [
+        ...(order.items || []).filter((it) => !isTargetOutOfStockItem(it)),
+        newStopItem,
+      ];
+
+      const newSubtotal = updatedItems.reduce(
+        (sum, it) => (it.refunded ? sum : sum + Number(it.price) * (Number(it.qty) || 1)),
+        0
+      );
+      const newDeliveryFee = (Number(order.deliveryFee) || 1200) + (selectedAlternative.extraDeliveryFee || 700);
+      const newTotal = newSubtotal + newDeliveryFee;
+
+      const resolvedProposal = {
+        ...proposal,
+        status: 'switched_multistore',
+        switchedStoreId: targetStore.id,
+        switchedStoreName: targetStore.name,
+        netDiff,
+        resolvedAt: Date.now(),
+      };
+
+      updatedOrderObj = {
+        ...order,
+        isMultiStore: updatedStops.length > 1,
+        stopsCount: updatedStops.length,
+        storeId: updatedStops[0]?.storeId || order.storeId,
+        storeName: updatedStops[0]?.storeName || order.storeName,
+        items: updatedItems,
+        itemsCount: updatedItems.reduce((sum, i) => sum + (Number(i.qty) || 1), 0),
+        subtotal: newSubtotal,
+        deliveryFee: newDeliveryFee,
+        total: newTotal,
+        stops: updatedStops,
+        currentStopIndex: 0,
+        legStartedAt: Date.now(),
+        roadPointIndex: 0,
+        roadLegs: null,
+        roadRouteCoordinates: null,
+        isDirectFallback: false,
+        courierArrivedOutside: false,
+        hasNotifiedArrived: false,
+        replacementProposal: null,
+        outOfStockProposal: resolvedProposal,
+      };
+
+      // Notify original store to proceed with remaining
+      notifyOutOfStockDecision(
+        order,
+        { name: proposal.originalItemName },
+        `Customer routed ${proposal.originalItemName} to ${targetStore.name}. Please package your remaining items.`,
+        true
+      );
+
+      // Notify new store for pickup (in-app chime + banner + push)
+      try {
+        notifyOrderPlaced({
+          id: order.id,
+          storeId: targetStore.id,
+          storeName: targetStore.name,
+          itemsCount: qty,
+          subtotal: Number(matchedProduct.price) * qty,
+          total: Number(matchedProduct.price) * qty,
+        });
+      } catch (nErr) {}
+
+      try {
+        dispatchMerchantNewOrderRemotePush({
+          orderId: order.id,
+          storeId: targetStore.id,
+          storeName: targetStore.name,
+          customerName: order.customerName || 'Customer',
+          total: Number(matchedProduct.price) * qty,
+          itemsCount: 1,
+        });
+      } catch (pErr) {}
+
+      broadcastLiveEvent('MERCHANT_NEW_ORDER', {
+        orderId: order.id,
+        storeId: targetStore.id,
+        storeName: targetStore.name,
+        order: updatedOrderObj,
+        customerName: order.customerName || 'Customer',
+        total: Number(matchedProduct.price) * qty,
+      });
+    }
+
+    // Persist changes
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => (o.id === order.id ? updatedOrderObj : o))
+    );
+
+    updateDatabaseOrderStatus(order.id, {
+      transferredFromStoreId: updatedOrderObj.transferredFromStoreId || null,
+      transferredFromStoreName: updatedOrderObj.transferredFromStoreName || null,
+      transferredFromStoreIds: updatedOrderObj.transferredFromStoreIds || [],
+      transferredFromStoreNames: updatedOrderObj.transferredFromStoreNames || [],
+      storeId: updatedOrderObj.storeId,
+      storeName: updatedOrderObj.storeName,
+      items: updatedOrderObj.items,
+      subtotal: updatedOrderObj.subtotal,
+      deliveryFee: updatedOrderObj.deliveryFee,
+      total: updatedOrderObj.total,
+      stops: updatedOrderObj.stops,
+      isMultiStore: !!updatedOrderObj.isMultiStore,
+      status: updatedOrderObj.status,
+      boltStatus: updatedOrderObj.boltStatus,
+      boltRider: updatedOrderObj.boltRider,
+      journeyAlert: updatedOrderObj.journeyAlert,
+      currentStopIndex: 0,
+      roadPointIndex: 0,
+      legStartedAt: Date.now(),
+      courierArrivedOutside: false,
+      hasNotifiedArrived: false,
+      replacementProposal: null,
+      outOfStockProposal: updatedOrderObj.outOfStockProposal,
+    }).catch((err) => console.log('Supabase switch store error:', err?.message));
+
+    const confirmationMsg = isFullTransfer
+      ? `Your entire order was moved to ${targetStore.name} who has all items in stock!${netDiff < 0 ? ` ₦${Math.abs(netDiff).toLocaleString()} savings refunded to your wallet.` : ''}`
+      : `${proposal.originalItemName} will now be picked up from ${targetStore.name} as a multi-store delivery.${netDiff < 0 ? ` ₦${Math.abs(netDiff).toLocaleString()} savings refunded to your wallet.` : ''}`;
+
+    Alert.alert('Store Updated Successfully 🎉', confirmationMsg);
   };
 
   const handleOpenEditProduct = (prod) => {
@@ -9795,14 +12240,26 @@ Support: help@getit.ng | Abuja, Nigeria`;
   const handleAddSuggestedProduct = (item) => {
     const rawPrice = adjustedPrices[item.id] !== undefined ? adjustedPrices[item.id] : item.suggestedPrice;
     const finalPrice = Number(rawPrice) > 0 ? Number(rawPrice) : item.suggestedPrice;
+    const taxonomyMatch = classifyProductIntoTaxonomy(
+      { name: item.name, category: item.category },
+      marketplaceTaxonomy
+    );
 
     const newProd = {
       id: `p-sug-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       name: item.name,
       price: finalPrice,
-      icon: item.icon,
+      icon: item.icon || taxonomyMatch?.departmentIcon || '🛍️',
       imageUrl: item.imageUrl || null,
-      category: item.category,
+      category: item.category || taxonomyMatch?.subcategoryLabel || 'Provisions',
+      departmentId:
+        item.departmentId ||
+        taxonomyMatch?.departmentId ||
+        storeCatalogConfig?.primaryDepartmentId ||
+        currentMerchantStore?.primaryDepartmentId ||
+        'grocery',
+      subcategoryId: item.subcategoryId || taxonomyMatch?.subcategoryId || 'pantry_provisions',
+      varietyId: item.varietyId || taxonomyMatch?.varietyId || '',
       outOfStock: false,
     };
 
@@ -9832,13 +12289,31 @@ Support: help@getit.ng | Abuja, Nigeria`;
       return;
     }
 
+    const taxonomyMatch = classifyProductIntoTaxonomy(
+      { name: customProductName.trim(), category: customProductCategory },
+      marketplaceTaxonomy
+    );
+
+    const resolvedDeptId =
+      (taxonomyMatch?.departmentId &&
+        taxonomyMatch.departmentId !== 'grocery' &&
+        (storeCatalogConfig?.allowedDepartmentIds || []).includes(taxonomyMatch.departmentId))
+        ? taxonomyMatch.departmentId
+        : (storeCatalogConfig?.primaryDepartmentId ||
+           currentMerchantStore?.primaryDepartmentId ||
+           taxonomyMatch?.departmentId ||
+           'grocery');
+
     const newProd = {
       id: `p-custom-${Date.now()}`,
       name: customProductName.trim(),
       price: Number(customProductPrice) || 2500,
-      icon: customProductIcon || '🛍️',
+      icon: customProductIcon || taxonomyMatch?.departmentIcon || '🛍️',
       imageUri: customProductImage,
-      category: customProductCategory,
+      category: customProductCategory || taxonomyMatch?.subcategoryLabel || 'Provisions',
+      departmentId: resolvedDeptId,
+      subcategoryId: taxonomyMatch?.subcategoryId || 'pantry_provisions',
+      varietyId: taxonomyMatch?.varietyId || '',
       outOfStock: false,
     };
 
@@ -9858,7 +12333,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
     setCustomProductName('');
     setCustomProductPrice('');
     setCustomProductImage(null);
-    Alert.alert('Product Live', `✓ ${newProd.name} added to ${currentMerchantStore?.name} catalog!`);
+    Alert.alert(
+      'Product Live & Classified',
+      `✓ "${newProd.name}" added to ${currentMerchantStore?.name} under ${taxonomyMatch?.departmentName || 'Store'} › ${newProd.category}!`
+    );
 
     // Sync custom product to Supabase Cloud store_inventory
     addStoreInventoryItem(merchantStoreId || 'store-fresh-mart', {
@@ -9873,138 +12351,191 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
   // Handle Create & Launch New Store on Supabase & GETIT
   const handleCreateStore = async () => {
-    if (!newStoreName.trim()) {
+    if (isCreatingStore || authSubmitLockRef.current) return;
+    const cleanName = newStoreName.trim();
+    if (!cleanName) {
       Alert.alert('Store Name Required', 'Please enter a name for your store.');
       return;
     }
 
+    authSubmitLockRef.current = true;
     setIsCreatingStore(true);
-    const storeId = `store-${Date.now()}`;
-    const selectedLoc =
-      SEARCHABLE_LOCATIONS.find((l) =>
-        l.district.toLowerCase().includes(newStoreDistrict.toLowerCase())
-      ) || SEARCHABLE_LOCATIONS[0];
-
-    const isPharm = newStoreType === 'pharmacy';
-
-    const categoryKey = isPharm
-      ? 'pharmacy'
-      : newStoreCategory.toLowerCase().includes('organ')
-        ? 'organic'
-        : newStoreCategory.toLowerCase().includes('bake')
-          ? 'bakery'
-          : newStoreCategory.toLowerCase().includes('cell')
-            ? 'cellar'
-            : newStoreCategory.toLowerCase().includes('herit')
-              ? 'heritage'
-              : 'gourmet';
-
-    const pharmacistObj = isPharm
-      ? {
-          name: newPharmacistName.trim() || 'Pharm. On-Duty Clinical Pharmacist',
-          licenseNo: newPharmacistLicenseNo.trim() || 'PCN-REG-VERIFIED',
-          qualification: newPharmacistQualification.trim() || 'B.Pharm, MPSN',
-          status: 'On-Duty • Available for Consult',
-        }
-      : null;
-
-    const storeRecord = {
-      id: storeId,
-      name: newStoreName.trim(),
-      category: isPharm ? 'pharmacy' : newStoreCategory,
-      storeType: isPharm ? 'pharmacy' : 'grocery',
-      pharmacist: pharmacistObj,
-      address: newStoreAddress.trim() || selectedLoc.name,
-      district: newStoreDistrict,
-      city: 'Abuja',
-      latitude: selectedLoc.latitude || 9.0882,
-      longitude: selectedLoc.longitude || 7.4933,
-      phone: newStorePhone.trim() || currentUser?.phone || '+234 800 000 0000',
-      ownerId: currentUser?.id || null,
-      ownerPhone: currentUser?.phone || newStorePhone.trim(),
-      rating: 5.0,
-      isOpen: true,
-      deliveryFee: Number(newStoreDeliveryFee) || 1200,
-    };
-
-    const newStoreObj = {
-      id: storeId,
-      name: storeRecord.name,
-      storeType: isPharm ? 'pharmacy' : 'grocery',
-      category: categoryKey,
-      categoryLabel: isPharm ? 'Licensed Community Pharmacy' : newStoreCategory,
-      pharmacist: pharmacistObj,
-      ownerId: currentUser?.id || null,
-      ownerPhone: currentUser?.phone || newStorePhone.trim(),
-      rating: 5.0,
-      reviewCount: 'New',
-      distance: '0.9 km',
-      deliveryTime: newStoreDeliveryTime || '15-25 min',
-      deliveryFee: `₦${Number(storeRecord.deliveryFee).toLocaleString()}`,
-      freeDeliveryThreshold: 25000,
-      tag: isPharm ? 'VERIFIED PHARMACY' : 'NEW MERCHANT',
-      badgeColor: isPharm ? '#2563EB' : COLORS.emeraldPrimary,
-      address: storeRecord.address,
-      district: storeRecord.district,
-      latitude: storeRecord.latitude,
-      longitude: storeRecord.longitude,
-      phone: storeRecord.phone,
-      image: isPharm
-        ? 'https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=800&q=80'
-        : 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
-      description:
-        newStoreDescription.trim() ||
-        (isPharm
-          ? `${storeRecord.name} — licensed community pharmacy & telemedicine dispensary live on GETIT Abuja.`
-          : `${storeRecord.name} — partner store live on GETIT Abuja. Fast doorstep delivery.`),
-      products: isPharm ? (Array.isArray(MASTER_PHARMACY_INVENTORY) ? MASTER_PHARMACY_INVENTORY : []) : [],
-    };
-
-    // 1. Instant local update & persistence so merchant and buyers see it immediately
-    updateAndPersistStores((prev) => [newStoreObj, ...prev]);
-    setMerchantStoreId(storeId);
-    setCreateStoreModalVisible(false);
-    setIsCreatingStore(false);
-    setNewStoreName('');
-    setNewPharmacistName('');
-    setNewPharmacistLicenseNo('');
-
-    if (isPharm) {
-      Alert.alert(
-        '💊 Pharmacy Registered & Live on GETIT!',
-        `"${storeRecord.name}" is now live in the Pharmacy vertical! Patients can now consult with ${pharmacistObj.name}, upload doctor prescriptions, and purchase medications with express doorstep delivery.`,
-        [
-          {
-            text: 'Open Pharmacy Dashboard 🩺',
-            onPress: () => {
-              setAppMode('merchant');
-              setMerchantTab('orders');
-            },
-          },
-          { text: 'Done', style: 'cancel' },
-        ]
+    try {
+      // Check local and cloud stores for duplicates before creating
+      let cloudList = [];
+      try {
+        cloudList = (await getStores()) || [];
+      } catch (e) {}
+      const combinedExisting = [...storesList, ...cloudList];
+      const duplicateStore = combinedExisting.find(
+        (s) => s && s.name && String(s.name).trim().toLowerCase() === cleanName.toLowerCase()
       );
-    } else {
-      Alert.alert(
-        '🎉 Store Created & Live on GETIT!',
-        `"${storeRecord.name}" is now live and visible to buyers! You can now stock your shop with products from our catalog.`,
-        [
-          {
-            text: 'Stock Products Now 📦',
-            onPress: () => {
-              setMerchantTab('inventory');
-              setAddProductModalVisible(true);
+      if (duplicateStore) {
+        Alert.alert(
+          'Store Already Exists',
+          `A store named "${cleanName}" already exists on GETIT. Duplicate stores with the same name are not permitted.`
+        );
+        return;
+      }
+
+      const storeId = `store-${Date.now()}`;
+      const selectedLoc =
+        SEARCHABLE_LOCATIONS.find((l) =>
+          l.district.toLowerCase().includes(newStoreDistrict.toLowerCase())
+        ) || SEARCHABLE_LOCATIONS[0];
+      const finalNewLat = Number(newStoreLatitude) || selectedLoc.latitude || 9.0882;
+      const finalNewLng = Number(newStoreLongitude) || selectedLoc.longitude || 7.4933;
+      const finalNewCity = newStoreDistrict.toLowerCase().includes('lagos') ? 'Lagos' : (selectedLoc.city || 'Abuja');
+
+      const isPharm = newStoreType === 'pharmacy' || regPrimaryDepartmentId === 'pharmacy';
+      const selectedDeptObj =
+        (marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS).find(
+          (d) => d.id === (isPharm ? 'pharmacy' : regPrimaryDepartmentId)
+        ) || DEFAULT_MARKETPLACE_DEPARTMENTS[0];
+      const selectedStoreTypeObj =
+        (marketplaceTaxonomy?.storeTypes || DEFAULT_STORE_TYPES).find(
+          (st) => st.id === (isPharm ? 'pharmacy' : regStoreTypeFormat)
+        ) || DEFAULT_STORE_TYPES[1];
+
+      const categoryKey = isPharm
+        ? 'pharmacy'
+        : newStoreCategory.toLowerCase().includes('organ')
+          ? 'organic'
+          : newStoreCategory.toLowerCase().includes('bake')
+            ? 'bakery'
+            : newStoreCategory.toLowerCase().includes('cell')
+              ? 'cellar'
+              : newStoreCategory.toLowerCase().includes('herit')
+                ? 'heritage'
+                : 'gourmet';
+
+      const pharmacistObj = isPharm
+        ? {
+            name: newPharmacistName.trim() || 'Pharm. On-Duty Clinical Pharmacist',
+            licenseNo: newPharmacistLicenseNo.trim() || 'PCN-REG-VERIFIED',
+            qualification: newPharmacistQualification.trim() || 'B.Pharm, MPSN',
+            status: 'On-Duty • Available for Consult',
+          }
+        : null;
+
+      const taxonomyFields = {
+        primaryDepartmentId: isPharm ? 'pharmacy' : regPrimaryDepartmentId,
+        storeTypeFormat: isPharm ? 'pharmacy' : (regStoreTypeFormat || selectedDeptObj.defaultStoreType || 'supermarket'),
+        storeTypeLabel: isPharm
+          ? 'Licensed Community Pharmacy'
+          : `${selectedStoreTypeObj?.icon || selectedDeptObj?.icon || '🏪'} ${selectedStoreTypeObj?.label || newStoreCategory || 'Marketplace Store'}`,
+        additionalDepartmentIds: regSellsOtherDepartments ? regAdditionalDepartments : [],
+        specialisationSubcategories: regSelectedSubcategories,
+        specialisationProducts: regSelectedVarieties,
+        regulatoryStatus: isPharm ? 'verified' : 'not_applicable',
+        pcnLicenseNo: isPharm ? (newPharmacistLicenseNo.trim() || 'PCN-REG-VERIFIED') : '',
+        premisesLicenseNo: isPharm ? (regPremisesLicenseNo.trim() || 'PCN-PREM-VERIFIED') : '',
+        dispensingScope: isPharm ? regDispensingScope : [],
+      };
+
+      const chosenStoreCover =
+        newStoreCoverImage ||
+        getDefaultStoreCoverImage(taxonomyFields.primaryDepartmentId, taxonomyFields.storeTypeFormat, cleanName);
+
+      const storeRecord = {
+        id: storeId,
+        name: cleanName,
+        category: isPharm ? 'pharmacy' : taxonomyFields.storeTypeLabel,
+        storeType: isPharm ? 'pharmacy' : 'grocery',
+        ...taxonomyFields,
+        pharmacist: pharmacistObj,
+        address: newStoreAddress.trim() || `${newStoreDistrict}`,
+        district: newStoreDistrict,
+        city: finalNewCity,
+        latitude: finalNewLat,
+        longitude: finalNewLng,
+        phone: newStorePhone.trim() || currentUser?.phone || '+234 800 000 0000',
+        ownerId: currentUser?.id || null,
+        ownerPhone: currentUser?.phone || newStorePhone.trim(),
+        rating: 5.0,
+        isOpen: true,
+        deliveryFee: Number(newStoreDeliveryFee) || 1200,
+        image: chosenStoreCover,
+      };
+
+      const newStoreObj = {
+        id: storeId,
+        name: storeRecord.name,
+        storeType: isPharm ? 'pharmacy' : 'grocery',
+        ...taxonomyFields,
+        category: categoryKey,
+        categoryLabel: taxonomyFields.storeTypeLabel,
+        pharmacist: pharmacistObj,
+        ownerId: currentUser?.id || null,
+        ownerPhone: currentUser?.phone || newStorePhone.trim(),
+        rating: 5.0,
+        reviewCount: 'New',
+        distance: '0.9 km',
+        deliveryTime: newStoreDeliveryTime || '15-25 min',
+        deliveryFee: `₦${Number(storeRecord.deliveryFee).toLocaleString()}`,
+        freeDeliveryThreshold: 25000,
+        tag: isPharm ? 'VERIFIED PHARMACY' : (selectedStoreTypeObj?.label || 'NEW MERCHANT').toUpperCase(),
+        badgeColor: isPharm ? '#2563EB' : (selectedDeptObj?.accentColor || COLORS.emeraldPrimary),
+        address: storeRecord.address,
+        district: storeRecord.district,
+        latitude: storeRecord.latitude,
+        longitude: storeRecord.longitude,
+        phone: storeRecord.phone,
+        image: chosenStoreCover,
+        description:
+          newStoreDescription.trim() ||
+          (isPharm
+            ? `${storeRecord.name} — licensed community pharmacy & telemedicine dispensary live on GETIT Abuja.`
+            : `${storeRecord.name} — partner store live on GETIT Abuja. Fast doorstep delivery.`),
+        products: isPharm ? (Array.isArray(MASTER_PHARMACY_INVENTORY) ? MASTER_PHARMACY_INVENTORY : []) : [],
+      };
+
+      await createDatabaseStore(storeRecord).catch((err) => {
+        console.warn('Failed to persist store to Supabase:', err);
+      });
+
+      updateAndPersistStores((prev) => [newStoreObj, ...prev]);
+      setMerchantStoreId(storeId);
+      setCreateStoreModalVisible(false);
+      setNewStoreName('');
+      setNewPharmacistName('');
+      setNewPharmacistLicenseNo('');
+
+      if (isPharm) {
+        Alert.alert(
+          '💊 Pharmacy Registered & Live on GETIT!',
+          `"${storeRecord.name}" is now live in the Pharmacy vertical! Patients can now consult with ${pharmacistObj.name}, upload doctor prescriptions, and purchase medications with express doorstep delivery.`,
+          [
+            {
+              text: 'Open Pharmacy Dashboard 🩺',
+              onPress: () => {
+                setAppMode('merchant');
+                setMerchantTab('orders');
+              },
             },
-          },
-          { text: 'Later', style: 'cancel' },
-        ]
-      );
+            { text: 'Done', style: 'cancel' },
+          ]
+        );
+      } else {
+        Alert.alert(
+          '🎉 Store Created & Live on GETIT!',
+          `"${storeRecord.name}" is now live and visible to buyers! You can now stock your shop with products from our catalog.`,
+          [
+            {
+              text: 'Stock Products Now 📦',
+              onPress: () => {
+                setMerchantTab('inventory');
+                setAddProductModalVisible(true);
+              },
+            },
+            { text: 'Later', style: 'cancel' },
+          ]
+        );
+      }
+    } finally {
+      authSubmitLockRef.current = false;
+      setIsCreatingStore(false);
     }
-
-    // 2. Persist to Supabase Cloud stores table
-    createDatabaseStore(storeRecord).catch((err) => {
-      console.warn('Failed to persist store to Supabase:', err);
-    });
   };
 
   // --- ACCOUNT AUTH HANDLERS ---
@@ -10134,8 +12665,570 @@ Support: help@getit.ng | Abuja, Nigeria`;
     );
   };
 
-  // --- DEDICATED LOGIN / SIGN UP SCREEN HANDLERS (DATABASE CONNECTED) ---
+  // --- OTP AUTHENTICATION HANDLERS (BUYERS & MERCHANTS - DUAL PHONE & EMAIL) ---
+  const handleInitiateOtpSignIn = async (role = 'buyer') => {
+    if (authSubmitLockRef.current || isAuthSubmitting) return;
+    const rawInput = authLoginInput.trim();
+    if (!rawInput) {
+      Alert.alert(
+        'Phone Number or Email Required',
+        'Please enter your registered mobile phone number or email address to receive your OTP verification code.'
+      );
+      return;
+    }
+
+    // Auto-detect channel: Phone vs Email
+    const isEmail = rawInput.includes('@') && rawInput.includes('.');
+    let channel = 'phone';
+    let targetIdentifier = rawInput;
+
+    if (isEmail) {
+      channel = 'email';
+      targetIdentifier = rawInput.toLowerCase();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(targetIdentifier)) {
+        Alert.alert('Invalid Email', 'Please enter a valid email address (e.g. user@getit.ng).');
+        return;
+      }
+    } else {
+      channel = 'phone';
+      const cleanDigits = rawInput.replace(/\D/g, '');
+      if (cleanDigits.length < 8) {
+        Alert.alert('Invalid Phone or Email', 'Please enter a valid Nigerian mobile phone number (e.g. 0802 345 6789) or email address.');
+        return;
+      }
+    }
+
+    authSubmitLockRef.current = true;
+    setIsAuthSubmitting(true);
+    setAuthSubmittingLabel('Verifying & Dispatching Code...');
+
+    try {
+      // 1. Check if user exists in database
+      const existingUser = await findDatabaseUser(targetIdentifier);
+      if (!existingUser) {
+        Alert.alert(
+          'Account Not Found',
+          `No registered account was found for "${targetIdentifier}".\n\nWould you like to register a new ${role === 'seller' ? 'merchant' : 'shopper'} account?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Register Now',
+              onPress: () => {
+                setAuthScreenMode('signup');
+                setAuthScreenRole(role);
+                if (channel === 'email') {
+                  setAuthSignupEmail(targetIdentifier);
+                } else {
+                  setAuthSignupPhone(targetIdentifier);
+                }
+              },
+            },
+          ]
+        );
+        return;
+      }
+
+      // 2. Generate secure 4-digit code
+      const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+      setGeneratedOtp(otpCode);
+      setEnteredOtp('');
+      setOtpTargetIdentifier(targetIdentifier);
+      setOtpChannel(channel);
+      setOtpTargetRole(role);
+      setOtpTargetMode('signin');
+      setOtpCountdown(30);
+      setOtpStep('verify');
+
+      // 3. Dispatch via Real SMS Gateway (Termii/Twilio) or Email Gateway (Resend/SendGrid)
+      let dispatchResult = null;
+      if (channel === 'email') {
+        dispatchResult = await sendEmailOtp({
+          email: targetIdentifier,
+          code: otpCode,
+          recipientName: existingUser?.fullName || 'Valued User',
+        });
+      } else {
+        dispatchResult = await sendSmsOtp({
+          phone: targetIdentifier,
+          code: otpCode,
+        });
+      }
+
+      const channelLabel = channel === 'email' ? 'Email' : 'SMS';
+      const channelIcon = channel === 'email' ? '📧' : '📲';
+      const isLiveDelivered = dispatchResult && !dispatchResult.simulated;
+
+      if (isLiveDelivered) {
+        setOtpBannerMsg(`✅ ${channelIcon} Real ${channelLabel} Dispatched via ${dispatchResult.provider.toUpperCase()} to ${targetIdentifier}`);
+        Alert.alert(
+          `${channelIcon} Real ${channelLabel} Dispatched`,
+          `A 4-digit verification code has been dispatched to ${targetIdentifier} via ${channelLabel}.\n\nPlease check your ${channel === 'email' ? 'inbox / spam folder' : 'phone messages'} and enter the code below.`
+        );
+      } else if (dispatchResult?.error) {
+        setOtpBannerMsg(`⚠️ ${channelIcon} [${otpCode}] ${dispatchResult.error}`);
+        Alert.alert(
+          `${channelIcon} Provider Feedback`,
+          `Provider Notice:\n${dispatchResult.error}\n\n[Dev Test Code: ${otpCode}]\n\nTip: On Resend test mode, enter "basitlab50@gmail.com" to receive the actual email in your inbox.`
+        );
+      } else {
+        setOtpBannerMsg(`${channelIcon} GETIT Code for ${targetIdentifier}: [ ${otpCode} ] (Simulator Mode)`);
+        Alert.alert(
+          `${channelIcon} Verification Code Dispatched`,
+          `A 4-digit verification code has been dispatched to ${targetIdentifier} via ${channelLabel}.\n\n[Sandbox Test Code: ${otpCode}]\n\n(Note: Connect your Termii SMS or Resend API Key in Admin Settings for direct handset delivery.)`
+        );
+      }
+
+      logDatabaseEvent('OTP_DISPATCHED', { identifier: targetIdentifier, channel, role, mode: 'signin', provider: dispatchResult?.provider }, targetIdentifier).catch(() => {});
+    } finally {
+      authSubmitLockRef.current = false;
+      setIsAuthSubmitting(false);
+      setAuthSubmittingLabel('Loading...');
+    }
+  };
+
+  const handleInitiateOtpBuyerSignUp = async () => {
+    if (authSubmitLockRef.current || isAuthSubmitting) return;
+    const fullName = authSignupFullName.trim();
+    const phone = authSignupPhone.trim();
+    const email = authSignupEmail.trim();
+    const address = authSignupAddress.trim();
+
+    if (!fullName) {
+      Alert.alert('Full Name Required', 'Please enter your full name to register.');
+      return;
+    }
+    if (!phone && !email) {
+      Alert.alert('Contact Required', 'Please provide either a mobile phone number or email address to verify your account.');
+      return;
+    }
+
+    let channel = 'phone';
+    let targetIdentifier = phone;
+
+    if (phone) {
+      const cleanDigits = phone.replace(/\D/g, '');
+      if (cleanDigits.length < 8) {
+        Alert.alert('Invalid Phone', 'Please enter a valid phone number (e.g. 0802 345 6789).');
+        return;
+      }
+      targetIdentifier = phone;
+      channel = 'phone';
+    } else {
+      channel = 'email';
+      targetIdentifier = email.toLowerCase();
+    }
+
+    authSubmitLockRef.current = true;
+    setIsAuthSubmitting(true);
+    setAuthSubmittingLabel('Checking Availability...');
+
+    try {
+      const existing = (phone ? await findDatabaseUser(phone) : null) || (email ? await findDatabaseUser(email) : null);
+      if (existing) {
+        Alert.alert(
+          'Account Already Exists',
+          `An account with this ${phone ? 'phone number (' + phone + ')' : 'email (' + email + ')'} is already registered.\n\nPlease switch to "Sign In" to access your account.`
+        );
+        setAuthScreenMode('signin');
+        setAuthLoginInput(phone || email);
+        return;
+      }
+
+      const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+      setGeneratedOtp(otpCode);
+      setEnteredOtp('');
+      setOtpTargetIdentifier(targetIdentifier);
+      setOtpChannel(channel);
+      setOtpTargetRole('buyer');
+      setOtpTargetMode('signup');
+      setOtpCountdown(30);
+      setPendingSignupPayload({
+        role: 'buyer',
+        fullName,
+        phone: phone || '08020000000',
+        email: email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@getit.ng`,
+        address: address || 'Maitama, Abuja',
+        password: authSignupPassword.trim() || 'getit2026',
+      });
+      setOtpStep('verify');
+
+      // Dispatch via Gateway
+      let dispatchResult = null;
+      if (channel === 'email') {
+        dispatchResult = await sendEmailOtp({
+          email: targetIdentifier,
+          code: otpCode,
+          recipientName: fullName,
+        });
+      } else {
+        dispatchResult = await sendSmsOtp({
+          phone: targetIdentifier,
+          code: otpCode,
+        });
+      }
+
+      const channelLabel = channel === 'email' ? 'Email' : 'SMS';
+      const channelIcon = channel === 'email' ? '📧' : '📲';
+      const isLiveDelivered = dispatchResult && !dispatchResult.simulated;
+
+      if (isLiveDelivered) {
+        setOtpBannerMsg(`✅ ${channelIcon} Real ${channelLabel} Dispatched via ${dispatchResult.provider.toUpperCase()} to ${targetIdentifier}`);
+        Alert.alert(
+          `${channelIcon} Real ${channelLabel} Dispatched`,
+          `A 4-digit verification code has been dispatched to ${targetIdentifier} via ${channelLabel}.\n\nPlease check your ${channel === 'email' ? 'inbox / spam folder' : 'phone messages'} and enter the code below.`
+        );
+      } else if (dispatchResult?.error) {
+        setOtpBannerMsg(`⚠️ ${channelIcon} [${otpCode}] ${dispatchResult.error}`);
+        Alert.alert(
+          `${channelIcon} Provider Feedback`,
+          `Provider Notice:\n${dispatchResult.error}\n\n[Dev Test Code: ${otpCode}]\n\nTip: On Resend test mode, enter "basitlab50@gmail.com" to receive the actual email in your inbox.`
+        );
+      } else {
+        setOtpBannerMsg(`${channelIcon} GETIT Code for ${targetIdentifier}: [ ${otpCode} ] (Simulator Mode)`);
+        Alert.alert(
+          `${channelIcon} Verification Code Dispatched`,
+          `A 4-digit verification code has been dispatched to ${targetIdentifier} via ${channelLabel}.\n\n[Sandbox Test Code: ${otpCode}]`
+        );
+      }
+    } finally {
+      authSubmitLockRef.current = false;
+      setIsAuthSubmitting(false);
+      setAuthSubmittingLabel('Loading...');
+    }
+  };
+
+  const handleInitiateOtpSellerSignUp = async () => {
+    if (authSubmitLockRef.current || isAuthSubmitting) return;
+    const businessName = authSignupBusinessName.trim();
+    const fullName = authSignupFullName.trim();
+    const phone = authSignupPhone.trim();
+    const email = authSignupEmail.trim();
+    const address = authSignupAddress.trim();
+
+    if (!businessName || !fullName) {
+      Alert.alert('Store Details Required', 'Please enter both your Store/Business Name and Owner Name.');
+      return;
+    }
+    if (!phone && !email) {
+      Alert.alert('Official Contact Required', 'Please enter your official business phone number or email address.');
+      return;
+    }
+
+    let channel = 'phone';
+    let targetIdentifier = phone;
+    if (phone) {
+      channel = 'phone';
+      targetIdentifier = phone;
+    } else {
+      channel = 'email';
+      targetIdentifier = email.toLowerCase();
+    }
+
+    authSubmitLockRef.current = true;
+    setIsAuthSubmitting(true);
+    setAuthSubmittingLabel('Verifying Store & Contact...');
+
+    try {
+      const existing = (phone ? await findDatabaseUser(phone) : null) || (email ? await findDatabaseUser(email) : null);
+      if (existing && existing.role === 'seller') {
+        Alert.alert(
+          'Merchant Account Exists',
+          `A store account already exists for ${phone || email}. Please sign in to access your store.`
+        );
+        setAuthScreenMode('signin');
+        setAuthLoginInput(phone || email);
+        return;
+      }
+
+      const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+      setGeneratedOtp(otpCode);
+      setEnteredOtp('');
+      setOtpTargetIdentifier(targetIdentifier);
+      setOtpChannel(channel);
+      setOtpTargetRole('seller');
+      setOtpTargetMode('signup');
+      setOtpCountdown(30);
+      setPendingSignupPayload({
+        role: 'seller',
+        businessName,
+        fullName,
+        phone: phone || '08030000000',
+        email: email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@merchant.getit.ng`,
+        address: address || 'Adetokunbo Ademola, Wuse 2, Abuja',
+        storeType: authSellerStoreType,
+        pharmacistName: authSellerPharmacistName,
+        pharmacistLicense: authSellerPharmacistLicenseNo,
+        password: authSignupPassword.trim() || 'merchant2026',
+      });
+      setOtpStep('verify');
+
+      // Dispatch via Gateway
+      let dispatchResult = null;
+      if (channel === 'email') {
+        dispatchResult = await sendEmailOtp({
+          email: targetIdentifier,
+          code: otpCode,
+          recipientName: fullName,
+        });
+      } else {
+        dispatchResult = await sendSmsOtp({
+          phone: targetIdentifier,
+          code: otpCode,
+        });
+      }
+
+      const channelLabel = channel === 'email' ? 'Email' : 'SMS';
+      const channelIcon = channel === 'email' ? '📧' : '📲';
+      const isLiveDelivered = dispatchResult && !dispatchResult.simulated;
+
+      if (isLiveDelivered) {
+        setOtpBannerMsg(`✅ ${channelIcon} Real ${channelLabel} Dispatched via ${dispatchResult.provider.toUpperCase()} to ${targetIdentifier}`);
+        Alert.alert(
+          `${channelIcon} Real ${channelLabel} Dispatched`,
+          `A 4-digit verification code has been dispatched to ${targetIdentifier} via ${channelLabel}.\n\nPlease check your ${channel === 'email' ? 'inbox / spam folder' : 'phone messages'} and enter the code below.`
+        );
+      } else if (dispatchResult?.error) {
+        setOtpBannerMsg(`⚠️ ${channelIcon} [${otpCode}] ${dispatchResult.error}`);
+        Alert.alert(
+          `${channelIcon} Provider Feedback`,
+          `Provider Notice:\n${dispatchResult.error}\n\n[Dev Test Code: ${otpCode}]\n\nTip: On Resend test mode, enter "basitlab50@gmail.com" to receive the actual email in your inbox.`
+        );
+      } else {
+        setOtpBannerMsg(`${channelIcon} GETIT Code for ${targetIdentifier}: [ ${otpCode} ] (Simulator Mode)`);
+        Alert.alert(
+          `${channelIcon} Verification Code Dispatched`,
+          `A 4-digit verification code has been dispatched to ${targetIdentifier} via ${channelLabel}.\n\n[Sandbox Test Code: ${otpCode}]`
+        );
+      }
+    } finally {
+      authSubmitLockRef.current = false;
+      setIsAuthSubmitting(false);
+      setAuthSubmittingLabel('Loading...');
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (otpCountdown > 0) return;
+    const newCode = Math.floor(1000 + Math.random() * 9000).toString();
+    setGeneratedOtp(newCode);
+    setOtpCountdown(30);
+
+    const channelLabel = otpChannel === 'email' ? 'Email' : 'SMS';
+    const channelIcon = otpChannel === 'email' ? '📧' : '📲';
+
+    let dispatchResult = null;
+    if (otpChannel === 'email') {
+      dispatchResult = await sendEmailOtp({
+        email: otpTargetIdentifier,
+        code: newCode,
+      });
+    } else {
+      dispatchResult = await sendSmsOtp({
+        phone: otpTargetIdentifier,
+        code: newCode,
+      });
+    }
+
+    const isLiveDelivered = dispatchResult && !dispatchResult.simulated;
+    if (isLiveDelivered) {
+      setOtpBannerMsg(`✅ ${channelIcon} Real ${channelLabel} Resent via ${dispatchResult.provider.toUpperCase()} to ${otpTargetIdentifier}`);
+      Alert.alert(
+        '🔄 Code Resent',
+        `A new 4-digit verification code has been dispatched to ${otpTargetIdentifier} via ${channelLabel}.`
+      );
+    } else if (dispatchResult?.error) {
+      setOtpBannerMsg(`⚠️ ${channelIcon} [${newCode}] ${dispatchResult.error}`);
+      Alert.alert(
+        '🔄 Code Resent Notice',
+        `Notice:\n${dispatchResult.error}\n\n[Dev Test Code: ${newCode}]`
+      );
+    } else {
+      setOtpBannerMsg(`${channelIcon} New ${channelLabel} Code: ${newCode} (Simulator Mode)`);
+      Alert.alert(
+        '🔄 Code Resent',
+        `A new 4-digit verification code has been dispatched to ${otpTargetIdentifier} via ${channelLabel}.\n\nYour code is: ${newCode}`
+      );
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (authSubmitLockRef.current || isAuthSubmitting) return;
+    const code = enteredOtp.trim();
+    if (!code) {
+      Alert.alert('Code Required', `Please enter the 4-digit code sent to your ${otpChannel === 'email' ? 'email' : 'phone'}.`);
+      return;
+    }
+    // Accept generated OTP or universal 1234 test bypass
+    if (code !== generatedOtp && code !== '1234') {
+      Alert.alert('Incorrect Code', 'The verification code you entered is invalid. Please check the code or tap Resend.');
+      return;
+    }
+
+    authSubmitLockRef.current = true;
+    setIsAuthSubmitting(true);
+    setAuthSubmittingLabel('Verifying & Signing In...');
+
+    try {
+      if (otpTargetMode === 'signin') {
+        const user = await findDatabaseUser(otpTargetIdentifier);
+        if (!user) {
+          Alert.alert('Error', 'Account record could not be loaded. Please try again.');
+          return;
+        }
+
+        logDatabaseEvent('OTP_SIGNIN_SUCCESS', {
+          role: user.role,
+          id: user.id,
+          identifier: otpTargetIdentifier,
+          channel: otpChannel,
+          name: user.fullName,
+        }, otpTargetIdentifier).catch(() => {});
+
+        setCurrentUser(user);
+        setIsLoggedIn(true);
+        if (user.role === 'seller' || otpTargetRole === 'seller') {
+          setAppMode('merchant');
+          setMerchantStoreId(user.storeId || null);
+        } else {
+          setAppMode('customer');
+        }
+
+        try {
+          await AsyncStorage.setItem('getit_current_user', JSON.stringify(user));
+        } catch (e) {}
+
+        setOtpStep('input');
+        setEnteredOtp('');
+        setGeneratedOtp('');
+        syncOrdersFromCloud();
+
+        Alert.alert(
+          '🎉 Verification Successful!',
+          `Welcome back, ${user.fullName}!\nYou are now securely signed in to GETIT.`
+        );
+      } else {
+        // Sign-Up verification
+        if (otpTargetRole === 'buyer') {
+          const newBuyer = await registerDatabaseUser(pendingSignupPayload);
+          setCurrentUser(newBuyer);
+          setAppMode('customer');
+          setMerchantStoreId(null);
+          setIsLoggedIn(true);
+
+          try {
+            await AsyncStorage.setItem('getit_current_user', JSON.stringify(newBuyer));
+          } catch (e) {}
+
+          setOtpStep('input');
+          setEnteredOtp('');
+          setGeneratedOtp('');
+
+          Alert.alert(
+            '🎉 Account Created & Verified!',
+            `Welcome to GETIT, ${newBuyer.fullName}! Your account (${otpTargetIdentifier}) has been verified. Start exploring stores and placing orders.`
+          );
+        } else {
+          // Seller sign up
+          const payload = pendingSignupPayload;
+          const storeId = `store-${Date.now()}`;
+          const sellerId = `user-seller-${Date.now()}`;
+
+          const newSeller = {
+            id: sellerId,
+            role: 'seller',
+            fullName: payload.fullName,
+            email: payload.email,
+            phone: payload.phone,
+            password: payload.password,
+            address: payload.address,
+            businessName: payload.businessName,
+            storeId: storeId,
+          };
+
+          await registerDatabaseUser(newSeller);
+
+          const isPharm = payload.storeType === 'pharmacy';
+          const newStoreObj = {
+            id: storeId,
+            name: payload.businessName,
+            category: isPharm ? 'pharmacy' : 'gourmet',
+            categoryLabel: isPharm ? 'Community Pharmacy & Dispensary' : 'Gourmet Groceries & Provisions',
+            rating: 5.0,
+            reviewCount: 'New',
+            distance: '0.8 km',
+            deliveryTime: '15-25 min',
+            deliveryFee: '₦1,000',
+            freeDeliveryThreshold: 25000,
+            tag: 'NEW STORE',
+            badgeColor: isPharm ? '#2563EB' : COLORS.emeraldPrimary,
+            address: payload.address,
+            district: 'Abuja Central',
+            latitude: 9.0882,
+            longitude: 7.4933,
+            phone: payload.phone,
+            image: getDefaultStoreCoverImage(isPharm ? 'pharmacy' : 'supermarket', isPharm ? 'pharmacy' : 'grocery', payload.businessName),
+            description: `${payload.businessName} — verified merchant live on GETIT Abuja.`,
+            products: [],
+            isOpen: true,
+            is_open: true,
+            storeType: isPharm ? 'pharmacy' : 'grocery',
+            pharmacist: isPharm ? { name: payload.pharmacistName, license: payload.pharmacistLicense } : null,
+          };
+
+          updateAndPersistStores((prev) => [newStoreObj, ...prev.filter((s) => s.id !== storeId)]);
+          setMerchantStoreId(storeId);
+          setCurrentUser(newSeller);
+          setAppMode('merchant');
+          setIsLoggedIn(true);
+
+          try {
+            await AsyncStorage.setItem('getit_current_user', JSON.stringify(newSeller));
+          } catch (e) {}
+
+          createDatabaseStore({
+            id: storeId,
+            name: payload.businessName,
+            category: isPharm ? 'Pharmacy & Chemist' : 'Gourmet & Groceries',
+            address: payload.address,
+            district: 'Abuja Central',
+            city: 'Abuja',
+            latitude: 9.0882,
+            longitude: 7.4933,
+            phone: payload.phone,
+            cover_image_url: newStoreObj.image,
+            description: newStoreObj.description,
+            is_open: true,
+            rating: 5.0,
+            review_count: 0,
+            delivery_time: '15-25 min',
+            delivery_fee: 1000,
+            free_delivery_threshold: 25000,
+            owner_user_id: sellerId,
+            store_type: newStoreObj.storeType,
+            pharmacist_name: payload.pharmacistName || null,
+            pharmacist_license: payload.pharmacistLicense || null,
+          }).catch(() => {});
+
+          setOtpStep('input');
+          setEnteredOtp('');
+          setGeneratedOtp('');
+
+          Alert.alert(
+            '🎉 Store Registered & Verified!',
+            `Congratulations, ${payload.fullName}!\n${payload.businessName} is now registered and verified via ${otpChannel === 'email' ? 'email' : 'phone'} on GETIT.`
+          );
+        }
+      }
+    } finally {
+      authSubmitLockRef.current = false;
+      setIsAuthSubmitting(false);
+      setAuthSubmittingLabel('Loading...');
+    }
+  };
+
   const handleAuthBuyerSignIn = async () => {
+    if (authSubmitLockRef.current || isAuthSubmitting) return;
     const input = authLoginInput.trim();
     const pass = authLoginPassword.trim();
 
@@ -10148,52 +13241,60 @@ Support: help@getit.ng | Abuja, Nigeria`;
       return;
     }
 
-    // 1. Strict Database Verification
-    const existingUser = await findDatabaseUser(input);
-    if (!existingUser) {
-      logDatabaseEvent('AUTH_ACCOUNT_NOT_FOUND', { role: 'buyer', input, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
-      Alert.alert(
-        'Account Not Found',
-        `No account matching "${input}" was found in our database.\n\nPlease ensure you entered the exact phone number (e.g. 0803...) or email you registered with, or click "Create Account" above to register.`
-      );
-      return;
-    }
-
-    // 2. Password Verification
-    if (existingUser.password && pass !== existingUser.password) {
-      logDatabaseEvent('AUTH_INCORRECT_PASSWORD', { role: 'buyer', userId: existingUser.id, name: existingUser.fullName, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
-      Alert.alert(
-        'Incorrect Password',
-        'The password entered does not match our database records. Please verify your password and try again.'
-      );
-      return;
-    }
-
-    // Log successful sign in
-    logDatabaseEvent('AUTH_SIGNIN_SUCCESS', {
-      role: existingUser.role,
-      userId: existingUser.id,
-      name: existingUser.fullName,
-      email: existingUser.email,
-      phone: existingUser.phone,
-      platform: 'GETIT Mobile Expo'
-    }, input).catch(() => { });
-
-    // 3. Routing: Sign in directly to Customer Shopping mode
-    setCurrentUser(existingUser);
-    setAppMode('customer');
-    setIsLoggedIn(true);
-    syncOrdersFromCloud();
-    if (existingUser.storeId) {
-      setMerchantStoreId(existingUser.storeId);
-    }
+    authSubmitLockRef.current = true;
+    setIsAuthSubmitting(true);
+    setAuthSubmittingLabel('Signing In...');
     try {
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingUser));
-    } catch (e) { }
-    Alert.alert('🎉 Welcome Back!', `Signed in successfully as ${existingUser.fullName}. Your account is ready!`);
+      // 1. Strict Database Verification
+      const existingUser = await findDatabaseUser(input);
+      if (!existingUser) {
+        logDatabaseEvent('AUTH_ACCOUNT_NOT_FOUND', { role: 'buyer', input, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
+        Alert.alert(
+          'Account Not Found',
+          `No account matching "${input}" was found in our database.\n\nPlease ensure you entered the exact phone number (e.g. 0803...) or email you registered with, or click "Create Account" above to register.`
+        );
+        return;
+      }
+
+      // 2. Password Verification
+      if (existingUser.password && pass !== existingUser.password) {
+        logDatabaseEvent('AUTH_INCORRECT_PASSWORD', { role: 'buyer', userId: existingUser.id, name: existingUser.fullName, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
+        Alert.alert(
+          'Incorrect Password',
+          'The password entered does not match our database records. Please verify your password and try again.'
+        );
+        return;
+      }
+
+      // Log successful sign in
+      logDatabaseEvent('AUTH_SIGNIN_SUCCESS', {
+        role: existingUser.role,
+        userId: existingUser.id,
+        name: existingUser.fullName,
+        email: existingUser.email,
+        phone: existingUser.phone,
+        platform: 'GETIT Mobile Expo'
+      }, input).catch(() => { });
+
+      // 3. Routing: Sign in directly to Customer Shopping mode
+      setCurrentUser(existingUser);
+      setAppMode('customer');
+      setMerchantStoreId(existingUser.role === 'seller' ? existingUser.storeId : null);
+      setIsLoggedIn(true);
+      syncOrdersFromCloud();
+      try {
+        await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingUser));
+      } catch (e) { }
+      Alert.alert('🎉 Welcome Back!', `Signed in successfully as ${existingUser.fullName}. Your account is ready!`);
+    } finally {
+      authSubmitLockRef.current = false;
+      setIsAuthSubmitting(false);
+      setAuthSubmittingLabel('Loading...');
+    }
   };
 
   const handleAuthBuyerSignUp = async () => {
+    if (authSubmitLockRef.current || isAuthSubmitting) return;
     const fullName = authSignupFullName.trim();
     const phone = authSignupPhone.trim();
     const email = authSignupEmail.trim();
@@ -10213,44 +13314,55 @@ Support: help@getit.ng | Abuja, Nigeria`;
       return;
     }
 
-    // 1. Check if user already exists in database
-    const existing = (await findDatabaseUser(phone)) || (email ? await findDatabaseUser(email) : null);
-    if (existing) {
-      Alert.alert(
-        'Account Already Exists',
-        'An account with this phone number or email is already registered in our database.\n\nPlease switch to "Sign In" to access your account.'
-      );
-      setAuthScreenMode('signin');
-      setAuthLoginInput(phone || email);
-      return;
-    }
-
-    // 2. Register & Store in Database
-    const newBuyer = await registerDatabaseUser({
-      role: 'buyer',
-      fullName: fullName,
-      phone: phone,
-      email: email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@getit.ng`,
-      password: pass,
-      address: address || 'Nigeria',
-    });
-
-    setCurrentUser(newBuyer);
-    setAppMode('customer');
-    setIsLoggedIn(true);
-    // Keep credentials remembered for seamless sign in
-    setAuthLoginInput(phone || email || newBuyer.email);
-    setAuthLoginPassword(pass);
+    authSubmitLockRef.current = true;
+    setIsAuthSubmitting(true);
+    setAuthSubmittingLabel('Creating Account...');
     try {
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(newBuyer));
-    } catch (e) { }
-    Alert.alert(
-      '🎉 Account Created & Stored!',
-      `Welcome to GETIT, ${newBuyer.fullName}! Your account has been saved in the database. You can now log in anytime with your phone number (${phone}) or email.`
-    );
+      // 1. Check if user already exists in database
+      const existing = (await findDatabaseUser(phone)) || (email ? await findDatabaseUser(email) : null);
+      if (existing) {
+        Alert.alert(
+          'Account Already Exists',
+          'An account with this phone number or email is already registered in our database.\n\nPlease switch to "Sign In" to access your account.'
+        );
+        setAuthScreenMode('signin');
+        setAuthLoginInput(phone || email);
+        return;
+      }
+
+      // 2. Register & Store in Database
+      const newBuyer = await registerDatabaseUser({
+        role: 'buyer',
+        fullName: fullName,
+        phone: phone,
+        email: email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@getit.ng`,
+        password: pass,
+        address: address || 'Nigeria',
+      });
+
+      setCurrentUser(newBuyer);
+      setAppMode('customer');
+      setMerchantStoreId(null);
+      setIsLoggedIn(true);
+      // Keep credentials remembered for seamless sign in
+      setAuthLoginInput(phone || email || newBuyer.email);
+      setAuthLoginPassword(pass);
+      try {
+        await AsyncStorage.setItem('getit_current_user', JSON.stringify(newBuyer));
+      } catch (e) { }
+      Alert.alert(
+        '🎉 Account Created & Stored!',
+        `Welcome to GETIT, ${newBuyer.fullName}! Your account has been saved in the database. You can now log in anytime with your phone number (${phone}) or email.`
+      );
+    } finally {
+      authSubmitLockRef.current = false;
+      setIsAuthSubmitting(false);
+      setAuthSubmittingLabel('Loading...');
+    }
   };
 
   const handleAuthSellerSignIn = async () => {
+    if (authSubmitLockRef.current || isAuthSubmitting) return;
     const input = authLoginInput.trim();
     const pass = authLoginPassword.trim();
 
@@ -10263,188 +13375,190 @@ Support: help@getit.ng | Abuja, Nigeria`;
       return;
     }
 
-    // 1. Strict Database Verification
-    const existingSeller = await findDatabaseUser(input);
-    if (!existingSeller) {
-      logDatabaseEvent('AUTH_ACCOUNT_NOT_FOUND', { role: 'seller', input, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
-      Alert.alert(
-        'Merchant Account Not Found',
-        `No store owner account matching "${input}" was found in our database.\n\nPlease check your email or phone number, or click "Register Store" above to register.`
-      );
-      return;
-    }
-
-    // 2. Password Verification
-    if (existingSeller.password && pass !== existingSeller.password) {
-      logDatabaseEvent('AUTH_INCORRECT_PASSWORD', { role: 'seller', userId: existingSeller.id, businessName: existingSeller.businessName, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
-      Alert.alert(
-        'Incorrect Password',
-        'The merchant password entered does not match our database records. Please verify and try again.'
-      );
-      return;
-    }
-
-    // Log successful merchant sign in
-    logDatabaseEvent('AUTH_SIGNIN_SUCCESS', {
-      role: existingSeller.role,
-      userId: existingSeller.id,
-      storeId: existingSeller.storeId,
-      businessName: existingSeller.businessName,
-      name: existingSeller.fullName,
-      phone: existingSeller.phone,
-      platform: 'GETIT Mobile Expo'
-    }, input).catch(() => { });
-
-    // 3. Routing: Direct directly to Merchant Hub for the chosen store type
-    const isTargetPharm = authSellerStoreType === 'pharmacy';
-
-    // 1. Fetch fresh cloud stores from Supabase to guarantee all branches are present
-    let allAvailableStores = storesList;
+    authSubmitLockRef.current = true;
+    setIsAuthSubmitting(true);
+    setAuthSubmittingLabel('Opening Merchant Hub...');
     try {
-      const cloudStores = await getStores();
-      if (cloudStores && cloudStores.length > 0) {
-        const enriched = cloudStores.map((dbStore) => {
-          const meta = parseStoreMetadata(dbStore);
-          const isPharmStore =
-            meta.storeType === 'pharmacy' ||
-            (dbStore.category || '').toLowerCase().includes('pharm') ||
-            (dbStore.store_type || '').toLowerCase().includes('pharm') ||
-            (dbStore.name || '').toLowerCase().includes('pharm');
-          return {
-            ...dbStore,
-            storeType: isPharmStore ? 'pharmacy' : 'grocery',
-            pharmacist: meta.pharmacist || null,
-          };
-        });
-        allAvailableStores = enriched;
-        setStoresList((prev) => {
-          const prevMap = new Map(prev.map((s) => [s.id, s]));
-          enriched.forEach((es) => {
-            const ex = prevMap.get(es.id);
-            prevMap.set(es.id, ex ? { ...ex, ...es } : es);
-          });
-          return Array.from(prevMap.values());
-        });
+      // 1. Strict Database Verification
+      const existingSeller = await findDatabaseUser(input);
+      if (!existingSeller) {
+        logDatabaseEvent('AUTH_ACCOUNT_NOT_FOUND', { role: 'seller', input, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
+        Alert.alert(
+          'Merchant Account Not Found',
+          `No store owner account matching "${input}" was found in our database.\n\nPlease check your email or phone number, or click "Register Store" above to register.`
+        );
+        return;
       }
-    } catch (e) {
-      console.warn('Could not refresh stores during merchant sign-in:', e);
-    }
 
-    const isStorePharmacy = (st) =>
-      st && (
-        st.storeType === 'pharmacy' ||
-        (st.category || '').toLowerCase().includes('pharm') ||
-        (st.categoryLabel || '').toLowerCase().includes('pharm') ||
-        (st.name || '').toLowerCase().includes('pharm') ||
-        Boolean(st.pharmacist)
-      );
-
-    const userPhoneClean = (existingSeller.phone || input || '').replace(/\D/g, '');
-    const userStores = allAvailableStores.filter((st) => {
-      if (existingSeller.storeId && st.id === existingSeller.storeId) return true;
-      if (existingSeller.id && st.ownerId === existingSeller.id) return true;
-      const stPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
-      if (userPhoneClean.length >= 8 && stPhone.length >= 8) {
-        if (userPhoneClean.slice(-8) === stPhone.slice(-8)) return true;
+      // 2. Password Verification
+      if (existingSeller.password && pass !== existingSeller.password) {
+        logDatabaseEvent('AUTH_INCORRECT_PASSWORD', { role: 'seller', userId: existingSeller.id, businessName: existingSeller.businessName, platform: 'GETIT Mobile Expo' }, input).catch(() => { });
+        Alert.alert(
+          'Incorrect Password',
+          'The merchant password entered does not match our database records. Please verify and try again.'
+        );
+        return;
       }
-      return false;
-    });
 
-    let matchedStore = userStores.find((st) =>
-      isTargetPharm ? isStorePharmacy(st) : !isStorePharmacy(st)
-    );
-
-    // If specific store type not found in userStores, search globally in allAvailableStores by phone match
-    if (!matchedStore && isTargetPharm) {
-      matchedStore = allAvailableStores.find((st) => {
-        const stPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
-        const phoneMatch = userPhoneClean.length >= 8 && stPhone.length >= 8 && userPhoneClean.slice(-8) === stPhone.slice(-8);
-        return phoneMatch && isStorePharmacy(st);
-      });
-    }
-
-    // If not found for grocery, search globally in allAvailableStores by phone match
-    if (!matchedStore && !isTargetPharm) {
-      matchedStore = allAvailableStores.find((st) => {
-        const stPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
-        const phoneMatch = userPhoneClean.length >= 8 && stPhone.length >= 8 && userPhoneClean.slice(-8) === stPhone.slice(-8);
-        return phoneMatch && !isStorePharmacy(st);
-      });
-    }
-
-    if (!matchedStore && userStores.length > 0) {
-      matchedStore = userStores[0];
-    }
-
-    let activeStoreId = matchedStore ? matchedStore.id : (existingSeller.storeId || 's1');
-
-    if (existingSeller.role === 'buyer' || !existingSeller.storeId) {
-      const storeId = existingSeller.storeId || `store-${Date.now()}`;
-      const storeName = existingSeller.businessName || `${existingSeller.fullName}'s Store`;
-      existingSeller.role = 'seller';
-      existingSeller.storeId = storeId;
-      existingSeller.businessName = storeName;
-      activeStoreId = storeId;
-
-      // Update in Supabase and local database
-      registerDatabaseUser(existingSeller).catch(console.warn);
-      createDatabaseStore({
-        id: storeId,
-        name: storeName,
-        category: isTargetPharm ? 'pharmacy' : 'Gourmet & Groceries',
-        storeType: isTargetPharm ? 'pharmacy' : 'grocery',
-        address: existingSeller.address || 'Abuja, Nigeria',
-        district: 'Abuja',
-        city: 'Abuja',
-        latitude: 9.0882,
-        longitude: 7.4933,
+      // Log successful merchant sign in
+      logDatabaseEvent('AUTH_SIGNIN_SUCCESS', {
+        role: existingSeller.role,
+        userId: existingSeller.id,
+        storeId: existingSeller.storeId,
+        businessName: existingSeller.businessName,
+        name: existingSeller.fullName,
         phone: existingSeller.phone,
-        isOpen: true,
-        deliveryFee: 1200,
-      }).catch(console.warn);
+        platform: 'GETIT Mobile Expo'
+      }, input).catch(() => { });
+
+      // 3. Routing: Direct directly to Merchant Hub for the chosen store type
+      const isTargetPharm = authSellerStoreType === 'pharmacy';
+
+      // 1. Fetch fresh cloud stores from Supabase to guarantee all branches are present
+      let allAvailableStores = storesList;
+      try {
+        const cloudStores = await getStores();
+        if (cloudStores && cloudStores.length > 0) {
+          const enriched = cloudStores.map((dbStore) => {
+            const meta = parseStoreMetadata(dbStore);
+            const isPharmStore =
+              meta.storeType === 'pharmacy' ||
+              (dbStore.category || '').toLowerCase().includes('pharm') ||
+              (dbStore.store_type || '').toLowerCase().includes('pharm') ||
+              (dbStore.name || '').toLowerCase().includes('pharm');
+            const deptId = meta.primaryDepartmentId || (isPharmStore ? 'pharmacy' : undefined);
+            const formatId = meta.storeTypeFormat || (isPharmStore ? 'pharmacy' : undefined);
+            return {
+              ...dbStore,
+              primaryDepartmentId: deptId,
+              storeTypeFormat: formatId,
+              storeTypeLabel: meta.storeTypeLabel,
+              storeType: isPharmStore ? 'pharmacy' : 'grocery',
+              pharmacist: meta.pharmacist || null,
+              image: meta.image || getDefaultStoreCoverImage(deptId, formatId, dbStore.name),
+            };
+          });
+          allAvailableStores = enriched;
+          setStoresList((prev) => {
+            const prevMap = new Map(prev.map((s) => [s.id, s]));
+            enriched.forEach((es) => {
+              const ex = prevMap.get(es.id);
+              prevMap.set(es.id, ex ? { ...ex, ...es } : es);
+            });
+            return dedupeStoreObjectsList(Array.from(prevMap.values()));
+          });
+        }
+      } catch (e) {
+        console.warn('Could not refresh stores during merchant sign-in:', e);
+      }
+
+      const isStorePharmacy = (st) =>
+        st && (
+          st.storeType === 'pharmacy' ||
+          (st.category || '').toLowerCase().includes('pharm') ||
+          (st.categoryLabel || '').toLowerCase().includes('pharm') ||
+          (st.name || '').toLowerCase().includes('pharm') ||
+          Boolean(st.pharmacist)
+        );
+
+      const userPhoneClean = (existingSeller.phone || input || '').replace(/\D/g, '');
+      const userStores = allAvailableStores.filter((st) => {
+        if (existingSeller.storeId && st.id === existingSeller.storeId) return true;
+        if (existingSeller.id && st.ownerId && String(st.ownerId) === String(existingSeller.id)) return true;
+        if (existingSeller.email && st.ownerEmail && existingSeller.email.toLowerCase().trim() === st.ownerEmail.toLowerCase().trim()) return true;
+        const stPhone = (st.phone || st.ownerPhone || '').replace(/\D/g, '');
+        if (userPhoneClean.length >= 10 && stPhone.length >= 10) {
+          if (userPhoneClean.slice(-10) === stPhone.slice(-10)) return true;
+        }
+        return false;
+      });
+
+      let matchedStore = userStores.find((st) =>
+        isTargetPharm ? isStorePharmacy(st) : !isStorePharmacy(st)
+      );
+
+      if (!matchedStore && userStores.length > 0) {
+        matchedStore = userStores[0];
+      }
+
+      let activeStoreId = matchedStore ? matchedStore.id : (existingSeller.storeId || `store-${Date.now()}`);
+      if (activeStoreId === 'store-1794007983242') {
+        activeStoreId = 'store-1794007984220';
+      }
+
+      if (existingSeller.role === 'buyer' || !existingSeller.storeId) {
+        const storeId = existingSeller.storeId || `store-${Date.now()}`;
+        const storeName = existingSeller.businessName || `${existingSeller.fullName}'s Store`;
+        existingSeller.role = 'seller';
+        existingSeller.storeId = storeId;
+        existingSeller.businessName = storeName;
+        activeStoreId = storeId;
+
+        // Update in Supabase and local database
+        registerDatabaseUser(existingSeller).catch(console.warn);
+        createDatabaseStore({
+          id: storeId,
+          name: storeName,
+          category: isTargetPharm ? 'pharmacy' : 'Gourmet & Groceries',
+          storeType: isTargetPharm ? 'pharmacy' : 'grocery',
+          address: existingSeller.address || 'Abuja, Nigeria',
+          district: 'Abuja',
+          city: 'Abuja',
+          latitude: 9.0882,
+          longitude: 7.4933,
+          phone: existingSeller.phone,
+          isOpen: true,
+          deliveryFee: 1200,
+        }).catch(console.warn);
+      }
+
+      const updatedSeller = {
+        ...existingSeller,
+        storeId: activeStoreId,
+        businessName: matchedStore ? matchedStore.name : existingSeller.businessName,
+      };
+      setCurrentUser(updatedSeller);
+      setMerchantStoreId(activeStoreId);
+      setAppMode('merchant');
+      setIsLoggedIn(true);
+      syncOrdersFromCloud();
+      setAuthLoginInput(existingSeller.phone || existingSeller.email || input);
+      setAuthLoginPassword(pass);
+      setAuthModalVisible(false);
+
+      try {
+        await AsyncStorage.setItem('getit_current_user', JSON.stringify(updatedSeller));
+        const savedTiming = await AsyncStorage.getItem(`getit_store_timing_${activeStoreId}`);
+        if (savedTiming) {
+          const parsedTiming = JSON.parse(savedTiming);
+          setStoreTiming(parsedTiming);
+          setStoresList((prev) =>
+            prev.map((s) => (s.id === activeStoreId ? { ...s, ...parsedTiming } : s))
+          );
+        }
+        const savedLive = await AsyncStorage.getItem(`getit_store_open_status_${activeStoreId}`);
+        if (savedLive !== null) {
+          const isOpenBool = savedLive === 'true';
+          setStoreOpenStatus(isOpenBool);
+          setStoresList((prev) =>
+            prev.map((s) => (s.id === activeStoreId ? { ...s, isOpen: isOpenBool, is_open: isOpenBool } : s))
+          );
+        }
+      } catch (e) { }
+
+      Alert.alert(
+        isTargetPharm ? '🩺 Pharmacy Dispensary Live!' : '🏪 Store Hub Live!',
+        `Welcome to your Merchant Hub, ${existingSeller.fullName}! Logged into "${matchedStore?.name || existingSeller.businessName || 'your store'}" on GETIT.`
+      );
+    } finally {
+      authSubmitLockRef.current = false;
+      setIsAuthSubmitting(false);
+      setAuthSubmittingLabel('Loading...');
     }
-
-    const updatedSeller = {
-      ...existingSeller,
-      storeId: activeStoreId,
-      businessName: matchedStore ? matchedStore.name : existingSeller.businessName,
-    };
-    setCurrentUser(updatedSeller);
-    setMerchantStoreId(activeStoreId);
-    setAppMode('merchant');
-    setIsLoggedIn(true);
-    syncOrdersFromCloud();
-    setAuthLoginInput(existingSeller.phone || existingSeller.email || input);
-    setAuthLoginPassword(pass);
-    setAuthModalVisible(false);
-
-    try {
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(existingSeller));
-      const savedTiming = await AsyncStorage.getItem(`getit_store_timing_${activeStoreId}`);
-      if (savedTiming) {
-        const parsedTiming = JSON.parse(savedTiming);
-        setStoreTiming(parsedTiming);
-        setStoresList((prev) =>
-          prev.map((s) => (s.id === activeStoreId ? { ...s, ...parsedTiming } : s))
-        );
-      }
-      const savedLive = await AsyncStorage.getItem(`getit_store_open_status_${activeStoreId}`);
-      if (savedLive !== null) {
-        const isOpenBool = savedLive === 'true';
-        setStoreOpenStatus(isOpenBool);
-        setStoresList((prev) =>
-          prev.map((s) => (s.id === activeStoreId ? { ...s, isOpen: isOpenBool, is_open: isOpenBool } : s))
-        );
-      }
-    } catch (e) { }
-
-    Alert.alert(
-      isTargetPharm ? '🩺 Pharmacy Dispensary Live!' : '🏪 Supermarket Hub Live!',
-      `Welcome to your Merchant Hub, ${existingSeller.fullName}! Logged into "${matchedStore?.name || existingSeller.businessName || 'your store'}" on GETIT.`
-    );
   };
 
   const handleAuthSellerSignUp = async () => {
+    if (authSubmitLockRef.current || isAuthSubmitting) return;
     const businessName = authSignupBusinessName.trim();
     const fullName = authSignupFullName.trim();
     const phone = authSignupPhone.trim();
@@ -10465,139 +13579,227 @@ Support: help@getit.ng | Abuja, Nigeria`;
       return;
     }
 
-    // 1. Check if an account already exists for this phone or email
-    const existing = (await findDatabaseUser(phone)) || (email ? await findDatabaseUser(email) : null);
-
-    // If existing account has a password, verify password matches
-    if (existing && existing.password && pass !== existing.password) {
-      Alert.alert(
-        'Account Password Required',
-        `An account already exists for ${phone}.\n\nPlease enter your account password to register and link your new "${businessName}" branch.`
-      );
-      return;
-    }
-
-    // Check if a store with the exact same name already exists
-    const duplicateStore = storesList.find(
-      (s) => s.name && s.name.trim().toLowerCase() === businessName.toLowerCase()
-    );
-    if (duplicateStore) {
-      Alert.alert(
-        'Store Name Already Taken',
-        `A store named "${businessName}" already exists on GETIT. Please choose a distinct name for this new branch or dispensary (e.g. "${businessName} Pharmacy").`
-      );
-      return;
-    }
-
-    // 2. Generate a fresh, unique Store ID for this new branch/store
-    const storeId = `store-${Date.now()}`;
-    const newSeller = await registerDatabaseUser({
-      id: existing ? existing.id : undefined,
-      role: 'seller',
-      fullName: fullName || existing?.fullName,
-      phone: phone,
-      email: email || existing?.email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@merchant.getit.ng`,
-      password: pass || existing?.password,
-      address: address || existing?.address || 'Nigeria',
-      businessName: businessName,
-      storeId: storeId,
-    });
-
-    const isPharm = authSellerStoreType === 'pharmacy';
-    const pharmacistObj = isPharm
-      ? {
-          name: authSellerPharmacistName.trim() || fullName || 'Pharm. On-Duty Specialist',
-          licenseNo: authSellerPharmacistLicenseNo.trim() || 'PCN-REG-VERIFIED',
-          qualification: authSellerPharmacistQualification.trim() || 'B.Pharm, MPSN',
-          status: 'On-Duty • Available for Consult',
-        }
-      : null;
-
-    const initialMedications = isPharm && Array.isArray(MASTER_PHARMACY_INVENTORY)
-      ? MASTER_PHARMACY_INVENTORY.map((m, idx) => ({
-          ...m,
-          id: `item-${storeId}-rx-${idx + 1}`,
-          storeId: storeId,
-          storeName: businessName,
-        }))
-      : [];
-
-    const newStoreObj = {
-      id: storeId,
-      name: newSeller.businessName,
-      storeType: isPharm ? 'pharmacy' : 'grocery',
-      category: isPharm ? 'pharmacy' : 'gourmet',
-      categoryLabel: isPharm ? 'Licensed Community Pharmacy' : 'Gourmet Groceries & Provisions',
-      pharmacist: pharmacistObj,
-      ownerId: newSeller.id,
-      ownerPhone: newSeller.phone,
-      rating: 5.0,
-      reviewCount: 'New',
-      distance: '0.8 km',
-      deliveryTime: '15-25 min',
-      deliveryFee: '₦1,200',
-      freeDeliveryThreshold: 25000,
-      tag: isPharm ? 'VERIFIED PHARMACY' : 'NEW MERCHANT',
-      badgeColor: isPharm ? '#2563EB' : COLORS.emeraldPrimary,
-      address: newSeller.address || 'Abuja, Nigeria',
-      district: 'Abuja',
-      latitude: 9.0882,
-      longitude: 7.4933,
-      phone: newSeller.phone,
-      image: isPharm
-        ? 'https://images.unsplash.com/photo-1587854692152-cbe660dbde88?auto=format&fit=crop&w=800&q=80'
-        : 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
-      description: isPharm
-        ? `${newSeller.businessName} — Licensed community pharmacy with registered pharmacist on GETIT.`
-        : `${newSeller.businessName} — partner store live on GETIT Nigeria.`,
-      products: initialMedications,
-      isOpen: true,
-      is_open: true,
-    };
-
-    updateAndPersistStores((prev) => [newStoreObj, ...prev]);
-    setMerchantStoreId(storeId);
-    setCurrentUser(newSeller);
-    setAppMode('merchant');
-    setIsLoggedIn(true);
-    setAuthLoginInput(phone || email || newSeller.email);
-    setAuthLoginPassword(pass);
-    setAuthModalVisible(false);
-
+    authSubmitLockRef.current = true;
+    setIsAuthSubmitting(true);
+    setAuthSubmittingLabel('Checking & Registering Store...');
     try {
-      await AsyncStorage.setItem('getit_current_user', JSON.stringify(newSeller));
-    } catch (e) { }
+      // 1. Check both local storesList AND fresh Supabase cloud stores for any duplicate store name
+      let freshCloudStores = [];
+      try {
+        freshCloudStores = (await getStores()) || [];
+      } catch (e) {}
+      const allKnownStores = [...storesList, ...freshCloudStores];
+      const duplicateStore = allKnownStores.find(
+        (s) => s && s.name && String(s.name).trim().toLowerCase() === businessName.toLowerCase()
+      );
+      if (duplicateStore) {
+        Alert.alert(
+          'Store Already Exists',
+          `A store named "${businessName}" already exists on GETIT.\n\nYou cannot create two stores or accounts with the same store details. Please sign in to your existing "${businessName}" store or choose a different store name.`
+        );
+        return;
+      }
 
-    createDatabaseStore({
-      id: storeId,
-      name: newSeller.businessName,
-      category: isPharm ? 'pharmacy' : 'Gourmet & Groceries',
-      storeType: isPharm ? 'pharmacy' : 'grocery',
-      pharmacist: pharmacistObj,
-      address: newSeller.address,
-      district: 'Abuja',
-      city: 'Abuja',
-      latitude: 9.0882,
-      longitude: 7.4933,
-      phone: newSeller.phone,
-      deliveryFee: 1200,
-      isOpen: true,
-    }).catch(console.warn);
+      // 2. Check if an account already exists for this phone or email
+      const existing = (await findDatabaseUser(phone)) || (email ? await findDatabaseUser(email) : null);
 
-    if (initialMedications.length > 0) {
-      initialMedications.forEach((med) => {
-        addStoreInventoryItem(storeId, med).catch(() => {});
+      if (
+        existing &&
+        existing.businessName &&
+        String(existing.businessName).trim().toLowerCase() === businessName.toLowerCase()
+      ) {
+        Alert.alert(
+          'Store Already Exists',
+          `An account and store for "${businessName}" already exist for ${phone}. Please switch to "Sign In" to access your store.`
+        );
+        setAuthScreenMode('signin');
+        setAuthLoginInput(phone || email);
+        return;
+      }
+
+      // If existing account has a password, verify password matches
+      if (existing && existing.password && pass !== existing.password) {
+        Alert.alert(
+          'Account Already Exists',
+          `An account already exists for ${phone}.\n\nPlease enter your existing account password to link "${businessName}" as a new branch, or switch to Sign In.`
+        );
+        return;
+      }
+
+      const isPharm = authSellerStoreType === 'pharmacy' || regPrimaryDepartmentId === 'pharmacy';
+      const selectedDeptObj =
+        (marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS).find(
+          (d) => d.id === (isPharm ? 'pharmacy' : regPrimaryDepartmentId)
+        ) || DEFAULT_MARKETPLACE_DEPARTMENTS[0];
+      const selectedStoreTypeObj =
+        (marketplaceTaxonomy?.storeTypes || DEFAULT_STORE_TYPES).find(
+          (st) => st.id === (isPharm ? 'pharmacy' : regStoreTypeFormat)
+        ) || DEFAULT_STORE_TYPES[1];
+
+      const pharmacistObj = isPharm
+        ? {
+            name: authSellerPharmacistName.trim() || fullName || 'Pharm. On-Duty Specialist',
+            licenseNo: authSellerPharmacistLicenseNo.trim() || 'PCN-REG-VERIFIED',
+            premisesLicenseNo: regPremisesLicenseNo.trim() || 'PCN-PREM-VERIFIED',
+            qualification: authSellerPharmacistQualification.trim() || 'B.Pharm, MPSN',
+            status: 'On-Duty • Available for Consult',
+          }
+        : null;
+
+      // 3. Generate a unique Store ID & resolve registration store location + GPS
+      const storeId = `store-${Date.now()}`;
+      const resolvedDistrict = regStoreDistrict?.trim() || 'Maitama District, Abuja';
+      const resolvedCity = resolvedDistrict.toLowerCase().includes('lagos') ? 'Lagos' : 'Abuja';
+      const resolvedAddress = address
+        ? (address.toLowerCase().includes((resolvedDistrict || '').split(',')[0].toLowerCase())
+            ? address
+            : `${address}, ${resolvedDistrict}`)
+        : resolvedDistrict;
+      const resolvedLat = Number(regStoreLatitude) || 9.0882;
+      const resolvedLng = Number(regStoreLongitude) || 7.4933;
+      const distKm = calculateDistanceKm(
+        pinnedLocation?.latitude || 9.0882,
+        pinnedLocation?.longitude || 7.4933,
+        resolvedLat,
+        resolvedLng
+      );
+      const formattedDist = distKm !== null ? `${Math.max(0.2, distKm).toFixed(1)} km` : '0.8 km';
+
+      const newSeller = await registerDatabaseUser({
+        id: existing ? existing.id : undefined,
+        role: 'seller',
+        fullName: fullName || existing?.fullName,
+        phone: phone,
+        email: email || existing?.email || `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}@merchant.getit.ng`,
+        password: pass || existing?.password,
+        address: resolvedAddress,
+        businessName: businessName,
+        storeId: storeId,
       });
-    }
 
-    Alert.alert(
-      existing && existing.role === 'seller'
-        ? (isPharm ? '🩺 Pharmacy Branch Linked to Account!' : '🎉 New Branch Linked to Account!')
-        : (isPharm ? '🩺 Pharmacy Registered & Live on GETIT!' : '🎉 Store Registered & Stored on GETIT!'),
-      existing && existing.role === 'seller'
-        ? `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" has been registered as an active branch under your account.\n\nYou can switch between your stores anytime from the switcher bar at the top of your Merchant Hub!`
-        : `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" is now stored in the database and live on GETIT across Nigeria.`
-    );
+      const initialMedications = isPharm && Array.isArray(MASTER_PHARMACY_INVENTORY)
+        ? MASTER_PHARMACY_INVENTORY.map((m, idx) => ({
+            ...m,
+            id: `item-${storeId}-rx-${idx + 1}`,
+            storeId: storeId,
+            storeName: businessName,
+          }))
+        : [];
+
+      const taxonomyFields = {
+        primaryDepartmentId: isPharm ? 'pharmacy' : regPrimaryDepartmentId,
+        storeTypeFormat: isPharm ? 'pharmacy' : (regStoreTypeFormat || selectedDeptObj.defaultStoreType || 'supermarket'),
+        storeTypeLabel: isPharm
+          ? 'Licensed Community Pharmacy'
+          : `${selectedStoreTypeObj?.icon || selectedDeptObj?.icon || '🏪'} ${selectedStoreTypeObj?.label || selectedDeptObj?.name || 'Marketplace Store'}`,
+        additionalDepartmentIds: regSellsOtherDepartments ? regAdditionalDepartments : [],
+        specialisationSubcategories: regSelectedSubcategories,
+        specialisationProducts: regSelectedVarieties,
+        regulatoryStatus: isPharm ? 'verified' : 'not_applicable',
+        pcnLicenseNo: isPharm ? (authSellerPharmacistLicenseNo.trim() || 'PCN-REG-VERIFIED') : '',
+        premisesLicenseNo: isPharm ? (regPremisesLicenseNo.trim() || 'PCN-PREM-VERIFIED') : '',
+        dispensingScope: isPharm ? regDispensingScope : [],
+      };
+
+      const chosenStoreCover =
+        regStoreCoverImage ||
+        getDefaultStoreCoverImage(taxonomyFields.primaryDepartmentId, taxonomyFields.storeTypeFormat, newSeller.businessName);
+
+      const newStoreObj = {
+        id: storeId,
+        name: newSeller.businessName,
+        storeType: isPharm ? 'pharmacy' : 'grocery',
+        ...taxonomyFields,
+        category: isPharm ? 'pharmacy' : (regPrimaryDepartmentId || 'gourmet'),
+        categoryLabel: taxonomyFields.storeTypeLabel,
+        pharmacist: pharmacistObj,
+        ownerId: newSeller.id,
+        ownerPhone: newSeller.phone,
+        rating: 5.0,
+        reviewCount: 'New',
+        distance: formattedDist,
+        deliveryTime: '15-25 min',
+        deliveryFee: '₦1,200',
+        freeDeliveryThreshold: 25000,
+        tag: isPharm ? 'VERIFIED PHARMACY' : (selectedStoreTypeObj?.label || 'VERIFIED MERCHANT').toUpperCase(),
+        badgeColor: isPharm ? '#2563EB' : (selectedDeptObj?.accentColor || COLORS.emeraldPrimary),
+        address: resolvedAddress,
+        district: resolvedDistrict,
+        city: resolvedCity,
+        latitude: resolvedLat,
+        longitude: resolvedLng,
+        phone: newSeller.phone,
+        image: chosenStoreCover,
+        description: isPharm
+          ? `${newSeller.businessName} — Licensed community pharmacy at ${resolvedAddress} with registered pharmacist on GETIT.`
+          : `${newSeller.businessName} — specialist ${selectedDeptObj?.name || 'retail'} store at ${resolvedAddress} live on GETIT Nigeria.`,
+        products: initialMedications,
+        isOpen: true,
+        is_open: true,
+      };
+
+      const dbCreated = await createDatabaseStore({
+        id: storeId,
+        name: newSeller.businessName,
+        category: isPharm ? 'pharmacy' : taxonomyFields.storeTypeLabel,
+        storeType: isPharm ? 'pharmacy' : 'grocery',
+        ...taxonomyFields,
+        pharmacist: pharmacistObj,
+        address: resolvedAddress,
+        district: resolvedDistrict,
+        city: resolvedCity,
+        latitude: resolvedLat,
+        longitude: resolvedLng,
+        phone: newSeller.phone,
+        deliveryFee: 1200,
+        isOpen: true,
+        image: chosenStoreCover,
+      }).catch((err) => {
+        console.warn('Store creation cloud sync warning:', err);
+        return null;
+      });
+
+      if (dbCreated && dbCreated.isDuplicate) {
+        Alert.alert(
+          'Store Already Exists',
+          `A store named "${businessName}" already exists in the GETIT database. Duplicate stores cannot be created.`
+        );
+        return;
+      }
+
+      updateAndPersistStores((prev) => [newStoreObj, ...prev]);
+      try {
+        await AsyncStorage.setItem(`getit_store_image_${storeId}`, chosenStoreCover);
+        await AsyncStorage.setItem('getit_current_user', JSON.stringify(newSeller));
+      } catch (e) { }
+
+      setMerchantStoreId(storeId);
+      setCurrentUser(newSeller);
+      setAppMode('merchant');
+      setIsLoggedIn(true);
+      setAuthLoginInput(phone || email || newSeller.email);
+      setAuthLoginPassword(pass);
+      setAuthModalVisible(false);
+
+      if (initialMedications.length > 0) {
+        initialMedications.forEach((med) => {
+          addStoreInventoryItem(storeId, med).catch(() => {});
+        });
+      }
+
+      Alert.alert(
+        existing && existing.role === 'seller'
+          ? (isPharm ? '🩺 Pharmacy Branch Linked to Account!' : '🎉 New Branch Linked to Account!')
+          : (isPharm ? '🩺 Pharmacy Registered & Live on GETIT!' : '🎉 Store Registered & Stored on GETIT!'),
+        existing && existing.role === 'seller'
+          ? `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" has been registered as an active branch under your account.\n\nYou can switch between your stores anytime from the switcher bar at the top of your Merchant Hub!`
+          : `Congratulations ${newSeller.fullName}! "${newSeller.businessName}" is now stored in the database and live on GETIT across Nigeria.`
+      );
+    } finally {
+      authSubmitLockRef.current = false;
+      setIsAuthSubmitting(false);
+      setAuthSubmittingLabel('Loading...');
+    }
   };
 
   const handleAuthGuestBrowse = () => {
@@ -10614,19 +13816,62 @@ Support: help@getit.ng | Abuja, Nigeria`;
         platform: 'GETIT Mobile Expo'
       }, currentUser.phone || currentUser.email || 'USER').catch(() => { });
     }
+
     try {
-      await AsyncStorage.removeItem('getit_current_user');
-      await AsyncStorage.removeItem('getit_orders');
-    } catch (e) { }
+      // 1. Comprehensive Local Storage Purge: Remove all user, merchant, order, and chat keys
+      const keysToPurge = [
+        'getit_current_user',
+        'getit_orders',
+        'getit_customer_wallet',
+        'getit_unread_chat_map',
+        'getit_buyer_pinned_location',
+        'getit_merchant_bank_info',
+        'getit_merchant_payouts',
+        'getit_order_reviews',
+        'getit_pending_order_updates',
+        'getit_pending_order_syncs',
+      ];
+      await AsyncStorage.multiRemove(keysToPurge);
+    } catch (e) {
+      console.warn('Error purging AsyncStorage during logout:', e);
+    }
+
+    // 2. Complete in-memory state reset: zero residual account or merchant store state
     setCurrentUser(null);
+    setMerchantStoreId(null);
+    setAppMode('customer');
+    setIsLoggedIn(false);
     setOrders([]);
+    setCart([]);
+    setSelectedStore(null);
+    setCustomerWalletBalance(0);
     setLastPlacedOrderId(null);
     setExpandedOrderId(null);
-    setIsLoggedIn(false);
+    setChatMessages([]);
+    setTargetChatOrder(null);
+    setUnreadChatMap({});
+    setSelectedPrescriptionDrugs([]);
+    setPrescriptionInstructions('');
+    setCustomerDismissedReplacementId(null);
+    setCustomerDismissedOutOfStockId(null);
+    setSelectedAlternativeIndex(0);
+    setMerchantTab('orders');
+
+    // 3. Reset all auth screen fields to pristine clean state
     setAuthScreenRole('buyer');
     setAuthScreenMode('signin');
     setAuthLoginInput('');
     setAuthLoginPassword('');
+    setAuthSignupFullName('');
+    setAuthSignupPhone('');
+    setAuthSignupEmail('');
+    setAuthSignupPassword('');
+    setAuthSignupAddress('');
+    setAuthBusinessName('');
+    setAuthName('');
+    setAuthEmail('');
+    setAuthPhone('');
+    setAuthAddress('');
   };
 
   // --- STORE LIVE OPERATING STATUS & TIMING HANDLERS ---
@@ -10780,7 +14025,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
     }
   };
 
-  const handleOpenEditStoreDetailsModal = async () => {
+  const handleOpenEditStoreDetailsModal = async (section = 'all') => {
+    setEditStoreActiveSection(section);
     const lat = Number(currentMerchantStore?.latitude) || 9.0882;
     const lng = Number(currentMerchantStore?.longitude) || 7.4933;
     setEditStoreName(currentMerchantStore?.name || '');
@@ -10792,6 +14038,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
     setEditStoreImage(currentMerchantStore?.image || '');
     setEditStoreLatitude(lat);
     setEditStoreLongitude(lng);
+    setEditStoreAllowMessaging(currentMerchantStore?.allowCustomerMessaging !== false);
     setStoreMapRegion({
       latitude: lat,
       longitude: lng,
@@ -10916,6 +14163,13 @@ Support: help@getit.ng | Abuja, Nigeria`;
     const finalLat = Number(editStoreLatitude) || 9.0882;
     const finalLng = Number(editStoreLongitude) || 7.4933;
 
+    const isPharm =
+      currentMerchantStore?.storeType === 'pharmacy' ||
+      currentMerchantStore?.category === 'pharmacy' ||
+      (currentMerchantStore?.categoryLabel && currentMerchantStore?.categoryLabel.toLowerCase().includes('pharm'));
+
+    const resolvedMessagingAllowed = isPharm ? true : editStoreAllowMessaging;
+
     const updatedObj = {
       name: editStoreName.trim(),
       address: editStoreAddress.trim() || 'Nigeria',
@@ -10925,11 +14179,30 @@ Support: help@getit.ng | Abuja, Nigeria`;
       description: editStoreDescription.trim() || `${editStoreName.trim()} — verified partner store live on GETIT.`,
       latitude: finalLat,
       longitude: finalLng,
+      allowCustomerMessaging: resolvedMessagingAllowed,
       ...(finalImage ? { image: finalImage } : {}),
     };
 
     updateAndPersistStores((prev) =>
       prev.map((s) => (s.id === targetStoreId ? { ...s, ...updatedObj } : s))
+    );
+
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => {
+        const matchesStore =
+          o.storeId === targetStoreId ||
+          (o.storeName && editStoreName && o.storeName.trim().toLowerCase() === editStoreName.trim().toLowerCase()) ||
+          (o.stops && o.stops.some((st) => st.storeId === targetStoreId));
+        if (!matchesStore) return o;
+        const updatedStops = (o.stops || []).map((st) =>
+          st.storeId === targetStoreId ? { ...st, allowCustomerMessaging: resolvedMessagingAllowed } : st
+        );
+        return {
+          ...o,
+          allowCustomerMessaging: resolvedMessagingAllowed,
+          stops: updatedStops.length > 0 ? updatedStops : o.stops,
+        };
+      })
     );
 
     if (selectedStore?.id === targetStoreId) {
@@ -10941,6 +14214,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
         if (finalImage) AsyncStorage.setItem(`getit_store_image_${targetStoreId}`, finalImage);
         AsyncStorage.setItem(`getit_store_lat_${targetStoreId}`, String(finalLat));
         AsyncStorage.setItem(`getit_store_lng_${targetStoreId}`, String(finalLng));
+        AsyncStorage.setItem(`getit_store_chat_allowed_${targetStoreId}`, String(resolvedMessagingAllowed));
       } catch (e) { }
 
       updateDatabaseStore(targetStoreId, {
@@ -10949,12 +14223,18 @@ Support: help@getit.ng | Abuja, Nigeria`;
         phone: updatedObj.phone,
         latitude: finalLat,
         longitude: finalLng,
+        allowCustomerMessaging: resolvedMessagingAllowed,
         ...(finalImage ? { image: finalImage } : {}),
       }).catch(console.warn);
+
+      broadcastLiveEvent('STORE_UPDATE', {
+        storeId: targetStoreId,
+        store: updatedObj,
+      });
     }
 
     setEditStoreModalVisible(false);
-    Alert.alert('✅ Store Profile Updated', `Your store details and pinned map location for "${updatedObj.name}" were updated successfully.`);
+    Alert.alert('✅ Store Profile Updated', `Your store details, messaging settings, and location for "${updatedObj.name}" were updated successfully.`);
   };
 
   // Helper to parse time strings like "8:00 AM", "10:00 AM", "10:00 PM", "8am", "10am", "22:00" into minutes of day
@@ -11132,6 +14412,148 @@ Support: help@getit.ng | Abuja, Nigeria`;
         return false;
       }
     }
+  }
+
+  const handleToggleStoreMessaging = () => {
+    if (!currentMerchantStore) return;
+    const isPharm =
+      currentMerchantStore.storeType === 'pharmacy' ||
+      currentMerchantStore.category === 'pharmacy' ||
+      (currentMerchantStore.categoryLabel && currentMerchantStore.categoryLabel.toLowerCase().includes('pharm'));
+
+    if (isPharm) {
+      Alert.alert(
+        '🩺 Tele-Consultations Active',
+        'Clinical pharmacy messaging must remain enabled for customer consultations and prescription verification.'
+      );
+      return;
+    }
+
+    const currentVal = currentMerchantStore.allowCustomerMessaging !== false;
+    const nextVal = !currentVal;
+    const targetStoreId = currentMerchantStore.id || merchantStoreId;
+
+    updateAndPersistStores((prev) =>
+      prev.map((s) => (s.id === targetStoreId ? { ...s, allowCustomerMessaging: nextVal } : s))
+    );
+
+    updateAndPersistOrders((prev) =>
+      prev.map((o) => {
+        const matchesStore =
+          o.storeId === targetStoreId ||
+          (o.storeName && currentMerchantStore.name && o.storeName.trim().toLowerCase() === currentMerchantStore.name.trim().toLowerCase()) ||
+          (o.stops && o.stops.some((st) => st.storeId === targetStoreId));
+        if (!matchesStore) return o;
+        const updatedStops = (o.stops || []).map((st) =>
+          st.storeId === targetStoreId ? { ...st, allowCustomerMessaging: nextVal } : st
+        );
+        return {
+          ...o,
+          allowCustomerMessaging: nextVal,
+          stops: updatedStops.length > 0 ? updatedStops : o.stops,
+        };
+      })
+    );
+
+    if (selectedStore?.id === targetStoreId) {
+      setSelectedStore((prev) => (prev ? { ...prev, allowCustomerMessaging: nextVal } : prev));
+    }
+
+    try {
+      AsyncStorage.setItem(`getit_store_chat_allowed_${targetStoreId}`, String(nextVal));
+    } catch (e) { }
+
+    updateDatabaseStore(targetStoreId, { allowCustomerMessaging: nextVal }).catch(console.warn);
+
+    broadcastLiveEvent('STORE_UPDATE', {
+      storeId: targetStoreId,
+      store: { ...currentMerchantStore, allowCustomerMessaging: nextVal },
+    });
+
+    Alert.alert(
+      nextVal ? '💬 Direct Messaging Enabled' : '🔇 Direct Messaging Disabled',
+      nextVal
+        ? `Customers can now chat directly with "${currentMerchantStore.name}".`
+        : `Direct chat messaging is turned off for "${currentMerchantStore.name}". Customers will be directed to your phone line instead.`
+    );
+  };
+
+  function isStoreMessagingEnabled(storeOrOrder) {
+    if (!storeOrOrder) return true;
+
+    // 1. Pharmacy stores ALWAYS allow messaging (tele-consultations & prescription review)
+    const isPharm =
+      storeOrOrder.storeType === 'pharmacy' ||
+      storeOrOrder.category === 'pharmacy' ||
+      storeOrOrder.isPrescriptionOrder ||
+      String(storeOrOrder.id || '').startsWith('RX-') ||
+      (storeOrOrder.storeName && storeOrOrder.storeName.toLowerCase().includes('pharm')) ||
+      (storeOrOrder.name && storeOrOrder.name.toLowerCase().includes('pharm'));
+
+    if (isPharm) return true;
+
+    // 2. Direct property check on storeOrOrder if explicitly defined
+    if (storeOrOrder.allowCustomerMessaging !== undefined) {
+      return Boolean(storeOrOrder.allowCustomerMessaging);
+    }
+
+    // 3. Match against currentMerchantStore
+    if (currentMerchantStore) {
+      const curId = String(currentMerchantStore.id || merchantStoreId || '');
+      const curName = (currentMerchantStore.name || '').trim().toLowerCase();
+
+      const sId = String(
+        storeOrOrder.storeId ||
+        (!String(storeOrOrder.id || '').startsWith('ORD-') ? storeOrOrder.id : '') ||
+        (storeOrOrder.stops && storeOrOrder.stops[0]?.storeId) ||
+        ''
+      );
+      const sName = (
+        storeOrOrder.storeName ||
+        storeOrOrder.name ||
+        (storeOrOrder.stops && storeOrOrder.stops[0]?.storeName) ||
+        ''
+      ).trim().toLowerCase();
+
+      if (
+        (curId && sId && curId === sId) ||
+        (curName && sName && (curName === sName || curName.includes(sName) || sName.includes(curName)))
+      ) {
+        return currentMerchantStore.allowCustomerMessaging !== false;
+      }
+    }
+
+    // 4. Match from storesList by storeId, storeName, stops, or items
+    const targetStoreId = String(
+      storeOrOrder.storeId ||
+      (!String(storeOrOrder.id || '').startsWith('ORD-') ? storeOrOrder.id : '') ||
+      (storeOrOrder.stops && storeOrOrder.stops[0]?.storeId) ||
+      (storeOrOrder.items && storeOrOrder.items[0]?.storeId) ||
+      ''
+    );
+    const targetStoreName = (
+      storeOrOrder.storeName ||
+      storeOrOrder.name ||
+      (storeOrOrder.stops && storeOrOrder.stops[0]?.storeName) ||
+      (storeOrOrder.items && storeOrOrder.items[0]?.storeName) ||
+      ''
+    ).trim().toLowerCase();
+
+    if (targetStoreId || targetStoreName) {
+      const matchedStore = storesList.find((s) => {
+        const sId = String(s.id || '');
+        const sName = (s.name || '').trim().toLowerCase();
+        if (targetStoreId && sId === targetStoreId) return true;
+        if (targetStoreName && sName && (sName === targetStoreName || sName.includes(targetStoreName) || targetStoreName.includes(sName))) return true;
+        return false;
+      });
+
+      if (matchedStore) {
+        return matchedStore.allowCustomerMessaging !== false;
+      }
+    }
+
+    return true;
   }
 
   function getStoreTimingBadge(store) {
@@ -11432,33 +14854,81 @@ Support: help@getit.ng | Abuja, Nigeria`;
   const filteredStores = useMemo(() => {
     const seenIds = new Set();
     const sourceStores =
-      activeVertical === 'pharmacy'
+      activeVertical === 'pharmacy' ||
+      activeDepartmentId === 'pharmacy' ||
+      activeStoreTypeFilter === 'pharmacy'
         ? storesList.some((s) => s.storeType === 'pharmacy' || s.category === 'pharmacy')
           ? storesList
           : [...storesList, ...INITIAL_PHARMACY_STORES]
         : storesList;
 
-    return sourceStores
-      .filter((store) => {
-        if (!store || !store.id || seenIds.has(store.id)) return false;
-        seenIds.add(store.id);
+    const evaluatedList = [];
 
-        const isPharmacy = store.storeType === 'pharmacy' || store.category === 'pharmacy';
-        if (activeVertical === 'pharmacy' && !isPharmacy) return false;
-        if (activeVertical === 'groceries' && isPharmacy) return false;
+    for (const store of sourceStores) {
+      if (!store || !store.id || seenIds.has(store.id)) continue;
+      seenIds.add(store.id);
 
-        const matchesCategory =
+      const isPharmacy =
+        store.storeType === 'pharmacy' ||
+        store.category === 'pharmacy' ||
+        store.primaryDepartmentId === 'pharmacy';
+
+      if (activeVertical === 'pharmacy') {
+        if (!isPharmacy) continue;
+        const matchesPharmCat =
           activeCategory === 'all' ||
           store.category === activeCategory ||
-          (activeVertical === 'pharmacy' && isPharmacy);
+          isPharmacy;
         const matchesSearch =
           !searchQuery ||
           store.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
           (store.categoryLabel && store.categoryLabel.toLowerCase().includes(searchQuery.toLowerCase())) ||
           (store.description && store.description.toLowerCase().includes(searchQuery.toLowerCase()));
-        return matchesCategory && matchesSearch;
-      })
-      .map((store) => {
+        if (!matchesPharmCat || !matchesSearch) continue;
+
+        const profile = normalizeStoreTaxonomyProfile(store, marketplaceTaxonomy);
+        evaluatedList.push({
+          store,
+          profile,
+          matchingProducts: [],
+        });
+        continue;
+      }
+
+      // If browsing Groceries/Marketplace vertical, exclude pharmacies unless user specifically picked Pharmacy department/store type
+      if (
+        isPharmacy &&
+        activeDepartmentId !== 'pharmacy' &&
+        activeStoreTypeFilter !== 'pharmacy'
+      ) {
+        continue;
+      }
+
+      const evalResult = evaluateStoreAgainstTaxonomyFilter(
+        store,
+        {
+          browseMode: customerBrowseMode,
+          departmentId: activeDepartmentId,
+          subcategoryId: activeSubcategoryId,
+          varietyId: activeVarietyId,
+          storeTypeId: activeStoreTypeFilter,
+          storeTypeFilter: activeStoreTypeFilter,
+          searchQuery,
+        },
+        marketplaceTaxonomy
+      );
+
+      if (!evalResult.matches) continue;
+
+      evaluatedList.push({
+        store,
+        profile: evalResult.profile,
+        matchingProducts: evalResult.matchingProducts || [],
+      });
+    }
+
+    return evaluatedList
+      .map(({ store, profile, matchingProducts }) => {
         const storeLat = Number(store.latitude) || 9.0882;
         const storeLng = Number(store.longitude) || 7.4933;
         const distKm = calculateDistanceKm(buyerActiveLat, buyerActiveLng, storeLat, storeLng);
@@ -11470,14 +14940,43 @@ Support: help@getit.ng | Abuja, Nigeria`;
             : store.distance || '1.0 km';
         return {
           ...store,
+          taxonomyProfile: profile,
+          matchingTaxonomyProducts: matchingProducts,
           latitude: storeLat,
           longitude: storeLng,
           distance: dynamicDistance,
           distKm: distKm !== null ? distKm : 999,
         };
       })
-      .sort((a, b) => (a.distKm || 0) - (b.distKm || 0));
-  }, [storesList, activeCategory, activeVertical, searchQuery, buyerActiveLat, buyerActiveLng]);
+      .sort((a, b) => {
+        // Prioritize exact store format match when browsing by store type
+        if (customerBrowseMode === 'store_type' && activeStoreTypeFilter !== 'all') {
+          const aExact = a.taxonomyProfile?.storeTypeFormat === activeStoreTypeFilter ? 1 : 0;
+          const bExact = b.taxonomyProfile?.storeTypeFormat === activeStoreTypeFilter ? 1 : 0;
+          if (aExact !== bExact) return bExact - aExact;
+        }
+        // Prioritize specialist primary department match when a product filter is active
+        if (customerBrowseMode === 'product' && activeDepartmentId !== 'all') {
+          const aPrimary = a.taxonomyProfile?.primaryDepartmentId === activeDepartmentId ? 1 : 0;
+          const bPrimary = b.taxonomyProfile?.primaryDepartmentId === activeDepartmentId ? 1 : 0;
+          if (aPrimary !== bPrimary) return bPrimary - aPrimary;
+        }
+        return (a.distKm || 0) - (b.distKm || 0);
+      });
+  }, [
+    storesList,
+    activeCategory,
+    activeVertical,
+    customerBrowseMode,
+    activeDepartmentId,
+    activeSubcategoryId,
+    activeVarietyId,
+    activeStoreTypeFilter,
+    marketplaceTaxonomy,
+    searchQuery,
+    buyerActiveLat,
+    buyerActiveLng,
+  ]);
 
   // Filtered products inside selected store
   const storeRawProducts = selectedStore
@@ -11528,6 +15027,228 @@ Support: help@getit.ng | Abuja, Nigeria`;
         )
     ),
   ];
+
+  const renderRegistrationMapModal = () => (
+    <Modal
+      visible={regMapModalVisible}
+      animationType="slide"
+      transparent={false}
+      onRequestClose={() => setRegMapModalVisible(false)}
+      onShow={() => {
+        setTimeout(() => {
+          if (regFullMapRef.current) {
+            regFullMapRef.current.animateToRegion({
+              latitude: Number(regStoreLatitude) || 9.0882,
+              longitude: Number(regStoreLongitude) || 7.4933,
+              latitudeDelta: 0.008,
+              longitudeDelta: 0.008,
+            }, 300);
+          }
+        }, 150);
+      }}
+    >
+      <SafeAreaView style={styles.storeMapModalSafeArea}>
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+
+        {/* Header */}
+        <View style={styles.storeMapModalHeader}>
+          <TouchableOpacity
+            style={styles.storeMapModalCloseBtn}
+            onPress={() => setRegMapModalVisible(false)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.storeMapModalCloseBtnText}>✕ Close</Text>
+          </TouchableOpacity>
+
+          <View style={{ alignItems: 'center' }}>
+            <Text style={styles.storeMapModalTitle}>Pin Storefront Location</Text>
+            <Text style={styles.storeMapModalSub}>Tap or drag pin to exact shop entrance</Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.storeMapModalConfirmHeaderBtn}
+            onPress={() => setRegMapModalVisible(false)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.storeMapModalConfirmHeaderText}>Done</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Quick District Jump Chips */}
+        <View style={styles.storeMapChipsContainer}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 14, gap: 8 }}
+          >
+            {REGISTRATION_STORE_DISTRICTS.map((loc) => {
+              const isSelected = regStoreDistrict === loc.district;
+              return (
+                <TouchableOpacity
+                  key={loc.district}
+                  style={[
+                    styles.storeMapChip,
+                    isSelected && { backgroundColor: COLORS.emeraldDeep, borderColor: COLORS.emeraldDeep },
+                  ]}
+                  onPress={() => handleSelectRegDistrict(loc, false)}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.storeMapChipText,
+                      isSelected && { color: '#FFFFFF', fontWeight: '800' },
+                    ]}
+                  >
+                    📍 {loc.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        {/* Interactive Fullscreen Map View */}
+        <View style={{ flex: 1, position: 'relative' }}>
+          <MapView
+            ref={regFullMapRef}
+            style={{ width: '100%', height: '100%' }}
+            initialRegion={regStoreMapRegion}
+            scrollEnabled={true}
+            zoomEnabled={true}
+            pitchEnabled={true}
+            rotateEnabled={true}
+            zoomTapEnabled={true}
+            zoomControlEnabled={false}
+            showsUserLocation={true}
+            showsMyLocationButton={false}
+            onRegionChangeComplete={(r) => {
+              if (r) setRegStoreMapRegion(r);
+            }}
+            onPress={(e) => {
+              if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                const { latitude, longitude } = e.nativeEvent.coordinate;
+                setRegStoreLatitude(latitude);
+                setRegStoreLongitude(longitude);
+                setRegStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+              }
+            }}
+          >
+            {userLiveCoords && (
+              <Marker
+                coordinate={userLiveCoords}
+                title="📱 Your Current Phone Location"
+                description="Live GPS position of your phone"
+                anchor={{ x: 0.5, y: 0.5 }}
+              >
+                <View style={styles.liveBeaconOuter}>
+                  <View style={styles.liveBeaconInner} />
+                </View>
+              </Marker>
+            )}
+
+            <Marker
+              coordinate={{
+                latitude: Number(regStoreLatitude) || 9.0882,
+                longitude: Number(regStoreLongitude) || 7.4933,
+              }}
+              draggable={true}
+              onDragEnd={(e) => {
+                if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                  const { latitude, longitude } = e.nativeEvent.coordinate;
+                  setRegStoreLatitude(latitude);
+                  setRegStoreLongitude(longitude);
+                  setRegStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+                }
+              }}
+              title={authSignupBusinessName || 'Your New Storefront'}
+              description="Drag to exact shop entrance"
+              pinColor={COLORS.emeraldPrimary}
+            />
+          </MapView>
+
+          {/* Floating Coordinates Banner */}
+          <View style={styles.storeMapFloatCoordsBanner}>
+            <Text style={styles.storeMapFloatCoordsText}>
+              🎯 Store Pin: {(Number(regStoreLatitude) || 9.0882).toFixed(5)}° N, {(Number(regStoreLongitude) || 7.4933).toFixed(5)}° E
+            </Text>
+            <Text style={{ fontSize: 10, color: '#A7F3D0', marginTop: 2, fontWeight: '700' }}>
+              📍 {regStoreDistrict}
+            </Text>
+          </View>
+
+          {/* Floating Map Controls (GPS, Zoom In, Zoom Out, Center Pin) */}
+          <View style={styles.storeMapFabStack}>
+            <TouchableOpacity
+              style={styles.storeMapFabBtn}
+              onPress={() => handleDetectRegistrationGps(false)}
+              activeOpacity={0.85}
+            >
+              {isFetchingRegGps ? (
+                <ActivityIndicator size="small" color={COLORS.emeraldDeep} />
+              ) : (
+                <Text style={{ fontSize: 20 }}>🎯</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.storeMapFabBtn}
+              onPress={() => handleZoomRegMap(true, true)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.storeMapFabZoomText}>➕</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.storeMapFabBtn}
+              onPress={() => handleZoomRegMap(false, true)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.storeMapFabZoomText}>➖</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.storeMapFabBtn}
+              onPress={() => {
+                if (regFullMapRef.current) {
+                  regFullMapRef.current.animateToRegion({
+                    latitude: Number(regStoreLatitude) || 9.0882,
+                    longitude: Number(regStoreLongitude) || 7.4933,
+                    latitudeDelta: 0.008,
+                    longitudeDelta: 0.008,
+                  }, 250);
+                }
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={{ fontSize: 18 }}>📍</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Bottom Confirm Bar */}
+          <View style={styles.storeMapBottomConfirmBar}>
+            <View style={{ marginBottom: 10 }}>
+              <Text style={styles.storeMapBottomPromptTitle}>
+                🏪 {authSignupBusinessName || 'New Storefront Location'}
+              </Text>
+              <Text style={styles.storeMapBottomPromptSub} numberOfLines={1}>
+                {authSignupAddress ? `${authSignupAddress} • ${regStoreDistrict}` : regStoreDistrict}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.storeMapBottomConfirmBtn}
+              onPress={() => setRegMapModalVisible(false)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.storeMapBottomConfirmBtnText}>
+                ✅ Confirm Storefront Location ➔
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </SafeAreaView>
+    </Modal>
+  );
 
   // --- DEDICATED LUXURY LOGIN / SIGN UP SCREEN (ANIMATED & ORGANIZED) ---
   if (!isLoggedIn) {
@@ -11624,21 +15345,138 @@ Support: help@getit.ng | Abuja, Nigeria`;
               </TouchableOpacity>
             </View>
 
+            {/* --- DEDICATED OTP VERIFICATION INTERFACE --- */}
+            {otpStep === 'verify' ? (
+              <View style={styles.luxeFormContainer}>
+                <View style={styles.otpVerifyHero}>
+                  <View style={styles.otpShieldMedallion}>
+                    <Text style={{ fontSize: 28 }}>{otpChannel === 'email' ? '📧' : '📲'}</Text>
+                  </View>
+                  <Text style={styles.otpVerifyTitle}>
+                    {otpTargetMode === 'signin' ? 'Verify Your Sign In' : (otpTargetRole === 'seller' ? 'Verify Store Owner Account' : 'Verify Your Account')}
+                  </Text>
+                  <Text style={styles.otpVerifySub}>
+                    We dispatched a 4-digit verification code to{' '}
+                    <Text style={{ fontWeight: '800', color: '#064E3B' }}>{otpTargetIdentifier}</Text>
+                    {' '}via {otpChannel === 'email' ? 'Email' : 'SMS'}.
+                  </Text>
+                </View>
+
+                {/* SMS Dispatch Code Preview Banner for Instant Testing */}
+                {otpBannerMsg ? (
+                  <View style={styles.otpBannerBox}>
+                    <Text style={styles.otpBannerIcon}>🔔</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.otpBannerTitle}>{otpChannel === 'email' ? 'EMAIL DISPATCH PREVIEW' : 'SMS DISPATCH PREVIEW'}</Text>
+                      <Text style={styles.otpBannerCodeText}>{otpBannerMsg}</Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                {/* 4-Digit Code Input */}
+                <View style={styles.luxeInputBox}>
+                  <View style={styles.luxeInputIconWrap}>
+                    <Text style={styles.luxeInputIcon}>🔢</Text>
+                  </View>
+                  <View style={styles.luxeInputContent}>
+                    <Text style={styles.luxeInputLabel}>ENTER 4-DIGIT VERIFICATION CODE</Text>
+                    <TextInput
+                      style={[styles.luxeTextInput, { letterSpacing: 8, fontSize: 22, fontWeight: '900', color: '#064E3B' }]}
+                      placeholder="e.g. 1 2 3 4"
+                      placeholderTextColor="#A8A29E"
+                      keyboardType="number-pad"
+                      maxLength={4}
+                      value={enteredOtp}
+                      onChangeText={setEnteredOtp}
+                      autoFocus={true}
+                    />
+                  </View>
+                </View>
+
+                {/* Countdown & Resend Code */}
+                <View style={styles.otpResendRow}>
+                  {otpCountdown > 0 ? (
+                    <Text style={styles.otpTimerText}>Resend code in 0:{otpCountdown < 10 ? '0' : ''}{otpCountdown}</Text>
+                  ) : (
+                    <TouchableOpacity onPress={handleResendOtp} activeOpacity={0.8}>
+                      <Text style={styles.otpResendActionText}>🔄 Resend Code via {otpChannel === 'email' ? 'Email' : 'SMS'}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Action Button */}
+                <TouchableOpacity
+                  style={[styles.luxePrimaryBtn, isAuthSubmitting && { opacity: 0.7 }]}
+                  onPress={handleVerifyOtp}
+                  disabled={isAuthSubmitting}
+                  activeOpacity={0.85}
+                >
+                  {isAuthSubmitting ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={styles.luxePrimaryBtnText}>{authSubmittingLabel || 'Verifying Code...'}</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.luxePrimaryBtnText}>
+                      {otpTargetMode === 'signin'
+                        ? (otpTargetRole === 'seller' ? 'Verify & Access Store Hub ➔' : 'Verify & Sign In ➔')
+                        : (otpTargetRole === 'seller' ? 'Verify & Launch Store ➔' : 'Verify & Start Shopping ➔')}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+
+                {/* Back to change phone */}
+                <TouchableOpacity
+                  style={styles.otpChangePhoneBtn}
+                  onPress={() => {
+                    setOtpStep('input');
+                    setEnteredOtp('');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.otpChangePhoneText}>← Change Phone or Email</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+            <View>
             {/* --- BUYER / SHOPPER FORMS --- */}
             {isBuyer ? (
               isSignIn ? (
                 /* Buyer Sign In Form */
                 <View style={styles.luxeFormContainer}>
+                  {/* Method Switcher: OTP (SMS) vs Password */}
+                  <View style={styles.otpMethodSwitchWrap}>
+                    <TouchableOpacity
+                      style={[styles.otpMethodBtn, authMethod === 'otp' && styles.otpMethodBtnActive]}
+                      onPress={() => setAuthMethod('otp')}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={[styles.otpMethodText, authMethod === 'otp' && styles.otpMethodTextActive]}>
+                        📲 Phone / Email OTP (Fast & Secure)
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.otpMethodBtn, authMethod === 'password' && styles.otpMethodBtnActive]}
+                      onPress={() => setAuthMethod('password')}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={[styles.otpMethodText, authMethod === 'password' && styles.otpMethodTextActive]}>
+                        🔒 Password
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
-                      <Text style={styles.luxeInputIcon}>✉️</Text>
+                      <Text style={styles.luxeInputIcon}>{authMethod === 'otp' ? '📲' : '✉️'}</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>EMAIL OR PHONE</Text>
+                      <Text style={styles.luxeInputLabel}>{authMethod === 'otp' ? 'PHONE NUMBER OR EMAIL ADDRESS' : 'EMAIL OR PHONE'}</Text>
                       <TextInput
                         style={styles.luxeTextInput}
-                        placeholder="e.g. 0803 123 4567 or email"
+                        placeholder={authMethod === 'otp' ? 'e.g. 0802 345 6789 or user@getit.ng' : 'e.g. 0803 123 4567 or email'}
                         placeholderTextColor="#A8A29E"
+                        keyboardType={authMethod === 'otp' ? 'email-address' : 'default'}
                         value={authLoginInput}
                         onChangeText={setAuthLoginInput}
                         autoCapitalize="none"
@@ -11646,37 +15484,49 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     </View>
                   </View>
 
-                  <View style={styles.luxeInputBox}>
-                    <View style={styles.luxeInputIconWrap}>
-                      <Text style={styles.luxeInputIcon}>🔒</Text>
+                  {authMethod === 'password' && (
+                    <View style={styles.luxeInputBox}>
+                      <View style={styles.luxeInputIconWrap}>
+                        <Text style={styles.luxeInputIcon}>🔒</Text>
+                      </View>
+                      <View style={styles.luxeInputContent}>
+                        <Text style={styles.luxeInputLabel}>PASSWORD</Text>
+                        <TextInput
+                          style={styles.luxeTextInput}
+                          placeholder="Enter password"
+                          placeholderTextColor="#A8A29E"
+                          secureTextEntry={!showPassword}
+                          value={authLoginPassword}
+                          onChangeText={setAuthLoginPassword}
+                        />
+                      </View>
+                      <TouchableOpacity
+                        style={styles.luxeEyeToggleBtn}
+                        onPress={() => setShowPassword(!showPassword)}
+                      >
+                        <Text style={styles.luxeEyeToggleText}>
+                          {showPassword ? 'Hide' : 'Show'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
-                    <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>PASSWORD</Text>
-                      <TextInput
-                        style={styles.luxeTextInput}
-                        placeholder="Enter password"
-                        placeholderTextColor="#A8A29E"
-                        secureTextEntry={!showPassword}
-                        value={authLoginPassword}
-                        onChangeText={setAuthLoginPassword}
-                      />
-                    </View>
-                    <TouchableOpacity
-                      style={styles.luxeEyeToggleBtn}
-                      onPress={() => setShowPassword(!showPassword)}
-                    >
-                      <Text style={styles.luxeEyeToggleText}>
-                        {showPassword ? 'Hide' : 'Show'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+                  )}
 
                   <TouchableOpacity
-                    style={styles.luxePrimaryBtn}
-                    onPress={handleAuthBuyerSignIn}
+                    style={[styles.luxePrimaryBtn, isAuthSubmitting && { opacity: 0.7 }]}
+                    onPress={() => authMethod === 'otp' ? handleInitiateOtpSignIn('buyer') : handleAuthBuyerSignIn()}
+                    disabled={isAuthSubmitting}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.luxePrimaryBtnText}>Sign In ➔</Text>
+                    {isAuthSubmitting ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                        <Text style={styles.luxePrimaryBtnText}>{authSubmittingLabel || 'Signing In...'}</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.luxePrimaryBtnText}>
+                        {authMethod === 'otp' ? 'Send OTP Verification Code ➔' : 'Sign In with Password ➔'}
+                      </Text>
+                    )}
                   </TouchableOpacity>
 
                   {/* Guest Browse Option */}
@@ -11801,11 +15651,19 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   )}
 
                   <TouchableOpacity
-                    style={styles.luxePrimaryBtn}
-                    onPress={handleAuthBuyerSignUp}
+                    style={[styles.luxePrimaryBtn, isAuthSubmitting && { opacity: 0.7 }]}
+                    onPress={handleInitiateOtpBuyerSignUp}
+                    disabled={isAuthSubmitting}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.luxePrimaryBtnText}>Create Account ➔</Text>
+                    {isAuthSubmitting ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                        <Text style={styles.luxePrimaryBtnText}>{authSubmittingLabel || 'Verifying Phone...'}</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.luxePrimaryBtnText}>Continue & Verify Account via OTP ➔</Text>
+                    )}
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -11824,6 +15682,28 @@ Support: help@getit.ng | Abuja, Nigeria`;
               isSignIn ? (
                 /* Merchant Sign In */
                 <View style={styles.luxeFormContainer}>
+                  {/* Method Switcher: OTP (SMS) vs Password */}
+                  <View style={styles.otpMethodSwitchWrap}>
+                    <TouchableOpacity
+                      style={[styles.otpMethodBtn, authMethod === 'otp' && styles.otpMethodBtnActive]}
+                      onPress={() => setAuthMethod('otp')}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={[styles.otpMethodText, authMethod === 'otp' && styles.otpMethodTextActive]}>
+                        📲 Phone / Email OTP (Fast & Secure)
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.otpMethodBtn, authMethod === 'password' && styles.otpMethodBtnActive]}
+                      onPress={() => setAuthMethod('password')}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={[styles.otpMethodText, authMethod === 'password' && styles.otpMethodTextActive]}>
+                        🔒 Password
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
                   {/* Store Type Selector for Sign In: Supermarket vs Pharmacy */}
                   <View style={{ marginBottom: 14 }}>
                     <Text style={styles.authStoreTypeHeading}>LOGGING IN AS *</Text>
@@ -11882,23 +15762,24 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>
-                        {authSellerStoreType === 'pharmacy' ? '💊' : '🏪'}
+                        {authMethod === 'otp' ? '📲' : (authSellerStoreType === 'pharmacy' ? '💊' : '🏪')}
                       </Text>
                     </View>
                     <View style={styles.luxeInputContent}>
                       <Text style={styles.luxeInputLabel}>
-                        {authSellerStoreType === 'pharmacy'
-                          ? 'PHARMACY EMAIL OR PHONE'
-                          : 'STORE EMAIL OR PHONE'}
+                        {authMethod === 'otp'
+                          ? (authSellerStoreType === 'pharmacy' ? 'PHARMACY PHONE OR EMAIL' : 'STORE PHONE OR EMAIL')
+                          : (authSellerStoreType === 'pharmacy' ? 'PHARMACY EMAIL OR PHONE' : 'STORE EMAIL OR PHONE')}
                       </Text>
                       <TextInput
                         style={styles.luxeTextInput}
                         placeholder={
                           authSellerStoreType === 'pharmacy'
-                            ? 'e.g. 0803 111 2233 or pharmacy email'
-                            : 'e.g. 0803 111 2233 or store email'
+                            ? 'e.g. 0803 111 2233 or pharmacy@getit.ng'
+                            : 'e.g. 0803 111 2233 or store@getit.ng'
                         }
                         placeholderTextColor="#A8A29E"
+                        keyboardType="email-address"
                         value={authLoginInput}
                         onChangeText={setAuthLoginInput}
                         autoCapitalize="none"
@@ -11906,34 +15787,36 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     </View>
                   </View>
 
-                  <View style={styles.luxeInputBox}>
-                    <View style={styles.luxeInputIconWrap}>
-                      <Text style={styles.luxeInputIcon}>🔒</Text>
+                  {authMethod === 'password' && (
+                    <View style={styles.luxeInputBox}>
+                      <View style={styles.luxeInputIconWrap}>
+                        <Text style={styles.luxeInputIcon}>🔒</Text>
+                      </View>
+                      <View style={styles.luxeInputContent}>
+                        <Text style={styles.luxeInputLabel}>
+                          {authSellerStoreType === 'pharmacy'
+                            ? 'PHARMACY PASSWORD'
+                            : 'MERCHANT PASSWORD'}
+                        </Text>
+                        <TextInput
+                          style={styles.luxeTextInput}
+                          placeholder="Enter merchant password"
+                          placeholderTextColor="#A8A29E"
+                          secureTextEntry={!showPassword}
+                          value={authLoginPassword}
+                          onChangeText={setAuthLoginPassword}
+                        />
+                      </View>
+                      <TouchableOpacity
+                        style={styles.luxeEyeToggleBtn}
+                        onPress={() => setShowPassword(!showPassword)}
+                      >
+                        <Text style={styles.luxeEyeToggleText}>
+                          {showPassword ? 'Hide' : 'Show'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
-                    <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>
-                        {authSellerStoreType === 'pharmacy'
-                          ? 'PHARMACY PASSWORD'
-                          : 'MERCHANT PASSWORD'}
-                      </Text>
-                      <TextInput
-                        style={styles.luxeTextInput}
-                        placeholder="Enter merchant password"
-                        placeholderTextColor="#A8A29E"
-                        secureTextEntry={!showPassword}
-                        value={authLoginPassword}
-                        onChangeText={setAuthLoginPassword}
-                      />
-                    </View>
-                    <TouchableOpacity
-                      style={styles.luxeEyeToggleBtn}
-                      onPress={() => setShowPassword(!showPassword)}
-                    >
-                      <Text style={styles.luxeEyeToggleText}>
-                        {showPassword ? 'Hide' : 'Show'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+                  )}
 
                   <TouchableOpacity
                     style={[
@@ -11941,286 +15824,1237 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       authSellerStoreType === 'pharmacy'
                         ? { backgroundColor: '#1E3A8A' }
                         : { backgroundColor: COLORS.goldPrimary },
+                      isAuthSubmitting && { opacity: 0.7 },
                     ]}
-                    onPress={handleAuthSellerSignIn}
+                    onPress={() => authMethod === 'otp' ? handleInitiateOtpSignIn('seller') : handleAuthSellerSignIn()}
+                    disabled={isAuthSubmitting}
                     activeOpacity={0.85}
                   >
-                    <Text
-                      style={[
-                        styles.luxePrimaryBtnText,
-                        authSellerStoreType === 'pharmacy'
-                          ? { color: '#FFFFFF', fontWeight: '900' }
-                          : { color: '#000000', fontWeight: '800' },
-                      ]}
-                    >
-                      {authSellerStoreType === 'pharmacy'
-                        ? 'Log In to Pharmacy Dispensary 💊 ➔'
-                        : 'Log In to Grocery Hub 🛒 ➔'}
-                    </Text>
+                    {isAuthSubmitting ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                        <ActivityIndicator
+                          size="small"
+                          color={authSellerStoreType === 'pharmacy' ? '#FFFFFF' : '#000000'}
+                        />
+                        <Text
+                          style={[
+                            styles.luxePrimaryBtnText,
+                            authSellerStoreType === 'pharmacy'
+                              ? { color: '#FFFFFF', fontWeight: '900' }
+                              : { color: '#000000', fontWeight: '800' },
+                          ]}
+                        >
+                          {authSubmittingLabel || 'Signing In...'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text
+                        style={[
+                          styles.luxePrimaryBtnText,
+                          authSellerStoreType === 'pharmacy'
+                            ? { color: '#FFFFFF', fontWeight: '900' }
+                            : { color: '#000000', fontWeight: '800' },
+                        ]}
+                      >
+                        {authMethod === 'otp'
+                          ? 'Send OTP Verification Code ➔'
+                          : (authSellerStoreType === 'pharmacy'
+                              ? 'Log In to Pharmacy Dispensary 💊 ➔'
+                              : 'Log In to Grocery Hub 🛒 ➔')}
+                      </Text>
+                    )}
                   </TouchableOpacity>
                 </View>
               ) : (
-                /* Streamlined Merchant Sign Up */
+                /* Guided 3-Step Merchant Registration & Specialisation Wizard */
                 <View style={styles.luxeFormContainer}>
-                  {/* Store Type Selector: Supermarket vs Pharmacy */}
-                  <View style={{ marginBottom: 14 }}>
-                    <Text style={styles.authStoreTypeHeading}>SELECT STORE TYPE *</Text>
-                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+                  {/* Guided Wizard Header & Stepper Pills */}
+                  <View
+                    style={{
+                      backgroundColor: '#F0FDF4',
+                      borderRadius: 16,
+                      padding: 12,
+                      marginBottom: 14,
+                      borderWidth: 1,
+                      borderColor: '#BBF7D0',
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#065F46', letterSpacing: 0.6 }}>
+                        GUIDED MERCHANT REGISTRATION • STEP {regWizardStep} OF 3
+                      </Text>
                       <TouchableOpacity
-                        style={[
-                          styles.authStoreTypeBtn,
-                          authSellerStoreType === 'grocery' && styles.authStoreTypeBtnActiveGroc,
-                        ]}
-                        onPress={() => setAuthSellerStoreType('grocery')}
-                        activeOpacity={0.85}
+                        onPress={() => setRequestCategoryModalVisible(true)}
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          paddingHorizontal: 8,
+                          paddingVertical: 4,
+                          borderRadius: 999,
+                          borderWidth: 1,
+                          borderColor: '#10B981',
+                        }}
                       >
-                        <Text style={{ fontSize: 24, marginBottom: 2 }}>🛒</Text>
-                        <Text
-                          style={[
-                            styles.authStoreTypeBtnTitle,
-                            authSellerStoreType === 'grocery' && { color: '#064E3B', fontWeight: '900' },
-                          ]}
-                        >
-                          Supermarket / Grocery
-                        </Text>
-                        <Text style={styles.authStoreTypeBtnSub}>
-                          Provisions, fresh produce & drinks
-                        </Text>
+                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#047857' }}>+ Request Category</Text>
                       </TouchableOpacity>
+                    </View>
 
-                      <TouchableOpacity
-                        style={[
-                          styles.authStoreTypeBtn,
-                          authSellerStoreType === 'pharmacy' && styles.authStoreTypeBtnActivePharm,
-                        ]}
-                        onPress={() => setAuthSellerStoreType('pharmacy')}
-                        activeOpacity={0.85}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                          <Text style={{ fontSize: 24, marginBottom: 2 }}>💊</Text>
-                          <View style={styles.rxBadgeTag}>
-                            <Text style={styles.rxBadgeTagText}>Rx</Text>
-                          </View>
-                        </View>
-                        <Text
-                          style={[
-                            styles.authStoreTypeBtnTitle,
-                            authSellerStoreType === 'pharmacy' && { color: '#1E3A8A', fontWeight: '900' },
-                          ]}
-                        >
-                          Pharmacy / Chemist
-                        </Text>
-                        <Text style={styles.authStoreTypeBtnSub}>
-                          Prescriptions, OTC drugs & tele-consult
-                        </Text>
-                      </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      {[
+                        { step: 1, title: '1. Business Type' },
+                        { step: 2, title: '2. Specialisation' },
+                        { step: 3, title: '3. Extra & Store Info' },
+                      ].map((stObj) => {
+                        const isCurrent = regWizardStep === stObj.step;
+                        const isDone = regWizardStep > stObj.step;
+                        return (
+                          <TouchableOpacity
+                            key={stObj.step}
+                            disabled={isWizardStepLoading || isAuthSubmitting}
+                            onPress={() => handleAdvanceRegWizardStep(stObj.step)}
+                            style={{
+                              flex: 1,
+                              paddingVertical: 7,
+                              paddingHorizontal: 6,
+                              borderRadius: 10,
+                              backgroundColor: isCurrent ? '#064E3B' : isDone ? '#D1FAE5' : '#FFFFFF',
+                              borderWidth: 1,
+                              borderColor: isCurrent ? '#064E3B' : '#A7F3D0',
+                              alignItems: 'center',
+                              opacity: isWizardStepLoading ? 0.75 : 1,
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 10.5,
+                                fontWeight: '800',
+                                color: isCurrent ? '#FFFFFF' : '#065F46',
+                              }}
+                              numberOfLines={1}
+                            >
+                              {isDone ? `✓ ${stObj.title}` : stObj.title}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
                   </View>
 
-                  {/* Pharmacist Licensing Fields (Only when Pharmacy is selected) */}
-                  {authSellerStoreType === 'pharmacy' && (
-                    <View style={styles.authPharmacyDetailsBox}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                        <Text style={{ fontSize: 20 }}>🩺</Text>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.authPharmBoxTitle}>Pharmacist & PCN Licensing</Text>
-                          <Text style={styles.authPharmBoxSub}>
-                            Required for patient tele-consultations & doctor prescription dispensing
+                  {/* STEP 1: WHAT TYPE OF BUSINESS DO YOU OPERATE? */}
+                  {regWizardStep === 1 && (
+                    <View style={{ marginBottom: 12 }}>
+                      <Text style={[styles.authStoreTypeHeading, { fontSize: 13, color: '#0F172A' }]}>
+                        STEP 1: WHAT TYPE OF BUSINESS DO YOU OPERATE? *
+                      </Text>
+                      <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 2, marginBottom: 10 }}>
+                        Choose your primary department so customers shopping for your exact products find your store immediately.
+                      </Text>
+
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                        {(marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS)
+                          .filter((d) => d.enabled !== false && d.allowMerchantRegistration !== false)
+                          .map((dept) => {
+                            const isSelected = regPrimaryDepartmentId === dept.id;
+                            return (
+                              <TouchableOpacity
+                                key={dept.id}
+                                activeOpacity={0.85}
+                                onPress={() => {
+                                  setRegPrimaryDepartmentId(dept.id);
+                                  const nextType = dept.id === 'pharmacy' ? 'pharmacy' : 'grocery';
+                                  setAuthSellerStoreType(nextType);
+                                  const nextFormat = dept.defaultStoreType || 'supermarket';
+                                  setRegStoreTypeFormat(nextFormat);
+                                  if (!regHasCustomCoverImage) {
+                                    const catImgs = getCategoryCoverOptions(dept.id, nextFormat);
+                                    if (catImgs.length > 0) setRegStoreCoverImage(catImgs[0].url);
+                                  }
+                                  const firstSubs = (dept.subcategories || [])
+                                    .filter((s) => s.enabled !== false)
+                                    .slice(0, 2)
+                                    .map((s) => s.id);
+                                  setRegSelectedSubcategories(firstSubs);
+                                  setRegSelectedVarieties([]);
+                                }}
+                                style={{
+                                  width: '48%',
+                                  padding: 10,
+                                  borderRadius: 14,
+                                  backgroundColor: isSelected ? (dept.bgTint || '#ECFDF5') : '#FFFFFF',
+                                  borderWidth: isSelected ? 2 : 1,
+                                  borderColor: isSelected ? (dept.accentColor || '#059669') : '#E2E8F0',
+                                }}
+                              >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <Text style={{ fontSize: 22 }}>{dept.icon}</Text>
+                                  {dept.isRegulated && (
+                                    <View style={styles.rxBadgeTag}>
+                                      <Text style={styles.rxBadgeTagText}>PCN Rx</Text>
+                                    </View>
+                                  )}
+                                  {isSelected && !dept.isRegulated && (
+                                    <Text style={{ fontSize: 12, fontWeight: '900', color: dept.accentColor || '#059669' }}>✓</Text>
+                                  )}
+                                </View>
+                                <Text
+                                  style={{
+                                    fontSize: 12.5,
+                                    fontWeight: '800',
+                                    color: isSelected ? '#0F172A' : '#1E293B',
+                                    marginTop: 4,
+                                  }}
+                                  numberOfLines={1}
+                                >
+                                  {dept.name}
+                                </Text>
+                                <Text style={{ fontSize: 10.5, color: '#64748B', marginTop: 2 }} numberOfLines={2}>
+                                  {dept.subtitle}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                      </View>
+
+                      {/* Store Format Pill Selector */}
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#334155', marginBottom: 6 }}>
+                          STORE FORMAT CLASSIFICATION (HOW CUSTOMERS BROWSE BY STORE TYPE)
+                        </Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                          {(marketplaceTaxonomy?.storeTypes || DEFAULT_STORE_TYPES)
+                            .filter((st) => st.id !== 'all' && st.enabled !== false)
+                            .map((st) => {
+                              const active = regStoreTypeFormat === st.id;
+                              return (
+                                <TouchableOpacity
+                                  key={st.id}
+                                  onPress={() => {
+                                    setRegStoreTypeFormat(st.id);
+                                    const nextDept = st.id === 'pharmacy' ? 'pharmacy' : regPrimaryDepartmentId;
+                                    if (st.id === 'pharmacy') {
+                                      setRegPrimaryDepartmentId('pharmacy');
+                                      setAuthSellerStoreType('pharmacy');
+                                    }
+                                    if (!regHasCustomCoverImage) {
+                                      const catImgs = getCategoryCoverOptions(nextDept, st.id);
+                                      if (catImgs.length > 0) setRegStoreCoverImage(catImgs[0].url);
+                                    }
+                                  }}
+                                  style={{
+                                    paddingHorizontal: 12,
+                                    paddingVertical: 8,
+                                    borderRadius: 999,
+                                    backgroundColor: active ? '#064E3B' : '#F8FAFC',
+                                    borderWidth: 1,
+                                    borderColor: active ? '#064E3B' : '#CBD5E1',
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 5,
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 13 }}>{st.icon}</Text>
+                                  <Text style={{ fontSize: 11.5, fontWeight: '800', color: active ? '#FFFFFF' : '#334155' }}>
+                                    {st.label}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                        </ScrollView>
+                      </View>
+
+                      {/* Category-Tailored Storefront Cover Image Selector + Custom Upload */}
+                      {(() => {
+                        const coverOptions = getCategoryCoverOptions(regPrimaryDepartmentId, regStoreTypeFormat);
+                        const activeCoverUrl =
+                          regStoreCoverImage ||
+                          coverOptions[0]?.url ||
+                          getDefaultStoreCoverImage(regPrimaryDepartmentId, regStoreTypeFormat);
+                        return (
+                          <View
+                            style={{
+                              marginTop: 14,
+                              backgroundColor: '#F8FAFC',
+                              borderRadius: 14,
+                              padding: 10,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                              <View style={{ flex: 1, paddingRight: 8 }}>
+                                <Text style={{ fontSize: 11, fontWeight: '900', color: '#0F172A' }}>
+                                  🖼️ STORE MAIN COVER IMAGE (CATEGORY PRESETS OR CUSTOM UPLOAD)
+                                </Text>
+                                <Text style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>
+                                  Select a storefront photo matching your category or upload your own photo
+                                </Text>
+                              </View>
+                              <TouchableOpacity
+                                onPress={() =>
+                                  handlePickCustomRegistrationImage(setRegStoreCoverImage, setRegHasCustomCoverImage)
+                                }
+                                style={{
+                                  backgroundColor: '#064E3B',
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 7,
+                                  borderRadius: 10,
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                }}
+                                activeOpacity={0.85}
+                              >
+                                <Text style={{ fontSize: 12 }}>📷</Text>
+                                <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
+                                  Upload Custom
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+
+                            {/* Live Main Storefront Preview */}
+                            <View
+                              style={{
+                                height: 110,
+                                borderRadius: 12,
+                                overflow: 'hidden',
+                                marginBottom: 8,
+                                backgroundColor: '#E2E8F0',
+                                borderWidth: 1,
+                                borderColor: '#CBD5E1',
+                              }}
+                            >
+                              <Image
+                                source={{ uri: activeCoverUrl }}
+                                style={{ width: '100%', height: '100%' }}
+                                resizeMode="cover"
+                              />
+                              <View
+                                style={{
+                                  position: 'absolute',
+                                  bottom: 6,
+                                  right: 6,
+                                  backgroundColor: 'rgba(15, 23, 42, 0.78)',
+                                  paddingHorizontal: 8,
+                                  paddingVertical: 3,
+                                  borderRadius: 999,
+                                }}
+                              >
+                                <Text style={{ fontSize: 9.5, fontWeight: '800', color: '#FFFFFF' }}>
+                                  {regHasCustomCoverImage ? '✓ Custom Store Photo' : '✓ Category Storefront Photo'}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Category Preset Thumbnails */}
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                              {coverOptions.map((imgOpt) => {
+                                const isChosen = activeCoverUrl === imgOpt.url;
+                                return (
+                                  <TouchableOpacity
+                                    key={imgOpt.id}
+                                    onPress={() => {
+                                      setRegStoreCoverImage(imgOpt.url);
+                                      setRegHasCustomCoverImage(false);
+                                    }}
+                                    activeOpacity={0.85}
+                                    style={{
+                                      width: 112,
+                                      borderRadius: 10,
+                                      overflow: 'hidden',
+                                      backgroundColor: '#FFFFFF',
+                                      borderWidth: isChosen ? 2.5 : 1,
+                                      borderColor: isChosen ? '#059669' : '#CBD5E1',
+                                    }}
+                                  >
+                                    <Image
+                                      source={{ uri: imgOpt.url }}
+                                      style={{ width: '100%', height: 62 }}
+                                      resizeMode="cover"
+                                    />
+                                    <View style={{ paddingHorizontal: 6, paddingVertical: 4 }}>
+                                      <Text
+                                        style={{
+                                          fontSize: 9.5,
+                                          fontWeight: isChosen ? '900' : '700',
+                                          color: isChosen ? '#064E3B' : '#334155',
+                                        }}
+                                        numberOfLines={1}
+                                      >
+                                        {isChosen ? `✓ ${imgOpt.label}` : imgOpt.label}
+                                      </Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </ScrollView>
+                          </View>
+                        );
+                      })()}
+
+                      <TouchableOpacity
+                        style={[
+                          styles.luxePrimaryBtn,
+                          { marginTop: 14, backgroundColor: '#064E3B' },
+                          isWizardStepLoading && { opacity: 0.75 },
+                        ]}
+                        disabled={isWizardStepLoading}
+                        onPress={() => handleAdvanceRegWizardStep(2)}
+                        activeOpacity={0.85}
+                      >
+                        {isWizardStepLoading ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                            <Text style={[styles.luxePrimaryBtnText, { color: '#FFFFFF', fontWeight: '800' }]}>
+                              Loading Step 2...
+                            </Text>
+                          </View>
+                        ) : (
+                          <Text style={[styles.luxePrimaryBtnText, { color: '#FFFFFF', fontWeight: '800' }]}>
+                            Continue to Step 2: What You Specialise In ➔
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* STEP 2: WHAT DO YOU SPECIALISE IN? */}
+                  {regWizardStep === 2 && (() => {
+                    const currentDept =
+                      (marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS).find(
+                        (d) => d.id === regPrimaryDepartmentId
+                      ) || DEFAULT_MARKETPLACE_DEPARTMENTS[0];
+                    const availableSubs = (currentDept.subcategories || []).filter((s) => s.enabled !== false);
+                    const allSubIds = availableSubs.map((s) => s.id);
+                    const allSelected =
+                      allSubIds.length > 0 && allSubIds.every((id) => regSelectedSubcategories.includes(id));
+
+                    return (
+                      <View style={{ marginBottom: 12 }}>
+                        <Text style={[styles.authStoreTypeHeading, { fontSize: 13, color: '#0F172A' }]}>
+                          STEP 2: WHAT DO YOU SPECIALISE IN? ({currentDept?.icon || '🏪'} {String(currentDept?.name || currentDept?.label || 'STORE').toUpperCase()}) *
+                        </Text>
+                        <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 2, marginBottom: 10 }}>
+                          Select the exact subcategories and product varieties your shop stocks (e.g. Goat meat, Beef, Ram, Chicken, or All types).
+                        </Text>
+
+                        {/* Select All / Clear Button */}
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (allSelected) {
+                              setRegSelectedSubcategories([]);
+                              setRegSelectedVarieties([]);
+                            } else {
+                              setRegSelectedSubcategories(allSubIds);
+                              const allVars = availableSubs.flatMap((s) =>
+                                (s.varieties || []).filter((v) => v.enabled !== false).map((v) => v.id)
+                              );
+                              setRegSelectedVarieties(allVars);
+                            }
+                          }}
+                          style={{
+                            paddingVertical: 8,
+                            paddingHorizontal: 12,
+                            borderRadius: 10,
+                            backgroundColor: allSelected ? '#064E3B' : '#F1F5F9',
+                            borderWidth: 1,
+                            borderColor: allSelected ? '#064E3B' : '#CBD5E1',
+                            marginBottom: 10,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: allSelected ? '#FFFFFF' : '#1E293B' }}>
+                            {allSelected
+                              ? `✓ Specialised in All ${currentDept.name} Subcategories`
+                              : `Select All ${currentDept.name} Types`}
+                          </Text>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: allSelected ? '#A7F3D0' : '#059669' }}>
+                            {allSelected ? 'Tap to Clear' : 'Select All'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* Subcategory Multi-Select Chips */}
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                          {availableSubs.map((sub) => {
+                            const isSubSelected = regSelectedSubcategories.includes(sub.id);
+                            return (
+                              <TouchableOpacity
+                                key={sub.id}
+                                onPress={() => {
+                                  setRegSelectedSubcategories((prev) =>
+                                    prev.includes(sub.id) ? prev.filter((x) => x !== sub.id) : [...prev, sub.id]
+                                  );
+                                }}
+                                style={{
+                                  paddingHorizontal: 12,
+                                  paddingVertical: 8,
+                                  borderRadius: 12,
+                                  backgroundColor: isSubSelected ? '#ECFDF5' : '#FFFFFF',
+                                  borderWidth: isSubSelected ? 2 : 1,
+                                  borderColor: isSubSelected ? '#059669' : '#CBD5E1',
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                }}
+                              >
+                                <Text style={{ fontSize: 14 }}>{sub.icon}</Text>
+                                <Text
+                                  style={{
+                                    fontSize: 12,
+                                    fontWeight: isSubSelected ? '900' : '700',
+                                    color: isSubSelected ? '#064E3B' : '#334155',
+                                  }}
+                                >
+                                  {sub.label}
+                                </Text>
+                                {isSubSelected && (
+                                  <Text style={{ fontSize: 12, fontWeight: '900', color: '#059669' }}>✓</Text>
+                                )}
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+
+                        {/* Level 3 Specific Product Varieties for Selected Subcategories */}
+                        {regSelectedSubcategories.length > 0 && (
+                          <View
+                            style={{
+                              backgroundColor: '#F8FAFC',
+                              borderRadius: 12,
+                              padding: 10,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              marginBottom: 12,
+                            }}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: '800', color: '#334155', marginBottom: 6 }}>
+                              SPECIFIC CUTS / PRODUCT VARIETIES YOU SELL (LEVEL 3 FILTERING)
+                            </Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                              {availableSubs
+                                .filter((s) => regSelectedSubcategories.includes(s.id))
+                                .flatMap((s) =>
+                                  (s.varieties || [])
+                                    .filter((v) => v.enabled !== false)
+                                    .map((v) => ({ ...v, subIcon: s.icon }))
+                                )
+                                .map((variety) => {
+                                  const isVarSelected = regSelectedVarieties.includes(variety.id);
+                                  return (
+                                    <TouchableOpacity
+                                      key={variety.id}
+                                      onPress={() => {
+                                        setRegSelectedVarieties((prev) =>
+                                          prev.includes(variety.id)
+                                            ? prev.filter((x) => x !== variety.id)
+                                            : [...prev, variety.id]
+                                        );
+                                      }}
+                                      style={{
+                                        paddingHorizontal: 10,
+                                        paddingVertical: 5,
+                                        borderRadius: 999,
+                                        backgroundColor: isVarSelected ? '#064E3B' : '#FFFFFF',
+                                        borderWidth: 1,
+                                        borderColor: isVarSelected ? '#064E3B' : '#CBD5E1',
+                                      }}
+                                    >
+                                      <Text
+                                        style={{
+                                          fontSize: 11,
+                                          fontWeight: '700',
+                                          color: isVarSelected ? '#FFFFFF' : '#475569',
+                                        }}
+                                      >
+                                        {isVarSelected ? '✓ ' : '+ '}
+                                        {variety.label}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                            </View>
+                          </View>
+                        )}
+
+                        {/* Separate Regulated Pharmacy Onboarding & Approval Workflow */}
+                        {(authSellerStoreType === 'pharmacy' || regPrimaryDepartmentId === 'pharmacy') && (
+                          <View style={styles.authPharmacyDetailsBox}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                              <Text style={{ fontSize: 20 }}>🩺</Text>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.authPharmBoxTitle}>
+                                  Regulated Pharmacy & PCN Compliance Onboarding
+                                </Text>
+                                <Text style={styles.authPharmBoxSub}>
+                                  Pharmacies undergo regulatory verification for PCN licensing, premises registration & clinical dispensing scope
+                                </Text>
+                              </View>
+                            </View>
+
+                            <View style={styles.luxeInputBox}>
+                              <View style={styles.luxeInputIconWrap}>
+                                <Text style={styles.luxeInputIcon}>👨‍⚕️</Text>
+                              </View>
+                              <View style={styles.luxeInputContent}>
+                                <Text style={styles.luxeInputLabel}>SUPERINTENDENT / ON-DUTY PHARMACIST *</Text>
+                                <TextInput
+                                  style={styles.luxeTextInput}
+                                  placeholder="e.g. Pharm. Basit Aliyu"
+                                  placeholderTextColor="#A8A29E"
+                                  value={authSellerPharmacistName}
+                                  onChangeText={setAuthSellerPharmacistName}
+                                />
+                              </View>
+                            </View>
+
+                            <View style={styles.luxeInputBox}>
+                              <View style={styles.luxeInputIconWrap}>
+                                <Text style={styles.luxeInputIcon}>📜</Text>
+                              </View>
+                              <View style={styles.luxeInputContent}>
+                                <Text style={styles.luxeInputLabel}>PCN PHARMACIST LICENSE NUMBER *</Text>
+                                <TextInput
+                                  style={styles.luxeTextInput}
+                                  placeholder="e.g. PCN-REG-84920"
+                                  placeholderTextColor="#A8A29E"
+                                  value={authSellerPharmacistLicenseNo}
+                                  onChangeText={setAuthSellerPharmacistLicenseNo}
+                                />
+                              </View>
+                            </View>
+
+                            <View style={styles.luxeInputBox}>
+                              <View style={styles.luxeInputIconWrap}>
+                                <Text style={styles.luxeInputIcon}>🏥</Text>
+                              </View>
+                              <View style={styles.luxeInputContent}>
+                                <Text style={styles.luxeInputLabel}>PCN PREMISES REGISTRATION NUMBER *</Text>
+                                <TextInput
+                                  style={styles.luxeTextInput}
+                                  placeholder="e.g. PCN-PREM-ABJ-2026-114"
+                                  placeholderTextColor="#A8A29E"
+                                  value={regPremisesLicenseNo}
+                                  onChangeText={setRegPremisesLicenseNo}
+                                />
+                              </View>
+                            </View>
+
+                            <View style={styles.luxeInputBox}>
+                              <View style={styles.luxeInputIconWrap}>
+                                <Text style={styles.luxeInputIcon}>🎓</Text>
+                              </View>
+                              <View style={styles.luxeInputContent}>
+                                <Text style={styles.luxeInputLabel}>PHARMACIST QUALIFICATION</Text>
+                                <TextInput
+                                  style={styles.luxeTextInput}
+                                  placeholder="e.g. B.Pharm, MPSN, FPCPharm"
+                                  placeholderTextColor="#A8A29E"
+                                  value={authSellerPharmacistQualification}
+                                  onChangeText={setAuthSellerPharmacistQualification}
+                                />
+                              </View>
+                            </View>
+                          </View>
+                        )}
+
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <TouchableOpacity
+                            style={[
+                              styles.luxePrimaryBtn,
+                              { flex: 0.38, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#CBD5E1' },
+                              isWizardStepLoading && { opacity: 0.7 },
+                            ]}
+                            disabled={isWizardStepLoading}
+                            onPress={() => handleAdvanceRegWizardStep(1)}
+                          >
+                            <Text style={[styles.luxePrimaryBtnText, { color: '#334155', fontSize: 12 }]}>← Step 1</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[
+                              styles.luxePrimaryBtn,
+                              { flex: 0.62, backgroundColor: '#064E3B' },
+                              isWizardStepLoading && { opacity: 0.75 },
+                            ]}
+                            disabled={isWizardStepLoading}
+                            onPress={() => handleAdvanceRegWizardStep(3)}
+                          >
+                            {isWizardStepLoading ? (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                                <Text style={[styles.luxePrimaryBtnText, { color: '#FFFFFF', fontSize: 12, fontWeight: '800' }]}>
+                                  Loading Step 3...
+                                </Text>
+                              </View>
+                            ) : (
+                              <Text style={[styles.luxePrimaryBtnText, { color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' }]}>
+                                Next: Step 3 ➔
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })()}
+
+                  {/* STEP 3: DO YOU SELL OTHER PRODUCTS TOO? + STORE DETAILS */}
+                  {regWizardStep === 3 && (
+                    <View style={{ marginBottom: 8 }}>
+                      <Text style={[styles.authStoreTypeHeading, { fontSize: 13, color: '#0F172A' }]}>
+                        STEP 3: DO YOU SELL OTHER PRODUCTS TOO?
+                      </Text>
+                      <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 2, marginBottom: 8 }}>
+                        A supermarket or mixed shop can appear under multiple departments when it genuinely stocks those items.
+                      </Text>
+
+                      <TouchableOpacity
+                        onPress={() => setRegSellsOtherDepartments(!regSellsOtherDepartments)}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: 12,
+                          borderRadius: 12,
+                          backgroundColor: regSellsOtherDepartments ? '#ECFDF5' : '#F8FAFC',
+                          borderWidth: 1,
+                          borderColor: regSellsOtherDepartments ? '#10B981' : '#CBD5E1',
+                          marginBottom: 10,
+                        }}
+                      >
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                          <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#0F172A' }}>
+                            {regSellsOtherDepartments ? '☑ Yes, I sell other types of products as well' : '☐ Yes, I sell other types of products as well'}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                            Enable multi-department visibility for your shop
                           </Text>
                         </View>
-                      </View>
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#059669' }}>
+                          {regSellsOtherDepartments ? 'Enabled' : 'Add'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {regSellsOtherDepartments && (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                          {(marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS)
+                            .filter((d) => d.enabled !== false && d.id !== regPrimaryDepartmentId && !d.isRegulated)
+                            .map((dept) => {
+                              const isAdded = regAdditionalDepartments.includes(dept.id);
+                              return (
+                                <TouchableOpacity
+                                  key={dept.id}
+                                  onPress={() => {
+                                    setRegAdditionalDepartments((prev) =>
+                                      prev.includes(dept.id)
+                                        ? prev.filter((x) => x !== dept.id)
+                                        : [...prev, dept.id]
+                                    );
+                                  }}
+                                  style={{
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 7,
+                                    borderRadius: 10,
+                                    backgroundColor: isAdded ? '#064E3B' : '#FFFFFF',
+                                    borderWidth: 1,
+                                    borderColor: isAdded ? '#064E3B' : '#CBD5E1',
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 5,
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 13 }}>{dept.icon}</Text>
+                                  <Text
+                                    style={{
+                                      fontSize: 11,
+                                      fontWeight: '700',
+                                      color: isAdded ? '#FFFFFF' : '#334155',
+                                    }}
+                                  >
+                                    {isAdded ? '✓ ' : '+ '}
+                                    {dept.name}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                        </View>
+                      )}
+
+                      {/* Store Main Cover Photo Selector + Custom Upload Button in Step 3 */}
+                      {(() => {
+                        const coverOptions = getCategoryCoverOptions(regPrimaryDepartmentId, regStoreTypeFormat);
+                        const activeCoverUrl =
+                          regStoreCoverImage ||
+                          coverOptions[0]?.url ||
+                          getDefaultStoreCoverImage(regPrimaryDepartmentId, regStoreTypeFormat);
+                        return (
+                          <View
+                            style={{
+                              marginBottom: 12,
+                              backgroundColor: '#F8FAFC',
+                              borderRadius: 14,
+                              padding: 10,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                              <View style={{ flex: 1, paddingRight: 8 }}>
+                                <Text style={{ fontSize: 11, fontWeight: '900', color: '#0F172A' }}>
+                                  🖼️ STORE MAIN FRONT IMAGE *
+                                </Text>
+                                <Text style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>
+                                  Choose from your category images below or upload your own shop photo
+                                </Text>
+                              </View>
+                              <TouchableOpacity
+                                onPress={() =>
+                                  handlePickCustomRegistrationImage(setRegStoreCoverImage, setRegHasCustomCoverImage)
+                                }
+                                style={{
+                                  backgroundColor: '#064E3B',
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 7,
+                                  borderRadius: 10,
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                }}
+                                activeOpacity={0.85}
+                              >
+                                <Text style={{ fontSize: 12 }}>📷</Text>
+                                <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
+                                  Upload Custom Photo
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+
+                            <View
+                              style={{
+                                height: 110,
+                                borderRadius: 12,
+                                overflow: 'hidden',
+                                marginBottom: 8,
+                                backgroundColor: '#E2E8F0',
+                                borderWidth: 1,
+                                borderColor: '#CBD5E1',
+                              }}
+                            >
+                              <Image
+                                source={{ uri: activeCoverUrl }}
+                                style={{ width: '100%', height: '100%' }}
+                                resizeMode="cover"
+                              />
+                            </View>
+
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                              {coverOptions.map((imgOpt) => {
+                                const isChosen = activeCoverUrl === imgOpt.url;
+                                return (
+                                  <TouchableOpacity
+                                    key={imgOpt.id}
+                                    onPress={() => {
+                                      setRegStoreCoverImage(imgOpt.url);
+                                      setRegHasCustomCoverImage(false);
+                                    }}
+                                    activeOpacity={0.85}
+                                    style={{
+                                      width: 110,
+                                      borderRadius: 10,
+                                      overflow: 'hidden',
+                                      backgroundColor: '#FFFFFF',
+                                      borderWidth: isChosen ? 2.5 : 1,
+                                      borderColor: isChosen ? '#059669' : '#CBD5E1',
+                                    }}
+                                  >
+                                    <Image
+                                      source={{ uri: imgOpt.url }}
+                                      style={{ width: '100%', height: 58 }}
+                                      resizeMode="cover"
+                                    />
+                                    <View style={{ paddingHorizontal: 6, paddingVertical: 4 }}>
+                                      <Text
+                                        style={{
+                                          fontSize: 9.5,
+                                          fontWeight: isChosen ? '900' : '700',
+                                          color: isChosen ? '#064E3B' : '#334155',
+                                        }}
+                                        numberOfLines={1}
+                                      >
+                                        {isChosen ? `✓ ${imgOpt.label}` : imgOpt.label}
+                                      </Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </ScrollView>
+                          </View>
+                        );
+                      })()}
 
                       <View style={styles.luxeInputBox}>
                         <View style={styles.luxeInputIconWrap}>
-                          <Text style={styles.luxeInputIcon}>👨‍⚕️</Text>
+                          <Text style={styles.luxeInputIcon}>
+                            {authSellerStoreType === 'pharmacy' ? '💊' : '🏪'}
+                          </Text>
                         </View>
                         <View style={styles.luxeInputContent}>
-                          <Text style={styles.luxeInputLabel}>LEAD / ON-DUTY PHARMACIST NAME *</Text>
+                          <Text style={styles.luxeInputLabel}>
+                            {authSellerStoreType === 'pharmacy' ? 'PHARMACY NAME *' : 'STORE / SHOP NAME *'}
+                          </Text>
                           <TextInput
                             style={styles.luxeTextInput}
-                            placeholder="e.g. Pharm. Basit Aliyu"
+                            placeholder={
+                              authSellerStoreType === 'pharmacy'
+                                ? 'e.g. Basit LifeCare Pharmacy'
+                                : regPrimaryDepartmentId === 'meat_poultry'
+                                  ? "e.g. Mahmud's Butcher & Goat Meat Shop"
+                                  : 'e.g. Daily Fresh Organics'
+                            }
                             placeholderTextColor="#A8A29E"
-                            value={authSellerPharmacistName}
-                            onChangeText={setAuthSellerPharmacistName}
+                            value={authSignupBusinessName}
+                            onChangeText={setAuthSignupBusinessName}
                           />
                         </View>
                       </View>
 
                       <View style={styles.luxeInputBox}>
                         <View style={styles.luxeInputIconWrap}>
-                          <Text style={styles.luxeInputIcon}>📜</Text>
+                          <Text style={styles.luxeInputIcon}>👤</Text>
                         </View>
                         <View style={styles.luxeInputContent}>
-                          <Text style={styles.luxeInputLabel}>PCN REGISTRATION / LICENSE NUMBER *</Text>
+                          <Text style={styles.luxeInputLabel}>OWNER / MANAGER NAME *</Text>
                           <TextInput
                             style={styles.luxeTextInput}
-                            placeholder="e.g. PCN-REG-84920"
+                            placeholder="e.g. Chinedu Eze"
                             placeholderTextColor="#A8A29E"
-                            value={authSellerPharmacistLicenseNo}
-                            onChangeText={setAuthSellerPharmacistLicenseNo}
+                            value={authSignupFullName}
+                            onChangeText={setAuthSignupFullName}
                           />
                         </View>
                       </View>
 
                       <View style={styles.luxeInputBox}>
                         <View style={styles.luxeInputIconWrap}>
-                          <Text style={styles.luxeInputIcon}>🎓</Text>
+                          <Text style={styles.luxeInputIcon}>📱</Text>
                         </View>
                         <View style={styles.luxeInputContent}>
-                          <Text style={styles.luxeInputLabel}>PHARMACIST QUALIFICATION</Text>
+                          <Text style={styles.luxeInputLabel}>PHONE / WHATSAPP *</Text>
                           <TextInput
                             style={styles.luxeTextInput}
-                            placeholder="e.g. B.Pharm, MPSN, FPCPharm"
+                            placeholder="e.g. 0803 555 7788"
                             placeholderTextColor="#A8A29E"
-                            value={authSellerPharmacistQualification}
-                            onChangeText={setAuthSellerPharmacistQualification}
+                            keyboardType="phone-pad"
+                            value={authSignupPhone}
+                            onChangeText={setAuthSignupPhone}
                           />
                         </View>
+                      </View>
+
+                      <View style={styles.luxeInputBox}>
+                        <View style={styles.luxeInputIconWrap}>
+                          <Text style={styles.luxeInputIcon}>✉️</Text>
+                        </View>
+                        <View style={styles.luxeInputContent}>
+                          <Text style={styles.luxeInputLabel}>BUSINESS EMAIL (OPTIONAL)</Text>
+                          <TextInput
+                            style={styles.luxeTextInput}
+                            placeholder="e.g. store@example.com"
+                            placeholderTextColor="#A8A29E"
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                            value={authSignupEmail}
+                            onChangeText={setAuthSignupEmail}
+                          />
+                        </View>
+                      </View>
+
+                      <View style={styles.luxeInputBox}>
+                        <View style={styles.luxeInputIconWrap}>
+                          <Text style={styles.luxeInputIcon}>🔒</Text>
+                        </View>
+                        <View style={styles.luxeInputContent}>
+                          <Text style={styles.luxeInputLabel}>PASSWORD *</Text>
+                          <TextInput
+                            style={styles.luxeTextInput}
+                            placeholder="Create vendor password"
+                            placeholderTextColor="#A8A29E"
+                            secureTextEntry={!showPassword}
+                            value={authSignupPassword}
+                            onChangeText={setAuthSignupPassword}
+                          />
+                        </View>
+                        <TouchableOpacity
+                          style={styles.luxeEyeToggleBtn}
+                          onPress={() => setShowPassword(!showPassword)}
+                        >
+                          <Text style={styles.luxeEyeToggleText}>
+                            {showPassword ? 'Hide' : 'Show'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* 📍 STORE LOCATION & GPS PIN SETUP (REQUIRED DURING REGISTRATION) */}
+                      <View
+                        style={{
+                          marginTop: 8,
+                          marginBottom: 12,
+                          backgroundColor: '#F8FAFC',
+                          borderRadius: 14,
+                          padding: 12,
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <View style={{ flex: 1, paddingRight: 8 }}>
+                            <Text style={{ fontSize: 11.5, fontWeight: '900', color: '#0F172A' }}>
+                              📍 SET STORE LOCATION & GPS PIN *
+                            </Text>
+                            <Text style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>
+                              Select your district, enter your shop address & pin your exact storefront on the map
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={{
+                              backgroundColor: '#064E3B',
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                              borderRadius: 10,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                              opacity: isFetchingRegGps ? 0.75 : 1,
+                            }}
+                            disabled={isFetchingRegGps}
+                            onPress={() => handleDetectRegistrationGps(false)}
+                            activeOpacity={0.85}
+                          >
+                            {isFetchingRegGps ? (
+                              <>
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                                <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
+                                  Locating...
+                                </Text>
+                              </>
+                            ) : (
+                              <>
+                                <Text style={{ fontSize: 12 }}>🎯</Text>
+                                <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
+                                  Use Live GPS
+                                </Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+
+                        {/* 1. District / Area Selector Pills */}
+                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#475569', marginBottom: 6, letterSpacing: 0.4 }}>
+                          1. SELECT STORE DISTRICT / ZONE ({regStoreDistrict})
+                        </Text>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={{ gap: 6, paddingBottom: 8 }}
+                        >
+                          {REGISTRATION_STORE_DISTRICTS.map((distObj) => {
+                            const isSelected = regStoreDistrict === distObj.district;
+                            return (
+                              <TouchableOpacity
+                                key={distObj.district}
+                                onPress={() => handleSelectRegDistrict(distObj, false)}
+                                activeOpacity={0.85}
+                                style={{
+                                  paddingHorizontal: 11,
+                                  paddingVertical: 6,
+                                  borderRadius: 999,
+                                  backgroundColor: isSelected ? '#064E3B' : '#FFFFFF',
+                                  borderWidth: 1,
+                                  borderColor: isSelected ? '#064E3B' : '#CBD5E1',
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                }}
+                              >
+                                <Text style={{ fontSize: 11 }}>📍</Text>
+                                <Text
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: isSelected ? '800' : '700',
+                                    color: isSelected ? '#FFFFFF' : '#334155',
+                                  }}
+                                >
+                                  {distObj.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+
+                        {/* 2. Physical Street Address & Landmark Input */}
+                        <View style={[styles.luxeInputBox, { marginTop: 4, marginBottom: 10, backgroundColor: '#FFFFFF' }]}>
+                          <View style={styles.luxeInputIconWrap}>
+                            <Text style={styles.luxeInputIcon}>🏪</Text>
+                          </View>
+                          <View style={styles.luxeInputContent}>
+                            <Text style={styles.luxeInputLabel}>2. STREET ADDRESS / PLAZA / LANDMARK *</Text>
+                            <TextInput
+                              style={styles.luxeTextInput}
+                              placeholder="e.g. Plot 14 Gana Street, Opposite Transcorp"
+                              placeholderTextColor="#A8A29E"
+                              value={authSignupAddress}
+                              onChangeText={setAuthSignupAddress}
+                            />
+                          </View>
+                        </View>
+
+                        {/* 3. Interactive Storefront Mini-Map Pin */}
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <Text style={{ fontSize: 10, fontWeight: '800', color: '#475569', letterSpacing: 0.4 }}>
+                            3. TAP OR DRAG PIN TO EXACT SHOP LOCATION
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => setRegMapModalVisible(true)}
+                            activeOpacity={0.75}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: '800', color: '#059669' }}>
+                              ⛶ Fullscreen Map ➔
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        <View style={[styles.storeMiniMapContainer, { height: 155 }]}>
+                          <MapView
+                            ref={regMiniMapRef}
+                            style={styles.storeMiniMap}
+                            initialRegion={regStoreMapRegion}
+                            scrollEnabled={true}
+                            zoomEnabled={true}
+                            pitchEnabled={false}
+                            rotateEnabled={false}
+                            showsUserLocation={true}
+                            showsMyLocationButton={false}
+                            onRegionChangeComplete={(r) => {
+                              if (r) setRegStoreMapRegion(r);
+                            }}
+                            onPress={(e) => {
+                              if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                                const { latitude, longitude } = e.nativeEvent.coordinate;
+                                setRegStoreLatitude(latitude);
+                                setRegStoreLongitude(longitude);
+                                setRegStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+                              }
+                            }}
+                          >
+                            <Marker
+                              coordinate={{
+                                latitude: Number(regStoreLatitude) || 9.0882,
+                                longitude: Number(regStoreLongitude) || 7.4933,
+                              }}
+                              draggable={true}
+                              onDragEnd={(e) => {
+                                if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                                  const { latitude, longitude } = e.nativeEvent.coordinate;
+                                  setRegStoreLatitude(latitude);
+                                  setRegStoreLongitude(longitude);
+                                  setRegStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+                                }
+                              }}
+                              title={authSignupBusinessName || 'Your Storefront'}
+                              description={regStoreDistrict}
+                              pinColor={COLORS.emeraldPrimary}
+                            />
+                          </MapView>
+
+                          {/* Mini Map Zoom Controls */}
+                          <View style={styles.storeMiniMapZoomFabCol}>
+                            <TouchableOpacity
+                              style={styles.storeMiniMapZoomBtn}
+                              onPress={() => handleZoomRegMap(true, false)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={styles.storeMiniMapZoomText}>➕</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.storeMiniMapZoomBtn}
+                              onPress={() => handleZoomRegMap(false, false)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={styles.storeMiniMapZoomText}>➖</Text>
+                            </TouchableOpacity>
+                          </View>
+
+                          {/* Pinned Coordinates Badge */}
+                          <View style={styles.storeMiniMapBadge}>
+                            <Text style={styles.storeMiniMapBadgeText}>
+                              🎯 Pinned: {(Number(regStoreLatitude) || 9.0882).toFixed(4)}° N, {(Number(regStoreLongitude) || 7.4933).toFixed(4)}° E
+                            </Text>
+                          </View>
+                        </View>
+
+                        <View style={[styles.storeMapActionRow, { marginTop: 8 }]}>
+                          <TouchableOpacity
+                            style={styles.storeMapOpenBtn}
+                            onPress={() => setRegMapModalVisible(true)}
+                            activeOpacity={0.85}
+                          >
+                            <Text style={styles.storeMapOpenBtnText}>📍 Pin on Fullscreen Map ➔</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.storeMapGpsBtn}
+                            onPress={() => handleDetectRegistrationGps(false)}
+                            disabled={isFetchingRegGps}
+                            activeOpacity={0.85}
+                          >
+                            <Text style={styles.storeMapGpsBtnText}>
+                              {isFetchingRegGps ? 'Locating...' : '🎯 Locate GPS'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <TouchableOpacity
+                          style={[
+                            styles.luxePrimaryBtn,
+                            { flex: 0.35, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#CBD5E1' },
+                            (isAuthSubmitting || isWizardStepLoading) && { opacity: 0.65 },
+                          ]}
+                          disabled={isAuthSubmitting || isWizardStepLoading}
+                          onPress={() => handleAdvanceRegWizardStep(2)}
+                        >
+                          <Text style={[styles.luxePrimaryBtnText, { color: '#334155', fontSize: 12 }]}>← Step 2</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.luxePrimaryBtn,
+                            { flex: 0.65, backgroundColor: COLORS.goldPrimary },
+                            isAuthSubmitting && { opacity: 0.75 },
+                          ]}
+                          disabled={isAuthSubmitting}
+                          onPress={handleInitiateOtpSellerSignUp}
+                          activeOpacity={0.85}
+                        >
+                          {isAuthSubmitting ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                              <ActivityIndicator size="small" color="#000000" />
+                              <Text style={[styles.luxePrimaryBtnText, { color: '#000000', fontWeight: '900', fontSize: 12 }]}>
+                                {authSubmittingLabel || 'Registering Store...'}
+                              </Text>
+                            </View>
+                          ) : (
+                            <Text style={[styles.luxePrimaryBtnText, { color: '#000000', fontWeight: '900' }]}>
+                              Verify & Launch Store (OTP) ➔
+                            </Text>
+                          )}
+                        </TouchableOpacity>
                       </View>
                     </View>
                   )}
-
-                  <View style={styles.luxeInputBox}>
-                    <View style={styles.luxeInputIconWrap}>
-                      <Text style={styles.luxeInputIcon}>
-                        {authSellerStoreType === 'pharmacy' ? '💊' : '🏪'}
-                      </Text>
-                    </View>
-                    <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>
-                        {authSellerStoreType === 'pharmacy' ? 'PHARMACY NAME' : 'STORE NAME'}
-                      </Text>
-                      <TextInput
-                        style={styles.luxeTextInput}
-                        placeholder={
-                          authSellerStoreType === 'pharmacy'
-                            ? 'e.g. Basit LifeCare Pharmacy'
-                            : 'e.g. Daily Fresh Organics'
-                        }
-                        placeholderTextColor="#A8A29E"
-                        value={authSignupBusinessName}
-                        onChangeText={setAuthSignupBusinessName}
-                      />
-                    </View>
-                  </View>
-
-                  <View style={styles.luxeInputBox}>
-                    <View style={styles.luxeInputIconWrap}>
-                      <Text style={styles.luxeInputIcon}>👤</Text>
-                    </View>
-                    <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>OWNER / MANAGER NAME</Text>
-                      <TextInput
-                        style={styles.luxeTextInput}
-                        placeholder="e.g. Chinedu Eze"
-                        placeholderTextColor="#A8A29E"
-                        value={authSignupFullName}
-                        onChangeText={setAuthSignupFullName}
-                      />
-                    </View>
-                  </View>
-
-                  <View style={styles.luxeInputBox}>
-                    <View style={styles.luxeInputIconWrap}>
-                      <Text style={styles.luxeInputIcon}>📱</Text>
-                    </View>
-                    <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>PHONE / WHATSAPP</Text>
-                      <TextInput
-                        style={styles.luxeTextInput}
-                        placeholder="e.g. 0803 555 7788"
-                        placeholderTextColor="#A8A29E"
-                        keyboardType="phone-pad"
-                        value={authSignupPhone}
-                        onChangeText={setAuthSignupPhone}
-                      />
-                    </View>
-                  </View>
-
-                  <View style={styles.luxeInputBox}>
-                    <View style={styles.luxeInputIconWrap}>
-                      <Text style={styles.luxeInputIcon}>✉️</Text>
-                    </View>
-                    <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>BUSINESS EMAIL (OPTIONAL)</Text>
-                      <TextInput
-                        style={styles.luxeTextInput}
-                        placeholder="e.g. store@example.com"
-                        placeholderTextColor="#A8A29E"
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        value={authSignupEmail}
-                        onChangeText={setAuthSignupEmail}
-                      />
-                    </View>
-                  </View>
-
-                  <View style={styles.luxeInputBox}>
-                    <View style={styles.luxeInputIconWrap}>
-                      <Text style={styles.luxeInputIcon}>🔒</Text>
-                    </View>
-                    <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>PASSWORD</Text>
-                      <TextInput
-                        style={styles.luxeTextInput}
-                        placeholder="Create vendor password"
-                        placeholderTextColor="#A8A29E"
-                        secureTextEntry={!showPassword}
-                        value={authSignupPassword}
-                        onChangeText={setAuthSignupPassword}
-                      />
-                    </View>
-                    <TouchableOpacity
-                      style={styles.luxeEyeToggleBtn}
-                      onPress={() => setShowPassword(!showPassword)}
-                    >
-                      <Text style={styles.luxeEyeToggleText}>
-                        {showPassword ? 'Hide' : 'Show'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.luxeOptionalToggle}
-                    onPress={() => setShowSignupOptional(!showSignupOptional)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.luxeOptionalToggleText}>
-                      {showSignupOptional ? '▲ Hide Location' : '+ Add Store Location (Optional)'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {showSignupOptional && (
-                    <View style={{ marginTop: 4 }}>
-                      <View style={styles.luxeInputBox}>
-                        <View style={styles.luxeInputIconWrap}>
-                          <Text style={styles.luxeInputIcon}>📍</Text>
-                        </View>
-                        <View style={styles.luxeInputContent}>
-                          <Text style={styles.luxeInputLabel}>STORE LOCATION (NIGERIA)</Text>
-                          <TextInput
-                            style={styles.luxeTextInput}
-                            placeholder="e.g. Wuse 2, Abuja / Victoria Island, Lagos"
-                            placeholderTextColor="#A8A29E"
-                            value={authSignupAddress}
-                            onChangeText={setAuthSignupAddress}
-                          />
-                        </View>
-                      </View>
-                    </View>
-                  )}
-
-                  <TouchableOpacity
-                    style={[styles.luxePrimaryBtn, { backgroundColor: COLORS.goldPrimary }]}
-                    onPress={handleAuthSellerSignUp}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={[styles.luxePrimaryBtnText, { color: '#000000', fontWeight: '800' }]}>
-                      Register Store ➔
-                    </Text>
-                  </TouchableOpacity>
                 </View>
               )
+            )}
+            </View>
             )}
           </Animated.View>
 
@@ -12249,6 +17083,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
           <View style={{ height: 40 }} />
         </ScrollView>
+        {renderRegistrationMapModal()}
       </SafeAreaView>
     );
   }
@@ -12485,7 +17320,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       <Text style={styles.rxDrugCardCategory}>
                         {drug.brand ? `${drug.brand} • ` : ''}{drug.category || 'Medication'} • {drug.dosage || 'Prescription formulation'}
                       </Text>
-                      <Text style={styles.rxDrugCardPrice}>{formatNaira(drug.price)}</Text>
+                      <Text style={styles.rxDrugCardPrice}>{formatNaira(getProductDisplayPrice(drug.price))}</Text>
                     </View>
                     <View
                       style={[
@@ -12790,11 +17625,11 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 <View style={styles.heroGlowCircle} />
                 <View style={{ flex: 1, zIndex: 1, paddingRight: 10 }}>
                   <View style={styles.heroTagPill}>
-                    <Text style={styles.heroTagText}>CURATED EXCELLENCE</Text>
+                    <Text style={styles.heroTagText}>3-LEVEL SPECIALIST MARKETPLACE</Text>
                   </View>
                   <Text style={styles.heroHeading}>Stores Around You</Text>
                   <Text style={styles.heroSubheading}>
-                    Hand-picked gourmet providores, organic farm produce & local artisans.
+                    Shop by exact product (e.g. Goat Meat, Catfish, Fresh Tomatoes) or browse by specialist store type.
                   </Text>
                 </View>
                 <View style={styles.heroLogoCard}>
@@ -12806,34 +17641,479 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 </View>
               </View>
 
-              {/* Category Filter Pills */}
-              <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionHeading}>Browse by Category</Text>
-                <Text style={styles.sectionRoseGoldCount}>{CATEGORIES.length} Categories</Text>
-              </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.categoryScroll}
-                contentContainerStyle={styles.categoryScrollContent}
+              {/* CUSTOMER DUAL SHOPPING EXPERIENCE SWITCHER: OPTION A (BY PRODUCT) vs OPTION B (BY STORE TYPE) */}
+              <View
+                style={{
+                  marginHorizontal: 16,
+                  marginTop: 12,
+                  marginBottom: 6,
+                  backgroundColor: '#E2E8F0',
+                  borderRadius: 14,
+                  padding: 4,
+                  flexDirection: 'row',
+                  gap: 6,
+                }}
               >
-                {CATEGORIES.map((cat) => {
-                  const isActive = activeCategory === cat.id;
-                  return (
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setCustomerBrowseMode('product');
+                  }}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 9,
+                    paddingHorizontal: 10,
+                    borderRadius: 11,
+                    backgroundColor: customerBrowseMode === 'product' ? '#064E3B' : 'transparent',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: '900',
+                      color: customerBrowseMode === 'product' ? '#FFFFFF' : '#334155',
+                    }}
+                  >
+                    🎯 Shop by Product
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 9.5,
+                      fontWeight: '700',
+                      color: customerBrowseMode === 'product' ? '#A7F3D0' : '#64748B',
+                      marginTop: 1,
+                    }}
+                  >
+                    Goat Meat, Fish, Veggies...
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setCustomerBrowseMode('store_type');
+                  }}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 9,
+                    paddingHorizontal: 10,
+                    borderRadius: 11,
+                    backgroundColor: customerBrowseMode === 'store_type' ? '#064E3B' : 'transparent',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: '900',
+                      color: customerBrowseMode === 'store_type' ? '#FFFFFF' : '#334155',
+                    }}
+                  >
+                    🏪 Shop by Store Type
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 9.5,
+                      fontWeight: '700',
+                      color: customerBrowseMode === 'store_type' ? '#A7F3D0' : '#64748B',
+                      marginTop: 1,
+                    }}
+                  >
+                    Supermarkets, Butchers...
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {customerBrowseMode === 'product' ? (
+                <>
+                  {/* OPTION A1: "WHAT ARE YOU SHOPPING FOR?" VISUAL QUICK PRODUCT SPOTLIGHTS */}
+                  <View style={[styles.sectionHeaderRow, { marginTop: 10 }]}>
+                    <View>
+                      <Text style={styles.sectionHeading}>What are you shopping for?</Text>
+                      <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 1 }}>
+                        Tap any item to jump straight to shops that stock & specialise in it
+                      </Text>
+                    </View>
+                    {(activeDepartmentId !== 'all' || activeSubcategoryId !== 'all' || activeVarietyId !== 'all') && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setActiveDepartmentId('all');
+                          setActiveSubcategoryId('all');
+                          setActiveVarietyId('all');
+                        }}
+                        style={{
+                          backgroundColor: '#FEF2F2',
+                          paddingHorizontal: 10,
+                          paddingVertical: 5,
+                          borderRadius: 999,
+                          borderWidth: 1,
+                          borderColor: '#FECACA',
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#DC2626' }}>Reset Filter ✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ paddingHorizontal: 16, gap: 10, paddingBottom: 6 }}
+                  >
+                    {(marketplaceTaxonomy?.productSpotlights || marketplaceTaxonomy?.spotlights || DEFAULT_PRODUCT_SPOTLIGHTS).map((spot) => {
+                      const targetDeptId =
+                        spot.id === 'spot-all-supermarkets' || spot.departmentId === 'all'
+                          ? 'grocery'
+                          : spot.departmentId;
+                      const targetSubId = spot.subcategoryId || 'all';
+                      const isSpotActive =
+                        customerBrowseMode === 'product' &&
+                        activeDepartmentId === targetDeptId &&
+                        (targetSubId === 'all' ? activeSubcategoryId === 'all' : activeSubcategoryId === targetSubId);
+                      return (
+                        <TouchableOpacity
+                          key={spot.id}
+                          activeOpacity={0.88}
+                          onPress={() => {
+                            setCustomerBrowseMode('product');
+                            setActiveStoreTypeFilter('all');
+                            if (isSpotActive) {
+                              setActiveDepartmentId('all');
+                              setActiveSubcategoryId('all');
+                              setActiveVarietyId('all');
+                            } else {
+                              setActiveDepartmentId(targetDeptId);
+                              setActiveSubcategoryId(targetSubId);
+                              setActiveVarietyId(spot.varietyId || 'all');
+                            }
+                          }}
+                          style={{
+                            width: 126,
+                            borderRadius: 14,
+                            backgroundColor: isSpotActive ? '#064E3B' : '#FFFFFF',
+                            borderWidth: isSpotActive ? 2 : 1,
+                            borderColor: isSpotActive ? '#D4AF37' : '#E2E8F0',
+                            overflow: 'hidden',
+                            shadowColor: '#000',
+                            shadowOffset: { width: 0, height: 2 },
+                            shadowOpacity: 0.06,
+                            shadowRadius: 4,
+                            elevation: 2,
+                          }}
+                        >
+                          <Image
+                            source={{ uri: spot.image }}
+                            style={{ width: '100%', height: 68, backgroundColor: '#F1F5F9' }}
+                            resizeMode="cover"
+                          />
+                          <View style={{ padding: 8 }}>
+                            <Text
+                              style={{
+                                fontSize: 12,
+                                fontWeight: '900',
+                                color: isSpotActive ? '#FFFFFF' : '#0F172A',
+                              }}
+                              numberOfLines={1}
+                            >
+                              {spot.icon} {spot.label}
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: 10,
+                                fontWeight: '600',
+                                color: isSpotActive ? '#A7F3D0' : '#64748B',
+                                marginTop: 1,
+                              }}
+                              numberOfLines={1}
+                            >
+                              {spot.tagline}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  {/* OPTION A2: LEVEL 1 — MAIN MARKETPLACE DEPARTMENTS */}
+                  <View style={[styles.sectionHeaderRow, { marginTop: 10 }]}>
+                    <Text style={styles.sectionHeading}>1. Main Marketplace Categories</Text>
+                    <Text style={styles.sectionRoseGoldCount}>
+                      {(marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS).filter(
+                        (d) => d.enabled !== false && d.showOnCustomerHome !== false
+                      ).length}{' '}
+                      Departments
+                    </Text>
+                  </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.categoryScroll}
+                    contentContainerStyle={styles.categoryScrollContent}
+                  >
                     <TouchableOpacity
-                      key={cat.id}
-                      style={[styles.categoryPill, isActive && styles.categoryPillActive]}
-                      onPress={() => setActiveCategory(cat.id)}
+                      style={[styles.categoryPill, activeDepartmentId === 'all' && styles.categoryPillActive]}
+                      onPress={() => {
+                        setActiveDepartmentId('all');
+                        setActiveSubcategoryId('all');
+                        setActiveVarietyId('all');
+                      }}
                       activeOpacity={0.8}
                     >
-                      <Text style={styles.categoryIcon}>{cat.icon}</Text>
-                      <Text style={[styles.categoryLabel, isActive && styles.categoryLabelActive]}>
-                        {cat.name}
+                      <Text style={styles.categoryIcon}>✨</Text>
+                      <Text style={[styles.categoryLabel, activeDepartmentId === 'all' && styles.categoryLabelActive]}>
+                        All Departments
                       </Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+
+                    {(marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS)
+                      .filter((dept) => dept.enabled !== false && dept.showOnCustomerHome !== false)
+                      .map((dept) => {
+                        const isActive = activeDepartmentId === dept.id;
+                        return (
+                          <TouchableOpacity
+                            key={dept.id}
+                            style={[styles.categoryPill, isActive && styles.categoryPillActive]}
+                            onPress={() => {
+                              if (dept.id === 'pharmacy') {
+                                setActiveVertical('pharmacy');
+                                return;
+                              }
+                              setActiveDepartmentId(dept.id);
+                              setActiveSubcategoryId('all');
+                              setActiveVarietyId('all');
+                            }}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.categoryIcon}>{dept.icon}</Text>
+                            <Text style={[styles.categoryLabel, isActive && styles.categoryLabelActive]}>
+                              {dept.name}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                  </ScrollView>
+
+                  {/* OPTION A3: LEVEL 2 SUBCATEGORIES & LEVEL 3 PRODUCT VARIETIES DRILL-DOWN */}
+                  {activeDepartmentId !== 'all' && (() => {
+                    const selectedDept = (marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS).find(
+                      (d) => d.id === activeDepartmentId
+                    );
+                    if (!selectedDept) return null;
+                    const enabledSubs = (selectedDept.subcategories || []).filter((s) => s.enabled !== false);
+                    const selectedSub = enabledSubs.find((s) => s.id === activeSubcategoryId);
+                    const enabledVarieties = selectedSub
+                      ? (selectedSub.varieties || []).filter((v) => v.enabled !== false)
+                      : [];
+
+                    return (
+                      <View
+                        style={{
+                          marginHorizontal: 16,
+                          marginTop: 6,
+                          marginBottom: 8,
+                          padding: 12,
+                          borderRadius: 16,
+                          backgroundColor: selectedDept.bgTint || '#F0FDF4',
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <Text style={{ fontSize: 12, fontWeight: '900', color: '#0F172A' }}>
+                            2. Select {selectedDept.name} Subcategory:
+                          </Text>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: selectedDept.accentColor || '#059669' }}>
+                            {enabledSubs.length} Specialisations
+                          </Text>
+                        </View>
+
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setActiveSubcategoryId('all');
+                              setActiveVarietyId('all');
+                            }}
+                            style={{
+                              paddingHorizontal: 12,
+                              paddingVertical: 7,
+                              borderRadius: 999,
+                              backgroundColor: activeSubcategoryId === 'all' ? '#064E3B' : '#FFFFFF',
+                              borderWidth: 1,
+                              borderColor: activeSubcategoryId === 'all' ? '#064E3B' : '#CBD5E1',
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 11.5,
+                                fontWeight: '800',
+                                color: activeSubcategoryId === 'all' ? '#FFFFFF' : '#334155',
+                              }}
+                            >
+                              All {selectedDept.name}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {enabledSubs.map((sub) => {
+                            const isSubActive = activeSubcategoryId === sub.id;
+                            return (
+                              <TouchableOpacity
+                                key={sub.id}
+                                onPress={() => {
+                                  setActiveSubcategoryId(sub.id);
+                                  setActiveVarietyId('all');
+                                }}
+                                style={{
+                                  paddingHorizontal: 12,
+                                  paddingVertical: 7,
+                                  borderRadius: 999,
+                                  backgroundColor: isSubActive ? '#064E3B' : '#FFFFFF',
+                                  borderWidth: 1,
+                                  borderColor: isSubActive ? '#064E3B' : '#CBD5E1',
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                }}
+                              >
+                                <Text style={{ fontSize: 13 }}>{sub.icon}</Text>
+                                <Text
+                                  style={{
+                                    fontSize: 11.5,
+                                    fontWeight: '800',
+                                    color: isSubActive ? '#FFFFFF' : '#1E293B',
+                                  }}
+                                >
+                                  {sub.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+
+                        {/* LEVEL 3: SPECIFIC PRODUCT VARIETIES / CUTS */}
+                        {selectedSub && enabledVarieties.length > 0 && (
+                          <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(15,23,42,0.08)' }}>
+                            <Text style={{ fontSize: 11, fontWeight: '900', color: '#334155', marginBottom: 6 }}>
+                              3. Specific {selectedSub.label} Cut / Variety:
+                            </Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                              <TouchableOpacity
+                                onPress={() => setActiveVarietyId('all')}
+                                style={{
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 5,
+                                  borderRadius: 8,
+                                  backgroundColor: activeVarietyId === 'all' ? '#D4AF37' : '#FFFFFF',
+                                  borderWidth: 1,
+                                  borderColor: activeVarietyId === 'all' ? '#B45309' : '#CBD5E1',
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: '800',
+                                    color: activeVarietyId === 'all' ? '#000000' : '#475569',
+                                  }}
+                                >
+                                  All {selectedSub.label}
+                                </Text>
+                              </TouchableOpacity>
+
+                              {enabledVarieties.map((v) => {
+                                const isVarActive = activeVarietyId === v.id;
+                                return (
+                                  <TouchableOpacity
+                                    key={v.id}
+                                    onPress={() => setActiveVarietyId(v.id)}
+                                    style={{
+                                      paddingHorizontal: 10,
+                                      paddingVertical: 5,
+                                      borderRadius: 8,
+                                      backgroundColor: isVarActive ? '#D4AF37' : '#FFFFFF',
+                                      borderWidth: 1,
+                                      borderColor: isVarActive ? '#B45309' : '#CBD5E1',
+                                    }}
+                                  >
+                                    <Text
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: '800',
+                                        color: isVarActive ? '#000000' : '#334155',
+                                      }}
+                                    >
+                                      {v.label}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </ScrollView>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })()}
+                </>
+              ) : (
+                /* OPTION B: SHOP BY STORE TYPE (SUPERMARKETS, PROVISION STORES, BUTCHERS, BAKERIES, ETC.) */
+                <View style={{ marginTop: 8, marginBottom: 4 }}>
+                  <View style={styles.sectionHeaderRow}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={styles.sectionHeading}>Browse by Store Type</Text>
+                      <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 1 }}>
+                        Find specialist Butchers, Supermarkets, Vegetable Vendors, Fish Markets & Bakeries
+                      </Text>
+                    </View>
+                    {activeStoreTypeFilter !== 'all' && (
+                      <TouchableOpacity
+                        onPress={() => setActiveStoreTypeFilter('all')}
+                        style={{
+                          backgroundColor: '#FEF2F2',
+                          paddingHorizontal: 10,
+                          paddingVertical: 5,
+                          borderRadius: 999,
+                          borderWidth: 1,
+                          borderColor: '#FECACA',
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#DC2626' }}>Show All ✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.categoryScroll}
+                    contentContainerStyle={styles.categoryScrollContent}
+                  >
+                    {(marketplaceTaxonomy?.storeTypes || DEFAULT_STORE_TYPES)
+                      .filter((st) => st.enabled !== false)
+                      .map((st) => {
+                        const isActive = activeStoreTypeFilter === st.id;
+                        return (
+                          <TouchableOpacity
+                            key={st.id}
+                            style={[styles.categoryPill, isActive && styles.categoryPillActive]}
+                            onPress={() => {
+                              if (st.id === 'pharmacy') {
+                                setActiveVertical('pharmacy');
+                                return;
+                              }
+                              setActiveStoreTypeFilter(isActive && st.id !== 'all' ? 'all' : st.id);
+                            }}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.categoryIcon}>{st.icon}</Text>
+                            <Text style={[styles.categoryLabel, isActive && styles.categoryLabelActive]}>
+                              {st.label || st.pluralName || st.name}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                  </ScrollView>
+                </View>
+              )}
             </>
           )}
 
@@ -12842,7 +18122,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
             <View>
               <Text style={styles.sectionHeading}>Available Stores Near You</Text>
               <Text style={styles.sectionSubheading}>
-                Within {selectedLocation.split(',')[0]}
+                Within {(selectedLocation || 'Abuja').split(',')[0]}
               </Text>
             </View>
 
@@ -12916,7 +18196,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       <View style={[styles.customStoreMarkerPill, isSelected && styles.customStoreMarkerPillActive]}>
                         <Text style={{ fontSize: 13, marginRight: 4 }}>🏪</Text>
                         <Text style={[styles.customStoreMarkerText, isSelected && styles.customStoreMarkerTextActive]} numberOfLines={1}>
-                          {store.name.split(' ')[0]} • {store.distance}
+                          {(store?.name || 'Store').split(' ')[0]} • {store.distance}
                         </Text>
                       </View>
                     </Marker>
@@ -12927,7 +18207,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
               {/* Top Map Helper Banner */}
               <View style={styles.buyerMapBanner}>
                 <Text style={styles.buyerMapBannerText}>
-                  📍 Showing {filteredStores.length} verified stores near {selectedLocation.split(',')[0]}
+                  📍 Showing {filteredStores.length} verified stores near {(selectedLocation || 'Abuja').split(',')[0]}
                 </Text>
               </View>
 
@@ -13016,98 +18296,56 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   onPress={() => openStoreModal(store)}
                   activeOpacity={0.92}
                 >
-                  {/* Store Image with Overlays */}
+                  {/* Store Image — Clean, Full Bleed Picture Only (No Overlays or Writings on Picture) */}
                   <View style={styles.storeImageContainer}>
-                    {/* Instant Placeholder Backdrop (Visible immediately while image loads) */}
-                    <View style={styles.storeImagePlaceholderBackdrop}>
-                      <Text style={{ fontSize: 44, opacity: 0.32 }}>
-                        {store.storeType === 'pharmacy' ? '💊' : (store.category === 'bakery' ? '🥐' : (store.category === 'cellar' ? '🍷' : (store.category === 'organic' ? '🌿' : '🛒')))}
-                      </Text>
-                      <Text style={styles.storeImagePlaceholderCategory}>
-                        {store.categoryLabel || store.name}
-                      </Text>
-                    </View>
                     <Image
                       source={{
-                        uri: optimizeImageUrl(store.image, 500, 65),
-                        cache: 'force-cache',
+                        uri: optimizeImageUrl(store.image, 800, 80),
                       }}
                       style={styles.storeImage}
                       resizeMode="cover"
                     />
-                    {/* Subtle Top Gradient Veil */}
-                    <View style={styles.imageOverlayShadow} />
-
-                    {/* Closed Storefront Door Facade on Card */}
-                    {!isStoreOpen && (
-                      <View style={styles.storeClosedDoorCardOverlay}>
-                        <View style={styles.cardClosedDoorPanelLeft} />
-                        <View style={styles.cardClosedDoorPanelRight} />
-                        <View style={styles.cardClosedLockBadge}>
-                          <Text style={{ fontSize: 12 }}>🔒</Text>
-                          <Text style={styles.cardClosedLockBadgeText}>DOORS CLOSED</Text>
-                        </View>
-                        <View style={styles.cardClosedSignBoard}>
-                          <Text style={styles.cardClosedSignBoardText}>
-                            ⛔ CLOSED • {store.operatingDays || 'BROWSING ONLY'}
-                          </Text>
-                        </View>
-                      </View>
-                    )}
-
-                    {/* Left Floating Tag */}
-                    <View
-                      style={[
-                        styles.storeBadgeFloating,
-                        { backgroundColor: !isStoreOpen ? '#6B7280' : store.badgeColor || COLORS.emeraldPrimary },
-                      ]}
-                    >
-                      <Text style={styles.storeBadgeText}>{!isStoreOpen ? 'CLOSED' : store.tag}</Text>
-                    </View>
-
-                    {/* Right Favorite Heart */}
-                    <TouchableOpacity
-                      style={styles.favoriteButton}
-                      onPress={() => toggleFavorite(store.id)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={{ fontSize: 16 }}>{isFav ? '❤️' : '🤍'}</Text>
-                    </TouchableOpacity>
-
-                    {/* Bottom Overlay Info Pill */}
-                    <View style={styles.storeImageBottomBar}>
-                      <View style={styles.chipRow}>
-                        <View style={styles.infoGlassChip}>
-                          <Text style={styles.infoGlassChipText}>⏱ {store.deliveryTime}</Text>
-                        </View>
-                        <View style={[styles.infoGlassChip, { marginLeft: 6 }]}>
-                          <Text style={styles.infoGlassChipText}>📍 {store.distance}</Text>
-                        </View>
-                      </View>
-                      <View style={styles.ratingChip}>
-                        <Text style={styles.ratingStar}>★</Text>
-                        <Text style={styles.ratingScore}>{store.rating}</Text>
-                        <Text style={styles.reviewCount}>({store.reviewCount})</Text>
-                      </View>
-                    </View>
                   </View>
 
-                  {/* Store Details Section Below Box */}
+                  {/* Store Details Section Below Picture (All Writings & Actions Below Image) */}
                   <View style={styles.storeDetailsContainer}>
-                    {/* Line 1: Shop Name */}
-                    <Text style={styles.storeTitle} numberOfLines={1} ellipsizeMode="tail">
-                      {store.name}
-                    </Text>
-
-                    {/* Line 2: Category & Provisions Prefix (Always visible, never clipped) */}
-                    <View style={styles.storeCategoryRow}>
-                      <Text style={styles.storeCategoryTag} numberOfLines={1} ellipsizeMode="tail">
-                        🏷️ {store.categoryLabel || 'Gourmet & Provisions'}
+                    {/* Line 1: Shop Name on Left + Rating & Favorite Button on Right */}
+                    <View style={styles.storeHeaderRowBelowImage}>
+                      <Text style={[styles.storeTitle, { flex: 1, marginBottom: 0, marginRight: 8 }]} numberOfLines={1} ellipsizeMode="tail">
+                        {store.name}
                       </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <View style={styles.ratingChip}>
+                          <Text style={styles.ratingStar}>★</Text>
+                          <Text style={styles.ratingScore}>{store.rating}</Text>
+                          <Text style={styles.reviewCount}>({store.reviewCount})</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.favoriteButtonInline}
+                          onPress={() => toggleFavorite(store.id)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 15 }}>{isFav ? '❤️' : '🤍'}</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
 
-                    {/* Line 3: Operating Hours / Live Timing Badge */}
-                    <View style={styles.storeTimingRow}>
+                    {/* Line 2: Merchant Tag Badge + Operating Hours / Live Timing Badge */}
+                    <View style={[styles.storeTimingRow, { flexWrap: 'wrap', gap: 6, marginTop: 8 }]}>
+                      <View
+                        style={[
+                          styles.storeBadgeInline,
+                          {
+                            backgroundColor: !isStoreOpen
+                              ? '#6B7280'
+                              : (store.taxonomyProfile?.badgeColor || store.badgeColor || COLORS.emeraldPrimary),
+                          },
+                        ]}
+                      >
+                        <Text style={styles.storeBadgeText}>
+                          {!isStoreOpen ? 'CLOSED' : (store.taxonomyProfile?.badgeLabel || store.tag || 'VERIFIED MERCHANT')}
+                        </Text>
+                      </View>
                       {(() => {
                         const badge = getStoreTimingBadge(store);
                         return (
@@ -13121,10 +18359,131 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       })()}
                     </View>
 
+                    {/* Line 3: Category, Delivery Time & Distance */}
+                    <View style={[styles.storeCategoryRow, { flexWrap: 'wrap', gap: 8 }]}>
+                      <Text style={styles.storeCategoryTag} numberOfLines={1} ellipsizeMode="tail">
+                        🏷️ {store.taxonomyProfile?.storeTypeLabel || store.categoryLabel || 'Gourmet & Provisions'}
+                      </Text>
+                      <Text style={styles.deliveryDot}>•</Text>
+                      <Text style={{ fontSize: 11.5, fontWeight: '700', color: COLORS.textDark }}>
+                        ⏱ {store.deliveryTime || '15-25 min'}
+                      </Text>
+                      <Text style={styles.deliveryDot}>•</Text>
+                      <Text style={{ fontSize: 11.5, fontWeight: '700', color: COLORS.textMuted }}>
+                        📍 {store.distance || '0.8 km'}
+                      </Text>
+                    </View>
+
+                    {/* Line 3B: Store Specialisation Chips (Subcategories & Multi-Department Tags) */}
+                    {store.taxonomyProfile && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6, marginBottom: 4 }}>
+                        {(() => {
+                          const allDepts = marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS;
+                          const subIds = store.taxonomyProfile.specialisationSubcategories || [];
+                          const allowedDeptIds = new Set(
+                            store.taxonomyProfile.allDepartmentIds?.length
+                              ? store.taxonomyProfile.allDepartmentIds
+                              : [store.taxonomyProfile.primaryDepartmentId || 'grocery']
+                          );
+                          const resolvedSubs = [];
+                          for (const d of allDepts) {
+                            if (!allowedDeptIds.has(d.id)) continue;
+                            for (const s of d.subcategories || []) {
+                              if (subIds.includes(s.id)) {
+                                resolvedSubs.push(s);
+                              }
+                            }
+                          }
+                          return resolvedSubs.slice(0, 4).map((subObj) => {
+                            const isHighlighted = activeSubcategoryId === subObj.id;
+                            return (
+                              <View
+                                key={`${store.id}-spec-${subObj.id}`}
+                                style={{
+                                  paddingHorizontal: 8,
+                                  paddingVertical: 3,
+                                  borderRadius: 999,
+                                  backgroundColor: isHighlighted ? '#064E3B' : '#F0FDF4',
+                                  borderWidth: 1,
+                                  borderColor: isHighlighted ? '#064E3B' : '#BBF7D0',
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    fontSize: 10.5,
+                                    fontWeight: '800',
+                                    color: isHighlighted ? '#FFFFFF' : '#065F46',
+                                  }}
+                                >
+                                  {subObj.icon} {subObj.label}
+                                </Text>
+                              </View>
+                            );
+                          });
+                        })()}
+                      </View>
+                    )}
+
                     {/* Line 4: Store Provisions Description */}
                     <Text style={styles.storeDescription} numberOfLines={2} ellipsizeMode="tail">
                       {store.description}
                     </Text>
+
+                    {/* Line 4B: Matching In-Stock Products Preview Strip (When Filtering by Specific Product/Subcategory) */}
+                    {(activeDepartmentId !== 'all' ||
+                      activeSubcategoryId !== 'all' ||
+                      activeVarietyId !== 'all' ||
+                      Boolean(searchQuery?.trim())) &&
+                      Array.isArray(store.matchingTaxonomyProducts) &&
+                      store.matchingTaxonomyProducts.length > 0 && (
+                        <View
+                          style={{
+                            marginTop: 8,
+                            marginBottom: 6,
+                            padding: 10,
+                            borderRadius: 12,
+                            backgroundColor: '#F8FAFC',
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                          }}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <Text style={{ fontSize: 10.5, fontWeight: '900', color: '#064E3B', letterSpacing: 0.3 }}>
+                              ✓ IN STOCK AT THIS SHOP ({store.matchingTaxonomyProducts.length} MATCHING ITEMS)
+                            </Text>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#059669' }}>Tap to shop ➔</Text>
+                          </View>
+                          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                            {store.matchingTaxonomyProducts.slice(0, 5).map((mp) => (
+                              <TouchableOpacity
+                                key={`${store.id}-match-${mp.id}`}
+                                onPress={() => openStoreModal(store)}
+                                style={{
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 6,
+                                  borderRadius: 10,
+                                  backgroundColor: '#FFFFFF',
+                                  borderWidth: 1,
+                                  borderColor: '#E2E8F0',
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                }}
+                              >
+                                <Text style={{ fontSize: 14 }}>{mp.icon || '🥩'}</Text>
+                                <View>
+                                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#0F172A' }} numberOfLines={1}>
+                                    {mp.name}
+                                  </Text>
+                                  <Text style={{ fontSize: 10.5, fontWeight: '900', color: '#059669' }}>
+                                    {formatNaira(getProductDisplayPrice(mp.price))}
+                                  </Text>
+                                </View>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        </View>
+                      )}
 
                     {/* Line 5: Delivery & Proximity Info Row */}
                     <View style={styles.storeDeliveryRow}>
@@ -13135,7 +18494,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       </Text>
                     </View>
 
-                    {/* Line 6: Full-Width Scalable Explore Store Button (Never disappears on mobile) */}
+                    {/* Line 6: Full-Width Scalable Explore Store Button */}
                     <TouchableOpacity
                       style={[
                         styles.viewStoreFullBtn,
@@ -13414,124 +18773,146 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           </TouchableOpacity>
                         ) : (
                           ord.isMultiStore && Array.isArray(ord.stops) && ord.stops.length > 1 ? (
-                            <View style={{ gap: 6, width: '100%' }}>
-                              <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#64748B' }}>
-                                MULTI-STORE • MESSAGE SHOPS INDEPENDENTLY:
-                              </Text>
-                              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                                {ord.stops.map((stop, sIdx) => {
-                                  const sUnread = (ord.messages || []).filter(
-                                    (m) =>
-                                      (!m.storeId || String(m.storeId) === String(stop.storeId)) &&
-                                      m.senderRole !== 'buyer' &&
-                                      !m.readByBuyer
-                                  ).length;
-                                  return (
+                            (() => {
+                              const enabledStops = ord.stops.filter((stop) => isStoreMessagingEnabled(stop));
+                              if (enabledStops.length === 0 && !ord.boltRider) return null;
+
+                              return (
+                                <View style={{ gap: 6, width: '100%' }}>
+                                  {enabledStops.length > 0 && (
+                                    <>
+                                      <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#64748B' }}>
+                                        MULTI-STORE • MESSAGE SHOPS:
+                                      </Text>
+                                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                        {enabledStops.map((stop, sIdx) => {
+                                          const sUnread = (ord.messages || []).filter(
+                                            (m) =>
+                                              (!m.storeId || String(m.storeId) === String(stop.storeId)) &&
+                                              m.senderRole !== 'buyer' &&
+                                              !m.readByBuyer
+                                          ).length;
+                                          return (
+                                            <TouchableOpacity
+                                              key={stop.storeId || sIdx}
+                                              style={{
+                                                flexDirection: 'row',
+                                                alignItems: 'center',
+                                                gap: 5,
+                                                backgroundColor: sUnread > 0 ? '#DC2626' : '#ECFDF5',
+                                                borderWidth: 1,
+                                                borderColor: sUnread > 0 ? '#DC2626' : '#A7F3D0',
+                                                paddingVertical: 7,
+                                                paddingHorizontal: 10,
+                                                borderRadius: 8,
+                                              }}
+                                              onPress={() => openChatModal(ord, 'merchant', stop)}
+                                              activeOpacity={0.8}
+                                            >
+                                              <Text style={{ fontSize: 12 }}>{stop.storeType === 'pharmacy' ? '🩺' : '🏪'}</Text>
+                                              <Text
+                                                style={{
+                                                  fontSize: 11.5,
+                                                  fontWeight: '800',
+                                                  color: sUnread > 0 ? '#FFFFFF' : '#065F46',
+                                                }}
+                                                numberOfLines={1}
+                                              >
+                                                {`Chat: ${stop.storeName}`}
+                                                {sUnread > 0 ? ` (${sUnread})` : ''}
+                                              </Text>
+                                            </TouchableOpacity>
+                                          );
+                                        })}
+                                      </View>
+                                    </>
+                                  )}
+                                  {ord.boltRider && (
                                     <TouchableOpacity
-                                      key={stop.storeId || sIdx}
                                       style={{
                                         flexDirection: 'row',
                                         alignItems: 'center',
-                                        gap: 5,
-                                        backgroundColor: sUnread > 0 ? '#DC2626' : '#ECFDF5',
+                                        justifyContent: 'center',
+                                        gap: 6,
+                                        backgroundColor: '#F0FDF4',
                                         borderWidth: 1,
-                                        borderColor: sUnread > 0 ? '#DC2626' : '#A7F3D0',
+                                        borderColor: '#BBF7D0',
                                         paddingVertical: 7,
-                                        paddingHorizontal: 10,
+                                        paddingHorizontal: 12,
                                         borderRadius: 8,
+                                        marginTop: 2,
                                       }}
-                                      onPress={() => openChatModal(ord, 'merchant', stop)}
+                                      onPress={() => openChatModal(ord, 'courier')}
                                       activeOpacity={0.8}
                                     >
-                                      <Text style={{ fontSize: 12 }}>{stop.storeType === 'pharmacy' ? '🩺' : '🏪'}</Text>
-                                      <Text
-                                        style={{
-                                          fontSize: 11.5,
-                                          fontWeight: '800',
-                                          color: sUnread > 0 ? '#FFFFFF' : '#065F46',
-                                        }}
-                                        numberOfLines={1}
-                                      >
-                                        Chat: {stop.storeName}
-                                        {sUnread > 0 ? ` (${sUnread})` : ''}
+                                      <Text style={{ fontSize: 13 }}>🛵</Text>
+                                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
+                                        Message Courier Musa
                                       </Text>
                                     </TouchableOpacity>
-                                  );
-                                })}
-                              </View>
-                              {ord.boltRider && (
-                                <TouchableOpacity
-                                  style={{
-                                    flexDirection: 'row',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: 6,
-                                    backgroundColor: '#F0FDF4',
-                                    borderWidth: 1,
-                                    borderColor: '#BBF7D0',
-                                    paddingVertical: 7,
-                                    paddingHorizontal: 12,
-                                    borderRadius: 8,
-                                    marginTop: 2,
-                                  }}
-                                  onPress={() => openChatModal(ord, 'courier')}
-                                  activeOpacity={0.8}
-                                >
-                                  <Text style={{ fontSize: 13 }}>🛵</Text>
-                                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
-                                    Message Courier Musa
-                                  </Text>
-                                </TouchableOpacity>
-                              )}
-                            </View>
+                                  )}
+                                </View>
+                              );
+                            })()
                           ) : (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                              <TouchableOpacity
-                                style={{
-                                  flex: 1,
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: 6,
-                                  backgroundColor: buyerUnread > 0 ? '#DC2626' : '#056B4B',
-                                  paddingVertical: 8,
-                                  paddingHorizontal: 12,
-                                  borderRadius: 8,
-                                }}
-                                onPress={() => openChatModal(ord, 'merchant')}
-                                activeOpacity={0.8}
-                              >
-                                <Text style={{ fontSize: 13 }}>💬</Text>
-                                <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' }}>
-                                  Message Seller{buyerUnread > 0 ? ` (${buyerUnread} New)` : ''}
-                                </Text>
-                              </TouchableOpacity>
+                            (() => {
+                              const isSellerChatOn = isStoreMessagingEnabled(ord);
+                              const hasCourier = Boolean(ord.boltRider);
 
-                              {ord.boltRider && (
-                                <TouchableOpacity
-                                  style={{
-                                    flex: 1,
-                                    flexDirection: 'row',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: 6,
-                                    backgroundColor: '#F0FDF4',
-                                    borderWidth: 1,
-                                    borderColor: '#BBF7D0',
-                                    paddingVertical: 8,
-                                    paddingHorizontal: 12,
-                                    borderRadius: 8,
-                                  }}
-                                  onPress={() => openChatModal(ord, 'courier')}
-                                  activeOpacity={0.8}
-                                >
-                                  <Text style={{ fontSize: 13 }}>🛵</Text>
-                                  <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#065F46' }}>
-                                    Message Courier
-                                  </Text>
-                                </TouchableOpacity>
-                              )}
-                            </View>
+                              if (!isSellerChatOn && !hasCourier) return null;
+
+                              return (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                  {isSellerChatOn && (
+                                    <TouchableOpacity
+                                      style={{
+                                        flex: 1,
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 6,
+                                        backgroundColor: buyerUnread > 0 ? '#DC2626' : '#056B4B',
+                                        paddingVertical: 8,
+                                        paddingHorizontal: 12,
+                                        borderRadius: 8,
+                                      }}
+                                      onPress={() => openChatModal(ord, 'merchant')}
+                                      activeOpacity={0.8}
+                                    >
+                                      <Text style={{ fontSize: 13 }}>💬</Text>
+                                      <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' }}>
+                                        {`Message Seller${buyerUnread > 0 ? ` (${buyerUnread} New)` : ''}`}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  )}
+
+                                  {hasCourier && (
+                                    <TouchableOpacity
+                                      style={{
+                                        flex: 1,
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 6,
+                                        backgroundColor: '#F0FDF4',
+                                        borderWidth: 1,
+                                        borderColor: '#BBF7D0',
+                                        paddingVertical: 8,
+                                        paddingHorizontal: 12,
+                                        borderRadius: 8,
+                                      }}
+                                      onPress={() => openChatModal(ord, 'courier')}
+                                      activeOpacity={0.8}
+                                    >
+                                      <Text style={{ fontSize: 13 }}>🛵</Text>
+                                      <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#065F46' }}>
+                                        Message Courier
+                                      </Text>
+                                    </TouchableOpacity>
+                                  )}
+                                </View>
+                              );
+                            })()
                           )
                         )}
 
@@ -13590,150 +18971,172 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     <View style={styles.orderExpandedBodyWrap}>
                       {/* Direct Concierge & Courier Live Chat Buttons */}
                       {ord.isMultiStore && Array.isArray(ord.stops) && ord.stops.length > 1 ? (
-                        <View style={{ gap: 6, marginBottom: 12 }}>
-                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B' }}>
-                            MULTI-STORE • MESSAGE SHOPS INDEPENDENTLY:
-                          </Text>
-                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                            {ord.stops.map((stop, sIdx) => {
-                              const sUnread = (ord.messages || []).filter(
-                                (m) =>
-                                  (!m.storeId || String(m.storeId) === String(stop.storeId)) &&
-                                  m.senderRole !== 'buyer' &&
-                                  !m.readByBuyer
-                              ).length;
-                              return (
+                        (() => {
+                          const enabledStops = ord.stops.filter((stop) => isStoreMessagingEnabled(stop));
+                          if (enabledStops.length === 0 && !ord.boltRider) return null;
+
+                          return (
+                            <View style={{ gap: 6, marginBottom: 12 }}>
+                              {enabledStops.length > 0 && (
+                                <>
+                                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B' }}>
+                                    MULTI-STORE • MESSAGE SHOPS:
+                                  </Text>
+                                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                    {enabledStops.map((stop, sIdx) => {
+                                      const sUnread = (ord.messages || []).filter(
+                                        (m) =>
+                                          (!m.storeId || String(m.storeId) === String(stop.storeId)) &&
+                                          m.senderRole !== 'buyer' &&
+                                          !m.readByBuyer
+                                      ).length;
+                                      return (
+                                        <TouchableOpacity
+                                          key={stop.storeId || sIdx}
+                                          style={{
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            gap: 5,
+                                            backgroundColor: sUnread > 0 ? '#DC2626' : '#ECFDF5',
+                                            borderWidth: 1,
+                                            borderColor: sUnread > 0 ? '#DC2626' : '#A7F3D0',
+                                            paddingVertical: 7,
+                                            paddingHorizontal: 10,
+                                            borderRadius: 8,
+                                          }}
+                                          onPress={() => openChatModal(ord, 'merchant', stop)}
+                                          activeOpacity={0.8}
+                                        >
+                                          <Text style={{ fontSize: 12 }}>{stop.storeType === 'pharmacy' ? '🩺' : '🏪'}</Text>
+                                          <Text
+                                            style={{
+                                              fontSize: 11.5,
+                                              fontWeight: '800',
+                                              color: sUnread > 0 ? '#FFFFFF' : '#065F46',
+                                            }}
+                                            numberOfLines={1}
+                                          >
+                                            {`Chat: ${stop.storeName}`}
+                                            {sUnread > 0 ? ` (${sUnread})` : ''}
+                                          </Text>
+                                        </TouchableOpacity>
+                                      );
+                                    })}
+                                  </View>
+                                </>
+                              )}
+                              {ord.boltRider && (
                                 <TouchableOpacity
-                                  key={stop.storeId || sIdx}
                                   style={{
                                     flexDirection: 'row',
                                     alignItems: 'center',
-                                    gap: 5,
-                                    backgroundColor: sUnread > 0 ? '#DC2626' : '#ECFDF5',
+                                    justifyContent: 'center',
+                                    gap: 6,
+                                    backgroundColor: '#F0FDF4',
                                     borderWidth: 1,
-                                    borderColor: sUnread > 0 ? '#DC2626' : '#A7F3D0',
-                                    paddingVertical: 7,
-                                    paddingHorizontal: 10,
+                                    borderColor: '#BBF7D0',
+                                    paddingVertical: 8,
+                                    paddingHorizontal: 12,
                                     borderRadius: 8,
+                                    marginTop: 2,
                                   }}
-                                  onPress={() => openChatModal(ord, 'merchant', stop)}
+                                  onPress={() => openChatModal(ord, 'courier')}
                                   activeOpacity={0.8}
                                 >
-                                  <Text style={{ fontSize: 12 }}>{stop.storeType === 'pharmacy' ? '🩺' : '🏪'}</Text>
-                                  <Text
-                                    style={{
-                                      fontSize: 11.5,
-                                      fontWeight: '800',
-                                      color: sUnread > 0 ? '#FFFFFF' : '#065F46',
-                                    }}
-                                    numberOfLines={1}
-                                  >
-                                    Chat: {stop.storeName}
-                                    {sUnread > 0 ? ` (${sUnread})` : ''}
+                                  <Text style={{ fontSize: 13 }}>🛵</Text>
+                                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
+                                    Message Courier Musa
                                   </Text>
                                 </TouchableOpacity>
-                              );
-                            })}
-                          </View>
-                          {ord.boltRider && (
-                            <TouchableOpacity
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 6,
-                                backgroundColor: '#F0FDF4',
-                                borderWidth: 1,
-                                borderColor: '#BBF7D0',
-                                paddingVertical: 8,
-                                paddingHorizontal: 12,
-                                borderRadius: 8,
-                                marginTop: 2,
-                              }}
-                              onPress={() => openChatModal(ord, 'courier')}
-                              activeOpacity={0.8}
-                            >
-                              <Text style={{ fontSize: 13 }}>🛵</Text>
-                              <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
-                                Message Courier Musa
-                              </Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
+                              )}
+                            </View>
+                          );
+                        })()
                       ) : (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                          <TouchableOpacity
-                            style={{
-                              flex: 1,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 6,
-                              backgroundColor: '#ECFDF5',
-                              paddingVertical: 9,
-                              paddingHorizontal: 12,
-                              borderRadius: 10,
-                              borderWidth: 1,
-                              borderColor: '#A7F3D0',
-                            }}
-                            onPress={() => openChatModal(ord, 'merchant')}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={{ fontSize: 13 }}>💬</Text>
-                            <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
-                              Chat with Store
-                            </Text>
-                            {(() => {
-                              const storeUnread = (ord.messages || []).filter(
-                                (m) => m.senderRole !== 'buyer' && m.senderRole !== 'courier' && !m.readByBuyer
-                              ).length;
-                              return storeUnread > 0 ? (
-                                <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
-                                  <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
-                                    {storeUnread}
-                                  </Text>
-                                </View>
-                              ) : null;
-                            })()}
-                          </TouchableOpacity>
+                        (() => {
+                          const isSellerChatOn = isStoreMessagingEnabled(ord);
+                          const hasCourier = Boolean(ord.boltRider);
 
-                          {ord.boltRider && (
-                            <TouchableOpacity
-                              style={{
-                                flex: 1,
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 6,
-                                backgroundColor: '#F0FDF4',
-                                paddingVertical: 9,
-                                paddingHorizontal: 12,
-                                borderRadius: 10,
-                                borderWidth: 1,
-                                borderColor: '#BBF7D0',
-                              }}
-                              onPress={() => openChatModal(ord, 'courier')}
-                              activeOpacity={0.8}
-                            >
-                              <Text style={{ fontSize: 13 }}>🛵</Text>
-                              <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
-                                Chat with Musa
-                              </Text>
-                              {(() => {
-                                const courierUnread = (ord.messages || []).filter(
-                                  (m) => m.senderRole === 'courier' && !m.readByBuyer
-                                ).length;
-                                return courierUnread > 0 ? (
-                                  <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
-                                    <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
-                                      {courierUnread}
-                                    </Text>
-                                  </View>
-                                ) : null;
-                              })()}
-                            </TouchableOpacity>
-                          )}
-                        </View>
+                          if (!isSellerChatOn && !hasCourier) return null;
+
+                          return (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                              {isSellerChatOn && (
+                                <TouchableOpacity
+                                  style={{
+                                    flex: 1,
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 6,
+                                    backgroundColor: '#ECFDF5',
+                                    paddingVertical: 9,
+                                    paddingHorizontal: 12,
+                                    borderRadius: 10,
+                                    borderWidth: 1,
+                                    borderColor: '#A7F3D0',
+                                  }}
+                                  onPress={() => openChatModal(ord, 'merchant')}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={{ fontSize: 13 }}>💬</Text>
+                                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
+                                    Chat with Store
+                                  </Text>
+                                  {(() => {
+                                    const storeUnread = (ord.messages || []).filter(
+                                      (m) => m.senderRole !== 'buyer' && m.senderRole !== 'courier' && !m.readByBuyer
+                                    ).length;
+                                    return storeUnread > 0 ? (
+                                      <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                                        <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                                          {storeUnread}
+                                        </Text>
+                                      </View>
+                                    ) : null;
+                                  })()}
+                                </TouchableOpacity>
+                              )}
+
+                              {hasCourier && (
+                                <TouchableOpacity
+                                  style={{
+                                    flex: 1,
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 6,
+                                    backgroundColor: '#F0FDF4',
+                                    paddingVertical: 9,
+                                    paddingHorizontal: 12,
+                                    borderRadius: 10,
+                                    borderWidth: 1,
+                                    borderColor: '#BBF7D0',
+                                  }}
+                                  onPress={() => openChatModal(ord, 'courier')}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={{ fontSize: 13 }}>🛵</Text>
+                                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>
+                                    Chat with Musa
+                                  </Text>
+                                  {(() => {
+                                    const courierUnread = (ord.messages || []).filter(
+                                      (m) => m.senderRole === 'courier' && !m.readByBuyer
+                                    ).length;
+                                    return courierUnread > 0 ? (
+                                      <View style={{ backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                                        <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>
+                                          {courierUnread}
+                                        </Text>
+                                      </View>
+                                    ) : null;
+                                  })()}
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          );
+                        })()
                       )}
 
                       {/* Clean 1-Line Live Courier Progress (for multi-stop journeys) */}
@@ -13767,148 +19170,179 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                 PICKUP & DELIVERY SEQUENCE ({ord.stops.length} HUBS)
                               </Text>
 
-                              {ord.stops.map((stop, sIdx) => {
-                                const isCurrentStop = ord.currentStopIndex === sIdx;
-                                const isCompleted = stop.pickupStatus === 'picked_up' || (ord.currentStopIndex || 0) > sIdx;
+                              {(() => {
+                                const firstUnpickedIdx = ord.stops.findIndex(
+                                  (s) => s.pickupStatus !== 'picked_up' && s.status !== 'Completed'
+                                );
+                                const allStopsPickedUp = firstUnpickedIdx === -1;
+                                const effectiveStopIdx =
+                                  ord.status === 'Delivered'
+                                    ? ord.stops.length
+                                    : allStopsPickedUp
+                                      ? ord.stops.length
+                                      : firstUnpickedIdx;
 
                                 return (
-                                  <View
-                                    key={sIdx}
-                                    style={[
-                                      styles.stopTimelineCard,
-                                      isCurrentStop && styles.stopTimelineCardActive,
-                                    ]}
-                                  >
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
+                                  <>
+                                    {ord.stops.map((stop, sIdx) => {
+                                      const isCompleted =
+                                        stop.pickupStatus === 'picked_up' ||
+                                        stop.status === 'Completed' ||
+                                        ord.status === 'Delivered';
+                                      const isCurrentStop =
+                                        !isCompleted &&
+                                        ord.status === 'On the Way' &&
+                                        effectiveStopIdx === sIdx;
+
+                                      return (
                                         <View
+                                          key={sIdx}
                                           style={[
-                                            styles.stopTimelineIcon,
-                                            isCompleted
-                                              ? styles.stopTimelineIconDone
-                                              : isCurrentStop
-                                                ? styles.stopTimelineIconCurrent
-                                                : styles.stopTimelineIconQueued,
+                                            styles.stopTimelineCard,
+                                            isCurrentStop && styles.stopTimelineCardActive,
                                           ]}
                                         >
-                                          <Text style={{ fontSize: 10, fontWeight: '900', color: '#FFFFFF' }}>
-                                            {isCompleted ? '✓' : stop.stopNumber}
-                                          </Text>
+                                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
+                                              <View
+                                                style={[
+                                                  styles.stopTimelineIcon,
+                                                  isCompleted
+                                                    ? styles.stopTimelineIconDone
+                                                    : isCurrentStop
+                                                      ? styles.stopTimelineIconCurrent
+                                                      : styles.stopTimelineIconQueued,
+                                                ]}
+                                              >
+                                                <Text style={{ fontSize: 10, fontWeight: '900', color: '#FFFFFF' }}>
+                                                  {isCompleted ? '✓' : stop.stopNumber}
+                                                </Text>
+                                              </View>
+                                              <Text style={styles.stopTimelineStoreName} numberOfLines={1}>{stop.storeName}</Text>
+                                            </View>
+                                            <View
+                                              style={[
+                                                styles.stopStatusBadge,
+                                                isCompleted
+                                                  ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
+                                                  : (isCurrentStop && ord.boltStatus === 'AT_STORE')
+                                                    ? { backgroundColor: '#EDE9FE' }
+                                                    : (isCurrentStop && ord.status === 'On the Way')
+                                                      ? { backgroundColor: '#FEF3C7' }
+                                                      : stop.status === 'Ready for Pickup'
+                                                        ? { backgroundColor: '#DCFCE7' }
+                                                        : stop.status === 'Preparing'
+                                                          ? { backgroundColor: '#DBEAFE' }
+                                                          : { backgroundColor: '#F3F4F6' },
+                                                { flexShrink: 0 },
+                                              ]}
+                                            >
+                                              <Text
+                                                style={[
+                                                  styles.stopStatusBadgeText,
+                                                  isCompleted
+                                                    ? { color: '#056B4B' }
+                                                    : (isCurrentStop && ord.boltStatus === 'AT_STORE')
+                                                      ? { color: '#7C3AED' }
+                                                      : (isCurrentStop && ord.status === 'On the Way')
+                                                        ? { color: '#B45309' }
+                                                        : stop.status === 'Ready for Pickup'
+                                                          ? { color: '#047857' }
+                                                          : stop.status === 'Preparing'
+                                                            ? { color: '#1D4ED8' }
+                                                            : { color: '#6B7280' },
+                                                ]}
+                                                numberOfLines={1}
+                                              >
+                                                {isCompleted
+                                                  ? '✅ Picked Up'
+                                                  : (isCurrentStop && ord.boltStatus === 'AT_STORE')
+                                                    ? '📦 Courier at Shop'
+                                                    : (isCurrentStop && ord.status === 'On the Way')
+                                                      ? '🛵 Courier En Route to Shop'
+                                                      : stop.status === 'Ready for Pickup'
+                                                        ? '📦 Ready for Courier'
+                                                        : stop.status === 'Preparing'
+                                                          ? '🍳 Preparing'
+                                                          : stop.status === 'Rejected'
+                                                            ? '❌ Store Unavailable'
+                                                            : '⏳ Awaiting Store'}
+                                              </Text>
+                                            </View>
+                                          </View>
+
+                                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
+                                            <Text style={styles.stopItemsSummaryText} numberOfLines={1}>
+                                              {stop.itemsCount} items • {formatNaira(stop.subtotal)}
+                                            </Text>
+                                          </View>
                                         </View>
-                                        <Text style={styles.stopTimelineStoreName} numberOfLines={1}>{stop.storeName}</Text>
-                                      </View>
-                                      <View
-                                        style={[
-                                          styles.stopStatusBadge,
-                                          isCompleted
-                                            ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
-                                            : stop.status === 'Ready for Pickup'
-                                              ? { backgroundColor: '#DCFCE7' }
-                                              : stop.status === 'Preparing'
-                                                ? { backgroundColor: '#DBEAFE' }
-                                                : isCurrentStop
-                                                  ? { backgroundColor: '#FEF3C7' }
-                                                  : { backgroundColor: '#F3F4F6' },
-                                          { flexShrink: 0 },
-                                        ]}
-                                      >
-                                        <Text
-                                          style={[
-                                            styles.stopStatusBadgeText,
-                                            isCompleted
-                                              ? { color: '#056B4B' }
-                                              : stop.status === 'Ready for Pickup'
-                                                ? { color: '#047857' }
-                                                : stop.status === 'Preparing'
-                                                  ? { color: '#1D4ED8' }
-                                                  : isCurrentStop
-                                                    ? { color: '#B45309' }
-                                                    : { color: '#6B7280' },
-                                          ]}
-                                          numberOfLines={1}
-                                        >
-                                          {isCompleted
-                                            ? '✅ Picked Up'
-                                            : stop.status === 'Ready for Pickup'
-                                              ? '📦 Ready for Courier'
-                                              : stop.status === 'Preparing'
-                                                ? '🍳 Preparing'
-                                                : stop.status === 'Rejected'
-                                                  ? '❌ Store Unavailable'
-                                                  : isCurrentStop
-                                                    ? '🛵 Collecting Now'
-                                                    : '⏳ Awaiting Store'}
-                                        </Text>
-                                      </View>
-                                    </View>
+                                      );
+                                    })}
 
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
-                                      <Text style={styles.stopItemsSummaryText} numberOfLines={1}>
-                                        {stop.itemsCount} items • {formatNaira(stop.subtotal)}
-                                      </Text>
-                                    </View>
-                                  </View>
-                                );
-                              })}
-
-                              {/* Final Delivery Destination Milestone */}
-                              <View
-                                style={[
-                                  styles.stopTimelineCard,
-                                  ord.currentStopIndex >= ord.stops.length && styles.stopTimelineCardActive,
-                                  { borderLeftColor: '#056B4B', marginBottom: 0 },
-                                ]}
-                              >
-                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
+                                    {/* Final Delivery Destination Milestone */}
                                     <View
                                       style={[
-                                        styles.stopTimelineIcon,
-                                        ord.status === 'Delivered'
-                                          ? styles.stopTimelineIconDone
-                                          : ord.currentStopIndex >= ord.stops.length
-                                            ? styles.stopTimelineIconCurrent
-                                            : styles.stopTimelineIconQueued,
+                                        styles.stopTimelineCard,
+                                        allStopsPickedUp && ord.status === 'On the Way' && styles.stopTimelineCardActive,
+                                        { borderLeftColor: '#056B4B', marginBottom: 0 },
                                       ]}
                                     >
-                                      <Text style={{ fontSize: 10 }}>🏠</Text>
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
+                                          <View
+                                            style={[
+                                              styles.stopTimelineIcon,
+                                              ord.status === 'Delivered'
+                                                ? styles.stopTimelineIconDone
+                                                : (allStopsPickedUp && ord.status === 'On the Way')
+                                                  ? styles.stopTimelineIconCurrent
+                                                  : styles.stopTimelineIconQueued,
+                                            ]}
+                                          >
+                                            <Text style={{ fontSize: 10 }}>🏠</Text>
+                                          </View>
+                                          <Text style={styles.stopTimelineStoreName} numberOfLines={1}>Your Delivery Destination</Text>
+                                        </View>
+                                        <View
+                                          style={[
+                                            styles.stopStatusBadge,
+                                            ord.status === 'Delivered'
+                                              ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
+                                              : (allStopsPickedUp && ord.status === 'On the Way')
+                                                ? { backgroundColor: '#DCFCE7' }
+                                                : { backgroundColor: '#F3F4F6' },
+                                            { flexShrink: 0 },
+                                          ]}
+                                        >
+                                          <Text
+                                            style={[
+                                              styles.stopStatusBadgeText,
+                                              ord.status === 'Delivered'
+                                                ? { color: '#056B4B' }
+                                                : (allStopsPickedUp && ord.status === 'On the Way')
+                                                  ? { color: '#166534' }
+                                                  : { color: '#6B7280' },
+                                            ]}
+                                            numberOfLines={1}
+                                          >
+                                            {ord.status === 'Delivered'
+                                              ? '✅ Delivered'
+                                              : (allStopsPickedUp && ord.courierArrivedOutside)
+                                                ? '🛵 Arrived Outside Gate'
+                                                : (allStopsPickedUp && ord.status === 'On the Way')
+                                                  ? '🛵 Heading to You'
+                                                  : '⏳ Waiting for Shop Pickup'}
+                                          </Text>
+                                        </View>
+                                      </View>
+                                      <Text style={[styles.stopItemsSummaryText, { marginTop: 4 }]} numberOfLines={1}>
+                                        📍 {ord.customerAddress || 'Your Delivery Address'}
+                                      </Text>
                                     </View>
-                                    <Text style={styles.stopTimelineStoreName} numberOfLines={1}>Your Delivery Destination</Text>
-                                  </View>
-                                  <View
-                                    style={[
-                                      styles.stopStatusBadge,
-                                      ord.status === 'Delivered'
-                                        ? { backgroundColor: 'rgba(5, 107, 75, 0.12)' }
-                                        : ord.currentStopIndex >= ord.stops.length
-                                          ? { backgroundColor: '#DCFCE7' }
-                                          : { backgroundColor: '#F3F4F6' },
-                                      { flexShrink: 0 },
-                                    ]}
-                                  >
-                                    <Text
-                                      style={[
-                                        styles.stopStatusBadgeText,
-                                        ord.status === 'Delivered'
-                                          ? { color: '#056B4B' }
-                                          : ord.currentStopIndex >= ord.stops.length
-                                            ? { color: '#166534' }
-                                            : { color: '#6B7280' },
-                                      ]}
-                                      numberOfLines={1}
-                                    >
-                                      {ord.status === 'Delivered'
-                                        ? '✅ Delivered'
-                                        : ord.currentStopIndex >= ord.stops.length
-                                          ? '🛵 Heading to You'
-                                          : '⏳ Waiting for Shops'}
-                                    </Text>
-                                  </View>
-                                </View>
-                                <Text style={[styles.stopItemsSummaryText, { marginTop: 4 }]} numberOfLines={1}>
-                                  📍 {ord.customerAddress || 'Your Delivery Address'}
-                                </Text>
-                              </View>
+                                  </>
+                                );
+                              })()}
                             </View>
                           )}
                         </View>
@@ -14209,7 +19643,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       {/* --- LIVE COURIER ROUTE NAVIGATION MAP (ALWAYS SHOWN FOR ACTIVE ORDERS) --- */}
                       {ord.status !== 'Cancelled' && (
                         <View style={styles.boltTrackingSummaryCard}>
-                          {(ord.boltRider && ord.boltRider.name) || ord.status === 'On the Way' ? (
+                          {ord.status === 'On the Way' || ord.status === 'Delivered' ? (
                             (() => {
                               const activeCourier = (ord.boltRider && ord.boltRider.name) ? ord.boltRider : {
                                 id: 'bolt-rider-01',
@@ -14221,6 +19655,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                 plate: 'ABJ-492-KW',
                                 avatar: '🛵',
                               };
+                              const areAllStopsPicked =
+                                !Array.isArray(ord.stops) ||
+                                ord.stops.length === 0 ||
+                                ord.stops.every((s) => s.pickupStatus === 'picked_up' || s.status === 'Completed');
                               return (
                                 <View>
                                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -14271,53 +19709,63 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                       <Text style={styles.boltCallBtnSmallText}>📞 Call</Text>
                                     </TouchableOpacity>
                                   </View>
-                                  {ord.status === 'On the Way' && (
-                                    <View style={{ marginTop: 10 }}>
-                                      {ord.courierArrivedOutside ? (
-                                        <TouchableOpacity
-                                          style={{
-                                            backgroundColor: '#056B4B',
-                                            borderRadius: 12,
-                                            paddingVertical: 13,
-                                            paddingHorizontal: 16,
-                                            flexDirection: 'row',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            shadowColor: '#056B4B',
-                                            shadowOffset: { width: 0, height: 3 },
-                                            shadowOpacity: 0.35,
-                                            shadowRadius: 5,
-                                            elevation: 4,
-                                          }}
-                                          onPress={() => completeDeliveryHandover(ord.id)}
-                                          activeOpacity={0.85}
-                                        >
-                                          <Text style={{ fontSize: 16, marginRight: 8 }}>📦</Text>
-                                          <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 14 }}>
-                                            Confirm Handover & Receive Packages
+                                  {ord.status === 'On the Way' && ord.courierArrivedOutside && areAllStopsPicked && (
+                                    <View
+                                      style={{
+                                        marginTop: 12,
+                                        backgroundColor: '#ECFDF5',
+                                        borderColor: '#10B981',
+                                        borderWidth: 1.5,
+                                        borderRadius: 14,
+                                        padding: 14,
+                                        shadowColor: '#059669',
+                                        shadowOffset: { width: 0, height: 2 },
+                                        shadowOpacity: 0.1,
+                                        shadowRadius: 4,
+                                        elevation: 2,
+                                      }}
+                                    >
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                          <Text style={{ fontSize: 18 }}>🛵</Text>
+                                          <Text style={{ color: '#065F46', fontWeight: '800', fontSize: 13 }}>
+                                            Courier Parked Outside Your Address
                                           </Text>
-                                        </TouchableOpacity>
-                                      ) : (
-                                        <TouchableOpacity
+                                        </View>
+                                        <View
                                           style={{
-                                            backgroundColor: '#F8FAFC',
-                                            borderColor: '#E2E8F0',
-                                            borderWidth: 1,
-                                            borderRadius: 10,
-                                            paddingVertical: 9,
-                                            paddingHorizontal: 12,
-                                            flexDirection: 'row',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
+                                            backgroundColor: '#059669',
+                                            paddingHorizontal: 8,
+                                            paddingVertical: 3,
+                                            borderRadius: 6,
                                           }}
-                                          onPress={() => completeDeliveryHandover(ord.id)}
-                                          activeOpacity={0.8}
                                         >
-                                          <Text style={{ color: '#64748B', fontWeight: '600', fontSize: 12 }}>
-                                            Courier at your door? Tap to confirm handover
+                                          <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 11 }}>
+                                            PIN: {ord.deliveryPin || '2489'}
                                           </Text>
-                                        </TouchableOpacity>
-                                      )}
+                                        </View>
+                                      </View>
+                                      <Text style={{ fontSize: 11.5, color: '#047857', marginBottom: 10, lineHeight: 16 }}>
+                                        Musa Ibrahim is waiting outside your gate. Confirm package receipt once delivered to complete the order.
+                                      </Text>
+                                      <TouchableOpacity
+                                        style={{
+                                          backgroundColor: '#056B4B',
+                                          borderRadius: 10,
+                                          paddingVertical: 12,
+                                          paddingHorizontal: 14,
+                                          alignItems: 'center',
+                                          flexDirection: 'row',
+                                          justifyContent: 'center',
+                                          gap: 6,
+                                        }}
+                                        onPress={() => completeDeliveryHandover(ord.id)}
+                                        activeOpacity={0.85}
+                                      >
+                                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#FFFFFF' }}>
+                                          ✅ Confirm Handover & Complete Delivery
+                                        </Text>
+                                      </TouchableOpacity>
                                     </View>
                                   )}
                                 </View>
@@ -14442,54 +19890,68 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                 scrollEnabled={true}
                                 zoomEnabled={true}
                               >
-                                {/* 1. Turn-by-Turn Road Route: Starts from Rider to Shop 1, then Shop 2, then Home */}
+                                {/* 1. Turn-by-Turn Road Route: Rider Origin -> Store 1 -> (Store 2) -> Customer Home */}
                                 {(() => {
                                   const mapStops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
-                                  const firstPendingMapIdx = mapStops.findIndex((st) => st.pickupStatus !== 'picked_up');
-                                  let currentStopIdx = ord.currentStopIndex || 0;
-                                  if (firstPendingMapIdx !== -1 && currentStopIdx < firstPendingMapIdx) {
-                                    currentStopIdx = firstPendingMapIdx;
-                                  } else if (firstPendingMapIdx === -1 && mapStops.length > 0 && currentStopIdx < mapStops.length) {
-                                    currentStopIdx = mapStops.length;
-                                  }
+                                  const totalLegs = Math.max(1, mapStops.length) + 1;
+                                  const firstUnpickedIdx = mapStops.findIndex(
+                                    (s) => s.pickupStatus !== 'picked_up' && s.status !== 'Completed'
+                                  );
+                                  const allStopsPickedUp = mapStops.length > 0 && firstUnpickedIdx === -1;
+                                  const currentStopIdx = allStopsPickedUp
+                                    ? mapStops.length
+                                    : Math.max(0, firstUnpickedIdx === -1 ? 0 : firstUnpickedIdx);
                                   const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
                                   const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
-                                  const firstStore = (ord.stops && ord.stops[0]) || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
-                                  const riderStart = ord.riderOrigin || {
-                                    latitude: Number(firstStore.latitude || 9.0882) - 0.0090,
-                                    longitude: Number(firstStore.longitude || 7.4933) - 0.0080,
-                                  };
-                                  const wps = [
+                                  const firstStore = (ord.stops && ord.stops[0]) || ord.storeLocation || { latitude: 9.124943, longitude: 7.439559 };
+
+                                  let storeWps = [];
+                                  if (mapStops.length > 0) {
+                                    storeWps = mapStops.map((s) => {
+                                      const stMatch = storesList.find((st) => st.id === s.storeId || st.name === s.storeName);
+                                      return {
+                                        latitude: Number(s.latitude) || Number(stMatch?.latitude) || 9.124943,
+                                        longitude: Number(s.longitude) || Number(stMatch?.longitude) || 7.439559,
+                                      };
+                                    });
+                                  } else {
+                                    storeWps = [{
+                                      latitude: Number(firstStore.latitude) || 9.124943,
+                                      longitude: Number(firstStore.longitude) || 7.439559,
+                                    }];
+                                  }
+                                  const riderStart = ord.riderOrigin && ord.riderOrigin.latitude
+                                    ? { latitude: Number(ord.riderOrigin.latitude), longitude: Number(ord.riderOrigin.longitude) }
+                                    : {
+                                        latitude: (Number(storeWps[0]?.latitude) || 9.124943) - 0.0072,
+                                        longitude: (Number(storeWps[0]?.longitude) || 7.439559) - 0.0065,
+                                      };
+                                  const directFallback = buildDirectLegsBetweenWaypoints([
                                     riderStart,
-                                    ...(ord.stops && Array.isArray(ord.stops) && ord.stops.length > 0
-                                      ? ord.stops.map((s) => ({
-                                        latitude: Number(s.latitude) || 9.0882,
-                                        longitude: Number(s.longitude) || 7.4933,
-                                      }))
-                                      : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
+                                    ...storeWps,
                                     { latitude: homeLat, longitude: homeLng },
-                                  ];
-                                  const directFallback = buildDirectLegsBetweenWaypoints(wps);
+                                  ]);
+
+                                  const hasValidRoadLegs =
+                                    ord.roadLegs &&
+                                    Array.isArray(ord.roadLegs) &&
+                                    ord.roadLegs.length === totalLegs &&
+                                    ord.roadLegs[currentStopIdx] &&
+                                    ord.roadLegs[currentStopIdx].length > 1;
 
                                   const fullRoutePoints =
-                                    ord.roadRouteCoordinates && ord.roadRouteCoordinates.length > 1
+                                    hasValidRoadLegs && ord.roadRouteCoordinates && ord.roadRouteCoordinates.length > 1
                                       ? ord.roadRouteCoordinates
-                                      : directFallback.allPoints || [];
+                                      : directFallback.roadPoints || [];
 
                                   const activeRoadPoints =
-                                    ord.roadLegs &&
-                                      ord.roadLegs[currentStopIdx] &&
-                                      ord.roadLegs[currentStopIdx].length > 1
+                                    hasValidRoadLegs
                                       ? ord.roadLegs[currentStopIdx]
-                                      : (ord.roadLegs && ord.roadLegs.length > 0)
-                                        ? ord.roadLegs[ord.roadLegs.length - 1]
-                                        : fullRoutePoints.length > 1
-                                          ? fullRoutePoints
-                                          : directFallback.legs[currentStopIdx] || directFallback.legs[directFallback.legs.length - 1] || [];
+                                      : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
 
                                   return (
                                     <>
-                                      {/* Full route path connecting all pickup stores to home */}
+                                      {/* Full route path connecting rider, pickup stores, and home */}
                                       {fullRoutePoints.length > 1 && (
                                         <Polyline
                                           coordinates={fullRoutePoints}
@@ -14498,90 +19960,105 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                           lineDashPattern={[6, 6]}
                                         />
                                       )}
-                                      {/* Outer high-contrast boundary for active street route */}
-                                      <Polyline
-                                        coordinates={activeRoadPoints}
-                                        strokeColor="#1D4ED8"
-                                        strokeWidth={7}
-                                      />
-                                      {/* Vibrant Google Maps Blue interior road lane */}
-                                      <Polyline
-                                        coordinates={activeRoadPoints}
-                                        strokeColor="#2563EB"
-                                        strokeWidth={4.5}
-                                      />
+                                      {/* Active leg highlighted in Google Maps Blue when courier is dispatched */}
+                                      {ord.status === 'On the Way' && activeRoadPoints.length > 1 && (
+                                        <>
+                                          <Polyline
+                                            coordinates={activeRoadPoints}
+                                            strokeColor="#1D4ED8"
+                                            strokeWidth={7}
+                                          />
+                                          <Polyline
+                                            coordinates={activeRoadPoints}
+                                            strokeColor="#2563EB"
+                                            strokeWidth={4.5}
+                                          />
+                                        </>
+                                      )}
                                     </>
                                   );
                                 })()}
 
                                 {/* 2. On-Road Snapped Store Stop Pinpoints (Marked Directly At Actual Store Location) */}
                                 {ord.stops && ord.stops.length > 0 ? (
-                                  ord.stops.map((st, sIdx) => {
-                                    const isCurrentStop = (ord.currentStopIndex || 0) === st.stopNumber - 1;
-                                    const isCompleted = st.pickupStatus === 'picked_up' || (ord.currentStopIndex || 0) >= st.stopNumber;
+                                  (() => {
+                                    const firstUnpickedIdx = ord.stops.findIndex(
+                                      (s) => s.pickupStatus !== 'picked_up' && s.status !== 'Completed'
+                                    );
+                                    const currentStopIdx = firstUnpickedIdx === -1 ? ord.stops.length : firstUnpickedIdx;
+                                    return ord.stops.map((st, sIdx) => {
+                                      const isCompleted =
+                                        st.pickupStatus === 'picked_up' ||
+                                        st.status === 'Completed' ||
+                                        ord.status === 'Delivered';
+                                      const isCurrentStop =
+                                        !isCompleted &&
+                                        ord.status === 'On the Way' &&
+                                        currentStopIdx === sIdx;
 
-                                    const stMatch = storesList.find((s) => s.id === st.storeId || s.name === st.storeName);
-                                    const storeLat = Number(st.latitude) || Number(stMatch?.latitude) || 9.0882;
-                                    const storeLng = Number(st.longitude) || Number(stMatch?.longitude) || 7.4933;
+                                      const stMatch = storesList.find((s) => s.id === st.storeId || s.name === st.storeName);
+                                      const storeLat = Number(st.latitude) || Number(stMatch?.latitude) || 9.0882;
+                                      const storeLng = Number(st.longitude) || Number(stMatch?.longitude) || 7.4933;
 
-                                    const pinCoord = {
-                                      latitude: st.snappedLatitude || storeLat,
-                                      longitude: st.snappedLongitude || storeLng,
-                                    };
+                                      const pinCoord = {
+                                        latitude: st.snappedLatitude || storeLat,
+                                        longitude: st.snappedLongitude || storeLng,
+                                      };
 
-                                    return (
-                                      <Marker
-                                        key={`ord-st-${st.stopNumber}`}
-                                        coordinate={pinCoord}
-                                        title={`[${st.stopNumber}] 🏪 ${st.storeName}`}
-                                        description={`Pickup Hub (${st.itemsCount} items • Shop PIN: ${st.pickupPin})`}
-                                        anchor={{ x: 0.5, y: 1.0 }}
-                                      >
-                                        <View style={styles.roadPinContainer}>
-                                          {/* Store Callout Bubble with Shop Number */}
-                                          <View
-                                            style={[
-                                              styles.roadPinCallout,
-                                              isCurrentStop && styles.roadPinCalloutActive,
-                                              isCompleted && styles.roadPinCalloutDone,
-                                            ]}
-                                          >
+                                      return (
+                                        <Marker
+                                          key={`ord-st-${st.stopNumber}`}
+                                          coordinate={pinCoord}
+                                          title={`[${st.stopNumber}] 🏪 ${st.storeName}`}
+                                          description={`Pickup Hub (${st.itemsCount} items • Shop PIN: ${st.pickupPin})`}
+                                          anchor={{ x: 0.5, y: 1.0 }}
+                                        >
+                                          <View style={styles.roadPinContainer}>
+                                            {/* Store Callout Bubble with Shop Number */}
                                             <View
                                               style={[
-                                                styles.roadPinBadgeNum,
+                                                styles.roadPinCallout,
+                                                isCurrentStop && styles.roadPinCalloutActive,
+                                                isCompleted && styles.roadPinCalloutDone,
+                                              ]}
+                                            >
+                                              <View
+                                                style={[
+                                                  styles.roadPinBadgeNum,
+                                                  isCurrentStop && { backgroundColor: '#2563EB' },
+                                                  isCompleted && { backgroundColor: '#056B4B' },
+                                                ]}
+                                              >
+                                                <Text style={styles.roadPinBadgeNumText}>
+                                                  {isCompleted ? '✓' : st.stopNumber}
+                                                </Text>
+                                              </View>
+                                              <Text style={{ fontSize: 11, marginRight: 2 }}>🏪</Text>
+                                              <Text style={styles.roadPinCalloutText} numberOfLines={1}>
+                                                {st.storeName}
+                                              </Text>
+                                            </View>
+                                            {/* Needle stem pointing straight into road line */}
+                                            <View
+                                              style={[
+                                                styles.roadPinNeedle,
                                                 isCurrentStop && { backgroundColor: '#2563EB' },
                                                 isCompleted && { backgroundColor: '#056B4B' },
                                               ]}
-                                            >
-                                              <Text style={styles.roadPinBadgeNumText}>
-                                                {isCompleted ? '✓' : st.stopNumber}
-                                              </Text>
-                                            </View>
-                                            <Text style={{ fontSize: 11, marginRight: 2 }}>🏪</Text>
-                                            <Text style={styles.roadPinCalloutText} numberOfLines={1}>
-                                              {st.storeName}
-                                            </Text>
+                                            />
+                                            {/* Target bullseye dot anchored directly on the blue road line */}
+                                            <View
+                                              style={[
+                                                styles.roadPinDot,
+                                                isCurrentStop && styles.roadPinDotActive,
+                                                isCompleted && styles.roadPinDotDone,
+                                              ]}
+                                            />
                                           </View>
-                                          {/* Needle stem pointing straight into road line */}
-                                          <View
-                                            style={[
-                                              styles.roadPinNeedle,
-                                              isCurrentStop && { backgroundColor: '#2563EB' },
-                                              isCompleted && { backgroundColor: '#056B4B' },
-                                            ]}
-                                          />
-                                          {/* Target bullseye dot anchored directly on the blue road line */}
-                                          <View
-                                            style={[
-                                              styles.roadPinDot,
-                                              isCurrentStop && styles.roadPinDotActive,
-                                              isCompleted && styles.roadPinDotDone,
-                                            ]}
-                                          />
-                                        </View>
-                                      </Marker>
-                                    );
-                                  })
+                                        </Marker>
+                                      );
+                                    });
+                                  })()
                                 ) : (
                                   <Marker
                                     coordinate={{
@@ -14628,54 +20105,76 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
                                 {/* 4. Real-Time Moving Motorbike Courier Marker (SNAPPED DIRECTLY ONTO THE BLUE ROAD LINE) */}
                                 {(() => {
-                                  const currentStopIdx = ord.currentStopIndex || 0;
+                                  const mapStops = Array.isArray(ord.stops) && ord.stops.length > 0 ? ord.stops : [];
+                                  const totalLegs = Math.max(1, mapStops.length) + 1;
+                                  const firstUnpickedIdx = mapStops.findIndex(
+                                    (s) => s.pickupStatus !== 'picked_up' && s.status !== 'Completed'
+                                  );
+                                  const allStopsPickedUp = mapStops.length > 0 && firstUnpickedIdx === -1;
+                                  const currentStopIdx = allStopsPickedUp
+                                    ? mapStops.length
+                                    : Math.max(0, firstUnpickedIdx === -1 ? 0 : firstUnpickedIdx);
                                   const homeLat = Number(ord.deliveryLocation?.latitude || pinnedLocation?.latitude || 9.0882);
                                   const homeLng = Number(ord.deliveryLocation?.longitude || pinnedLocation?.longitude || 7.4933);
                                   const targetHomeCoord = {
                                     latitude: ord.snappedDeliveryLocation?.latitude || homeLat,
                                     longitude: ord.snappedDeliveryLocation?.longitude || homeLng,
                                   };
-                                  const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.0882, longitude: 7.4933 };
-                                  const riderStart = ord.riderOrigin || {
-                                    latitude: Number(firstStore.latitude || 9.0882) - 0.0090,
-                                    longitude: Number(firstStore.longitude || 7.4933) - 0.0080,
-                                  };
-                                  const wps = [
+                                  const firstStore = ord.stops?.[0] || ord.storeLocation || { latitude: 9.124943, longitude: 7.439559 };
+
+                                  let storeWps = [];
+                                  if (mapStops.length > 0) {
+                                    storeWps = mapStops.map((s) => {
+                                      const stMatch = storesList.find((st) => st.id === s.storeId || st.name === s.storeName);
+                                      return {
+                                        latitude: Number(s.latitude) || Number(stMatch?.latitude) || 9.124943,
+                                        longitude: Number(s.longitude) || Number(stMatch?.longitude) || 7.439559,
+                                      };
+                                    });
+                                  } else {
+                                    storeWps = [{
+                                      latitude: Number(firstStore.latitude) || 9.124943,
+                                      longitude: Number(firstStore.longitude) || 7.439559,
+                                    }];
+                                  }
+                                  const riderStart = ord.riderOrigin && ord.riderOrigin.latitude
+                                    ? { latitude: Number(ord.riderOrigin.latitude), longitude: Number(ord.riderOrigin.longitude) }
+                                    : {
+                                        latitude: (Number(storeWps[0]?.latitude) || 9.124943) - 0.0072,
+                                        longitude: (Number(storeWps[0]?.longitude) || 7.439559) - 0.0065,
+                                      };
+                                  const directFallback = buildDirectLegsBetweenWaypoints([
                                     riderStart,
-                                    ...(ord.stops && ord.stops.length > 0
-                                      ? ord.stops.map((s) => ({
-                                        latitude: Number(s.latitude) || 9.0882,
-                                        longitude: Number(s.longitude) || 7.4933,
-                                      }))
-                                      : [{ latitude: Number(firstStore.latitude) || 9.0882, longitude: Number(firstStore.longitude) || 7.4933 }]),
+                                    ...storeWps,
                                     { latitude: homeLat, longitude: homeLng },
-                                  ];
-                                  const directFallback = buildDirectLegsBetweenWaypoints(wps);
+                                  ]);
+
+                                  const hasValidRoadLegs =
+                                    ord.roadLegs &&
+                                    Array.isArray(ord.roadLegs) &&
+                                    ord.roadLegs.length === totalLegs &&
+                                    ord.roadLegs[currentStopIdx] &&
+                                    ord.roadLegs[currentStopIdx].length > 1;
 
                                   const activeRoadPts =
-                                    ord.roadLegs &&
-                                      ord.roadLegs[currentStopIdx] &&
-                                      ord.roadLegs[currentStopIdx].length > 1
+                                    hasValidRoadLegs
                                       ? ord.roadLegs[currentStopIdx]
-                                      : (ord.roadLegs && ord.roadLegs.length > 0)
-                                        ? ord.roadLegs[ord.roadLegs.length - 1]
-                                        : directFallback.legs[currentStopIdx] || directFallback.legs[directFallback.legs.length - 1] || [];
+                                      : directFallback.legs[currentStopIdx] || directFallback.legs[0] || [];
 
+                                  const elapsedIdx =
+                                    ord.status === 'On the Way' && ord.legStartedAt && ord.legStartedAt > 0
+                                      ? Math.min(activeRoadPts.length - 1, Math.floor(Math.max(0, Date.now() - ord.legStartedAt) / 2000))
+                                      : (ord.roadPointIndex || 0);
                                   const pointIdx = Math.min(
-                                    Math.max(ord.roadPointIndex || 0, 0),
+                                    Math.max(elapsedIdx, ord.roadPointIndex || 0, 0),
                                     Math.max(0, activeRoadPts.length - 1)
                                   );
-                                  const firstStoreCoord = {
-                                    latitude: Number(firstStore.latitude) || 9.0882,
-                                    longitude: Number(firstStore.longitude) || 7.4933,
-                                  };
-                                  const riderOnBlueLine = (ord.courierArrivedOutside || ord.status === 'Delivered')
-                                    ? (ord.snappedDeliveryLocation || targetHomeCoord)
-                                    : (ord.boltCoords && ord.boltCoords.latitude && !isNaN(ord.boltCoords.latitude)
-                                      ? ord.boltCoords
-                                      : (activeRoadPts[pointIdx] || firstStoreCoord));
 
-                                  return Boolean((ord.boltRider && ord.boltRider.name) || ord.status === 'On the Way' || ord.courierArrivedOutside) ? (
+                                  const riderOnBlueLine = ((ord.courierArrivedOutside && allStopsPickedUp) || ord.status === 'Delivered')
+                                    ? (ord.snappedDeliveryLocation || targetHomeCoord)
+                                    : (activeRoadPts[pointIdx] || ord.boltCoords || riderStart);
+
+                                  return Boolean(ord.status === 'On the Way' || (ord.courierArrivedOutside && allStopsPickedUp)) ? (
                                     <Marker
                                       coordinate={riderOnBlueLine}
                                       title={`🛵 ${ord.boltRider?.name || 'Musa Ibrahim'} (Courier)`}
@@ -14914,6 +20413,11 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           <Text style={[styles.customerConvTagText, { color: '#B45309' }]}>Rx Attached</Text>
                         </View>
                       )}
+                      {conv.partnerRole === 'merchant' && !isStoreMessagingEnabled(conv.order || conv) && (
+                        <View style={[styles.customerConvTag, { backgroundColor: '#F1F5F9' }]}>
+                          <Text style={[styles.customerConvTagText, { color: '#64748B' }]}>🔇 Chat Off</Text>
+                        </View>
+                      )}
                     </View>
 
                     <Text style={styles.customerConvSnippet} numberOfLines={1}>
@@ -14985,8 +20489,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
           </View>
 
           {/* --- MERCHANT HUB SWITCHER CARD --- */}
-          {/* --- MERCHANT HUB SWITCHER CARD --- */}
-          {currentUser?.role === 'seller' || merchantOwnedStores.length > 0 ? (
+          {currentUser?.role === 'seller' && Boolean(currentMerchantStore) ? (
             <View style={styles.merchantSwitchCard}>
               <View style={styles.merchantSwitchTopRow}>
                 <View style={styles.merchantIconWrap}>
@@ -15027,8 +20530,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           isSelected && (isPharm ? styles.accountStoreRowItemActivePharm : styles.accountStoreRowItemActiveGroc),
                         ]}
                         onPress={() => {
-                          handleSelectMerchantBranch(st.id);
-                          setAppMode('merchant');
+                          if (currentUser?.role === 'seller') {
+                            handleSelectMerchantBranch(st.id);
+                            setAppMode('merchant');
+                          }
                         }}
                         activeOpacity={0.85}
                       >
@@ -15085,7 +20590,13 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   styles.merchantSwitchBtn,
                   currentMerchantStore?.storeType === 'pharmacy' && { backgroundColor: '#1E3A8A' },
                 ]}
-                onPress={() => setAppMode('merchant')}
+                onPress={() => {
+                  if (currentUser?.role === 'seller' && currentMerchantStore) {
+                    setAppMode('merchant');
+                  } else {
+                    Alert.alert('Merchant Account Required', 'You are currently signed in as a customer. Please register your store to access the Merchant Hub.');
+                  }
+                }}
                 activeOpacity={0.85}
               >
                 <Text style={styles.merchantSwitchBtnText}>
@@ -15128,7 +20639,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
           <View style={styles.profileMenuCard}>
             <TouchableOpacity style={styles.profileMenuItem}>
               <Text style={styles.profileMenuIcon}>📍</Text>
-              <Text style={styles.profileMenuText}>Saved Addresses ({selectedLocation.split(',')[0]})</Text>
+              <Text style={styles.profileMenuText}>Saved Addresses ({(selectedLocation || 'Abuja').split(',')[0]})</Text>
             </TouchableOpacity>
             <View style={styles.profileMenuDivider} />
             <TouchableOpacity style={styles.profileMenuItem}>
@@ -15145,39 +20656,52 @@ Support: help@getit.ng | Abuja, Nigeria`;
       )}
 
       {/* --- STORE DETAILS VIEW (WITH IN-STORE SEARCH BAR) --- */}
-      {selectedStore && (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: COLORS.beigeBg, zIndex: 100 }]}>
-          <SafeAreaView style={styles.modalSafeArea}>
-            <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
-            <View style={styles.modalHeader}>
-              <TouchableOpacity
-                style={styles.modalBackBtn}
-                onPress={() => setSelectedStore(null)}
-              >
-                <Text style={styles.modalBackBtnText}>✕ Close</Text>
-              </TouchableOpacity>
-              <Text style={styles.modalHeaderTitle} numberOfLines={1}>
-                {selectedStore.name}
-              </Text>
-              <TouchableOpacity
-                style={styles.cartHeaderButton}
-                onPress={() => setCartModalVisible(true)}
-              >
-                <Text style={{ fontSize: 16 }}>🛍️</Text>
-                {cart.length > 0 && (
-                  <View style={styles.cartBadge}>
-                    <Text style={styles.cartBadgeText}>
-                      {cart.reduce((s, i) => s + i.qty, 0)}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            </View>
+      {selectedStore && (() => {
+        const isMerchantStorePreview = Boolean(
+          appMode === 'merchant' ||
+          (merchantStoreId && (selectedStore.id === merchantStoreId || selectedStore.id === currentMerchantStore?.id)) ||
+          (currentUser?.role === 'seller' && (selectedStore.id === currentUser?.storeId || selectedStore.id === currentMerchantStore?.id))
+        );
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: cart.length > 0 ? 100 : 30 }}
-            >
+        return (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: COLORS.beigeBg, zIndex: 100 }]}>
+            <SafeAreaView style={styles.modalSafeArea}>
+              <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+              <View style={styles.modalHeader}>
+                <TouchableOpacity
+                  style={styles.modalBackBtn}
+                  onPress={() => setSelectedStore(null)}
+                >
+                  <Text style={styles.modalBackBtnText}>✕ Close</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalHeaderTitle} numberOfLines={1}>
+                  {selectedStore.name}
+                </Text>
+                {isMerchantStorePreview ? (
+                  <View style={{ backgroundColor: '#056B4B', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#FFFFFF' }}>👁️ Preview Mode</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.cartHeaderButton}
+                    onPress={() => setCartModalVisible(true)}
+                  >
+                    <Text style={{ fontSize: 16 }}>🛍️</Text>
+                    {cart.length > 0 && (
+                      <View style={styles.cartBadge}>
+                        <Text style={styles.cartBadgeText}>
+                          {cart.reduce((s, i) => s + i.qty, 0)}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: (!isMerchantStorePreview && cart.length > 0) ? 100 : 30 }}
+              >
               {/* TOP BANNER: Show Animated Store Door when closed, or Cover Photo when open */}
               {!isStoreCurrentlyOpen(selectedStore) ? (
                 (() => {
@@ -15206,16 +20730,25 @@ Support: help@getit.ng | Abuja, Nigeria`;
               ) : (
                 <Image
                   source={{
-                    uri: optimizeImageUrl(selectedStore.image, 650, 70),
-                    cache: 'force-cache',
+                    uri: optimizeImageUrl(selectedStore.image, 800, 80),
                   }}
                   style={styles.storeModalBannerImage}
+                  resizeMode="cover"
                 />
               )}
 
               <View style={styles.storeModalContent}>
-                <View style={styles.storeBadgeFloating}>
-                  <Text style={styles.storeBadgeText}>{selectedStore.tag}</Text>
+                <View
+                  style={[
+                    styles.storeBadgeInline,
+                    {
+                      alignSelf: 'flex-start',
+                      backgroundColor: selectedStore.badgeColor || COLORS.emeraldPrimary,
+                      marginBottom: 4,
+                    },
+                  ]}
+                >
+                  <Text style={styles.storeBadgeText}>{selectedStore.tag || 'VERIFIED MERCHANT'}</Text>
                 </View>
                 <Text style={styles.storeModalTitle}>{selectedStore.name}</Text>
                 <Text style={styles.storeModalAddress}>📍 {selectedStore.address}</Text>
@@ -15357,7 +20890,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                               Consult Pharmacist
                             </Text>
                             <Text style={[styles.pharmacyActionSub, { fontSize: 10, lineHeight: 13 }]}>
-                              Chat live with {pharm.name.split(' ')[0]}
+                              Chat live with {(pharm?.name || 'Pharmacist').split(' ')[0]}
                             </Text>
                           </View>
                           <Text style={{ fontSize: 13, color: '#056B4B', fontWeight: '900' }}>➔</Text>
@@ -15492,7 +21025,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   /* Box Form Layout: Stacked in 2-Column Rows & Columns */
                   <View style={styles.productGrid}>
                     {filteredStoreProducts.map((prod) => {
-                      const inCartItem = cart.find((i) => i.id === prod.id);
+                      const inCartItem = !isMerchantStorePreview ? cart.find((i) => i.id === prod.id) : null;
                       return (
                         <View key={prod.id} style={styles.productBoxCard}>
                           {/* Top Image Preview Box */}
@@ -15539,7 +21072,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
                             <View style={styles.productBoxPriceRow}>
                               <Text style={styles.productBoxPrice}>
-                                {formatNaira(prod.price)}
+                                {formatNaira(getProductDisplayPrice(prod.price))}
                               </Text>
                             </View>
 
@@ -15587,7 +21120,17 @@ Support: help@getit.ng | Abuja, Nigeria`;
                               ) : (
                                 <TouchableOpacity
                                   style={styles.productBoxAddBtn}
-                                  onPress={() => addToCart(prod, selectedStore)}
+                                  onPress={() => {
+                                    if (isMerchantStorePreview) {
+                                      Alert.alert(
+                                        "Can't Add to Basket",
+                                        'Store merchants cannot purchase items from their own supermarket store in live preview mode.',
+                                        [{ text: 'Understood', style: 'default' }]
+                                      );
+                                      return;
+                                    }
+                                    addToCart(prod, selectedStore);
+                                  }}
                                   activeOpacity={0.8}
                                 >
                                   <Text style={styles.productBoxAddBtnText}>+ Add</Text>
@@ -15602,7 +21145,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 ) : (
                   /* Classic Horizontal Row List */
                   filteredStoreProducts.map((prod) => {
-                    const inCartItem = cart.find((i) => i.id === prod.id);
+                    const inCartItem = !isMerchantStorePreview ? cart.find((i) => i.id === prod.id) : null;
                     return (
                       <View key={prod.id} style={styles.productCard}>
                         <View style={styles.productIconWrap}>
@@ -15621,7 +21164,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           <View style={styles.productBadgeRow}>
                             <Text style={styles.productCategoryPill}>{prod.category}</Text>
                           </View>
-                          <Text style={styles.productPrice}>{formatNaira(prod.price)}</Text>
+                          <Text style={styles.productPrice}>{formatNaira(getProductDisplayPrice(prod.price))}</Text>
                         </View>
 
                         {!isStoreCurrentlyOpen(selectedStore) ? (
@@ -15660,7 +21203,17 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         ) : (
                           <TouchableOpacity
                             style={styles.addProductBtn}
-                            onPress={() => addToCart(prod, selectedStore)}
+                            onPress={() => {
+                              if (isMerchantStorePreview) {
+                                Alert.alert(
+                                  "Can't Add to Basket",
+                                  'Store merchants cannot purchase items from their own supermarket store in live preview mode.',
+                                  [{ text: 'Understood', style: 'default' }]
+                                );
+                                return;
+                              }
+                              addToCart(prod, selectedStore);
+                            }}
                             activeOpacity={0.8}
                           >
                             <Text style={styles.addProductBtnText}>+ Add</Text>
@@ -15674,7 +21227,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
             </ScrollView>
 
             {/* Bottom floating view cart bar */}
-            {cart.length > 0 && (
+            {!isMerchantStorePreview && cart.length > 0 && (
               <TouchableOpacity
                 style={[
                   styles.bottomCartFloatingBar,
@@ -15698,7 +21251,8 @@ Support: help@getit.ng | Abuja, Nigeria`;
             )}
           </SafeAreaView>
         </View>
-      )}
+      );
+    })()}
 
       {/* --- CART & CHECKOUT MODAL --- */}
       <Modal
@@ -17589,7 +23143,9 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       : !collapsedMerchantOrderIds.includes(ord.id);
                     const showCustomerChat = !isDone && merchantOrderFilter !== 'completed' && merchantOrderFilter !== 'all';
                     const itemsList = (matchingStop?.items && matchingStop.items.length > 0) ? matchingStop.items : ord.items;
-                    const itemsCount = ord.itemsCount || itemsList?.length || 0;
+                    const itemsCount = (matchingStop && matchingStop.items && matchingStop.items.length > 0)
+                      ? matchingStop.items.reduce((s, it) => s + (Number(it.qty) || 1), 0)
+                      : (ord.itemsCount || itemsList?.length || 0);
                     const earningsAmount = getMerchantOrderProductAmount(ord);
 
                     return (
@@ -17801,6 +23357,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                   ord.replacementProposal &&
                                   ord.replacementProposal.status === 'pending' &&
                                   ((it.id && it.id === ord.replacementProposal.originalItemId) || it.name === ord.replacementProposal.originalItemName);
+                                const isOutOfStockPending =
+                                  ord.outOfStockProposal &&
+                                  ord.outOfStockProposal.status === 'pending' &&
+                                  ((it.id && it.id === ord.outOfStockProposal.originalItemId) || it.name === ord.outOfStockProposal.originalItemName);
 
                                 return (
                                   <View
@@ -17898,8 +23458,16 @@ Support: help@getit.ng | Abuja, Nigeria`;
                                       </View>
                                     )}
 
+                                    {isOutOfStockPending && !isRefunded && (
+                                      <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
+                                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#D97706', backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                          ⏳ Out of Stock • Awaiting Customer Decision (Switch Shop or Refund)
+                                        </Text>
+                                      </View>
+                                    )}
+
                                     {/* Out of Stock / Replace Trigger Button for Store Owner */}
-                                    {(isNew || isPreparing) && !isRefunded && !isPending && (
+                                    {(isNew || isPreparing) && !isRefunded && !isPending && !isOutOfStockPending && (
                                       <TouchableOpacity
                                         style={{
                                           marginTop: 6,
@@ -18072,27 +23640,190 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   <Text style={styles.bulkOnboardingArrow}>➔</Text>
                 </TouchableOpacity>
 
-                {/* Stock Stats Row */}
-                <View style={styles.stockStatsRow}>
-                  <View style={styles.stockStatCard}>
-                    <Text style={styles.stockStatVal}>
-                      {currentMerchantStore?.products.filter((p) => !p.outOfStock).length}
-                    </Text>
-                    <Text style={styles.stockStatLbl}>In Stock</Text>
-                  </View>
-                  <View style={styles.stockStatCard}>
-                    <Text style={[styles.stockStatVal, { color: '#EF4444' }]}>
-                      {currentMerchantStore?.products.filter((p) => p.outOfStock).length}
-                    </Text>
-                    <Text style={styles.stockStatLbl}>Out of Stock</Text>
-                  </View>
-                  <View style={styles.stockStatCard}>
-                    <Text style={styles.stockStatVal}>
-                      {currentMerchantStore?.products.length}
-                    </Text>
-                    <Text style={styles.stockStatLbl}>Total Items</Text>
-                  </View>
-                </View>
+                {/* Stock Stats Row — Clickable Filter Buttons */}
+                {(() => {
+                  const allProds = currentMerchantStore?.products || [];
+                  const inStockCount = allProds.filter((p) => !p.outOfStock).length;
+                  const outOfStockCount = allProds.filter((p) => p.outOfStock).length;
+                  const totalCount = allProds.length;
+                  const isInStockActive = merchantInventoryStockFilter === 'in_stock';
+                  const isOutOfStockActive = merchantInventoryStockFilter === 'out_of_stock';
+                  const isAllActive = merchantInventoryStockFilter === 'all';
+
+                  return (
+                    <>
+                      <View style={styles.stockStatsRow}>
+                        <TouchableOpacity
+                          style={[
+                            styles.stockStatCard,
+                            isInStockActive && {
+                              backgroundColor: '#ECFDF5',
+                              borderColor: '#059669',
+                              borderWidth: 2,
+                            },
+                          ]}
+                          activeOpacity={0.75}
+                          onPress={() =>
+                            setMerchantInventoryStockFilter((prev) =>
+                              prev === 'in_stock' ? 'all' : 'in_stock'
+                            )
+                          }
+                        >
+                          <Text
+                            style={[
+                              styles.stockStatVal,
+                              isInStockActive && { color: '#047857' },
+                            ]}
+                          >
+                            {inStockCount}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.stockStatLbl,
+                              isInStockActive && { color: '#047857', fontWeight: '800' },
+                            ]}
+                          >
+                            {isInStockActive ? '● In Stock' : 'In Stock'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[
+                            styles.stockStatCard,
+                            isOutOfStockActive && {
+                              backgroundColor: '#FEF2F2',
+                              borderColor: '#EF4444',
+                              borderWidth: 2,
+                            },
+                          ]}
+                          activeOpacity={0.75}
+                          onPress={() =>
+                            setMerchantInventoryStockFilter((prev) =>
+                              prev === 'out_of_stock' ? 'all' : 'out_of_stock'
+                            )
+                          }
+                        >
+                          <Text style={[styles.stockStatVal, { color: '#EF4444' }]}>
+                            {outOfStockCount}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.stockStatLbl,
+                              isOutOfStockActive && { color: '#B91C1C', fontWeight: '800' },
+                            ]}
+                          >
+                            {isOutOfStockActive ? '● Out of Stock' : 'Out of Stock'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[
+                            styles.stockStatCard,
+                            isAllActive && {
+                              backgroundColor: '#F0FDF4',
+                              borderColor: '#056B4B',
+                              borderWidth: 1.5,
+                            },
+                          ]}
+                          activeOpacity={0.75}
+                          onPress={() => setMerchantInventoryStockFilter('all')}
+                        >
+                          <Text style={styles.stockStatVal}>{totalCount}</Text>
+                          <Text
+                            style={[
+                              styles.stockStatLbl,
+                              isAllActive && { color: '#056B4B', fontWeight: '800' },
+                            ]}
+                          >
+                            {isAllActive ? '● Total Items' : 'Total Items'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {merchantInventoryStockFilter !== 'all' && (
+                        <View
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: isOutOfStockActive ? '#FEF2F2' : '#ECFDF5',
+                            borderWidth: 1,
+                            borderColor: isOutOfStockActive ? '#FECACA' : '#A7F3D0',
+                            borderRadius: 10,
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            marginBottom: 10,
+                          }}
+                        >
+                          <View style={{ flex: 1, marginRight: 8 }}>
+                            <Text
+                              style={{
+                                fontSize: 12,
+                                fontWeight: '800',
+                                color: isOutOfStockActive ? '#991B1B' : '#065F46',
+                              }}
+                            >
+                              {isOutOfStockActive
+                                ? `🔴 Showing Out of Stock (${outOfStockCount})`
+                                : `🟢 Showing In Stock (${inStockCount})`}
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: 10.5,
+                                color: isOutOfStockActive ? '#B91C1C' : '#047857',
+                                marginTop: 1,
+                              }}
+                            >
+                              {isOutOfStockActive
+                                ? 'Tap "Restock ✓" on any item below to put it back in stock'
+                                : 'Filtering available items in your shop'}
+                            </Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            {isOutOfStockActive && outOfStockCount > 0 && (
+                              <TouchableOpacity
+                                style={{
+                                  backgroundColor: '#059669',
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 6,
+                                  borderRadius: 8,
+                                }}
+                                activeOpacity={0.8}
+                                onPress={restockAllOutOfStock}
+                              >
+                                <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '800' }}>
+                                  Restock All ✓
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                            <TouchableOpacity
+                              style={{
+                                backgroundColor: '#FFFFFF',
+                                borderWidth: 1,
+                                borderColor: isOutOfStockActive ? '#FCA5A5' : '#6EE7B7',
+                                paddingHorizontal: 9,
+                                paddingVertical: 6,
+                                borderRadius: 8,
+                              }}
+                              activeOpacity={0.8}
+                              onPress={() => setMerchantInventoryStockFilter('all')}
+                            >
+                              <Text
+                                style={{
+                                  color: isOutOfStockActive ? '#991B1B' : '#065F46',
+                                  fontSize: 11,
+                                  fontWeight: '700',
+                                }}
+                              >
+                                Show All
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
+                    </>
+                  );
+                })()}
 
                 {/* 🔍 Instant Product Search Bar */}
                 <View style={styles.inventorySearchWrapper}>
@@ -18116,19 +23847,31 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   )}
                 </View>
 
-                {merchantInventorySearch.length > 0 && (
+                {(merchantInventorySearch.length > 0 || merchantInventoryStockFilter !== 'all') && (
                   <View style={styles.inventorySearchMetaRow}>
                     <Text style={styles.inventorySearchMetaText}>
                       Showing {
-                        (currentMerchantStore?.products || []).filter(
-                          (p) =>
-                            p.name.toLowerCase().includes(merchantInventorySearch.toLowerCase()) ||
-                            (p.category && p.category.toLowerCase().includes(merchantInventorySearch.toLowerCase()))
-                        ).length
+                        (currentMerchantStore?.products || []).filter((p) => {
+                          if (merchantInventoryStockFilter === 'in_stock' && p.outOfStock) return false;
+                          if (merchantInventoryStockFilter === 'out_of_stock' && !p.outOfStock) return false;
+                          if (merchantInventorySearch.trim().length > 0) {
+                            const q = merchantInventorySearch.toLowerCase();
+                            return (
+                              p.name.toLowerCase().includes(q) ||
+                              (p.category && p.category.toLowerCase().includes(q))
+                            );
+                          }
+                          return true;
+                        }).length
                       } of {currentMerchantStore?.products?.length || 0} items
                     </Text>
-                    <TouchableOpacity onPress={() => setMerchantInventorySearch('')}>
-                      <Text style={styles.inventorySearchResetText}>Clear</Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setMerchantInventorySearch('');
+                        setMerchantInventoryStockFilter('all');
+                      }}
+                    >
+                      <Text style={styles.inventorySearchResetText}>Reset Filters</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -18137,25 +23880,52 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 <View style={{ marginTop: 4 }}>
                   {(() => {
                     const allProducts = currentMerchantStore?.products || [];
+                    const stockFilteredProducts = allProducts.filter((p) => {
+                      if (merchantInventoryStockFilter === 'in_stock') return !p.outOfStock;
+                      if (merchantInventoryStockFilter === 'out_of_stock') return Boolean(p.outOfStock);
+                      return true;
+                    });
                     const filteredProducts = merchantInventorySearch.trim().length > 0
-                      ? allProducts.filter(
+                      ? stockFilteredProducts.filter(
                         (p) =>
                           p.name.toLowerCase().includes(merchantInventorySearch.toLowerCase()) ||
                           (p.category && p.category.toLowerCase().includes(merchantInventorySearch.toLowerCase()))
                       )
-                      : allProducts;
+                      : stockFilteredProducts;
 
                     if (filteredProducts.length === 0) {
+                      const isOutFilterOnly =
+                        merchantInventoryStockFilter === 'out_of_stock' &&
+                        merchantInventorySearch.trim().length === 0;
+                      const isInFilterOnly =
+                        merchantInventoryStockFilter === 'in_stock' &&
+                        merchantInventorySearch.trim().length === 0;
+
                       return (
                         <View style={styles.inventoryEmptySearchCard}>
-                          <Text style={{ fontSize: 32, marginBottom: 6 }}>🔍</Text>
-                          <Text style={styles.inventoryEmptySearchTitle}>No Products Found</Text>
+                          <Text style={{ fontSize: 32, marginBottom: 6 }}>
+                            {isOutFilterOnly ? '🎉' : isInFilterOnly ? '📦' : '🔍'}
+                          </Text>
+                          <Text style={styles.inventoryEmptySearchTitle}>
+                            {isOutFilterOnly
+                              ? 'No Out-of-Stock Items!'
+                              : isInFilterOnly
+                                ? 'No Items Currently In Stock'
+                                : 'No Products Found'}
+                          </Text>
                           <Text style={styles.inventoryEmptySearchSub}>
-                            No items in your catalog match "{merchantInventorySearch}".
+                            {isOutFilterOnly
+                              ? 'All products in your catalog are currently available in stock.'
+                              : isInFilterOnly
+                                ? 'All your products are marked Out of Stock. Tap "Out of Stock" above to restock them.'
+                                : `No items match "${merchantInventorySearch}"${merchantInventoryStockFilter !== 'all' ? ` in ${merchantInventoryStockFilter === 'out_of_stock' ? 'Out of Stock' : 'In Stock'}` : ''}.`}
                           </Text>
                           <TouchableOpacity
                             style={styles.inventoryEmptyClearBtn}
-                            onPress={() => setMerchantInventorySearch('')}
+                            onPress={() => {
+                              setMerchantInventorySearch('');
+                              setMerchantInventoryStockFilter('all');
+                            }}
                           >
                             <Text style={styles.inventoryEmptyClearBtnText}>View All Products</Text>
                           </TouchableOpacity>
@@ -18608,350 +24378,1176 @@ Support: help@getit.ng | Abuja, Nigeria`;
             {merchantTab === 'store' && (
               <ScrollView
                 style={styles.merchantMainScroll}
-                contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+                contentContainerStyle={{ padding: 16, paddingBottom: 130 }}
                 showsVerticalScrollIndicator={false}
               >
-                {/* Friendly Header Row */}
-                <View style={styles.storeProfileHeaderRow}>
-                  <View style={{ flex: 1, paddingRight: 10 }}>
-                    <Text style={styles.merchantViewTitle}>Store Profile & Identity</Text>
-                    <Text style={styles.merchantViewSub}>
-                      Manage how customers across Nigeria see and order from your store
-                    </Text>
+                {/* --- 1. TOP CIRCULAR STORE IDENTITY HERO CARD --- */}
+                <View
+                  style={{
+                    backgroundColor: '#FFFFFF',
+                    borderRadius: 20,
+                    padding: 20,
+                    alignItems: 'center',
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    shadowColor: '#000000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.05,
+                    shadowRadius: 8,
+                    elevation: 2,
+                  }}
+                >
+                  {/* Circular Avatar with Camera Edit Badge */}
+                  <View style={{ position: 'relative', marginBottom: 12 }}>
+                    <TouchableOpacity
+                      onPress={handleOpenStoreImageModal}
+                      activeOpacity={0.85}
+                      style={{
+                        width: 96,
+                        height: 96,
+                        borderRadius: 48,
+                        borderWidth: 3,
+                        borderColor: '#056B4B',
+                        overflow: 'hidden',
+                        backgroundColor: '#ECFDF5',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {currentMerchantStore?.image ? (
+                        <Image
+                          source={{
+                            uri: optimizeImageUrl(currentMerchantStore.image, 300, 75),
+                            cache: 'force-cache',
+                          }}
+                          style={{ width: '100%', height: '100%' }}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <Text style={{ fontSize: 32, fontWeight: '900', color: '#056B4B' }}>
+                          {(currentMerchantStore?.name || 'S')
+                            .split(' ')
+                            .map((w) => w[0])
+                            .slice(0, 2)
+                            .join('')
+                            .toUpperCase()}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+
+                    {/* Camera Badge */}
+                    <TouchableOpacity
+                      style={{
+                        position: 'absolute',
+                        bottom: 0,
+                        right: 0,
+                        width: 28,
+                        height: 28,
+                        borderRadius: 14,
+                        backgroundColor: '#056B4B',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderWidth: 2,
+                        borderColor: '#FFFFFF',
+                        elevation: 3,
+                      }}
+                      onPress={handleOpenStoreImageModal}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 12 }}>📷</Text>
+                    </TouchableOpacity>
                   </View>
+
+                  {/* Store Name & Verification Badge */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 4 }}>
+                    <Text style={{ fontSize: 19, fontWeight: '800', color: '#0F172A', textAlign: 'center' }}>
+                      {currentMerchantStore?.name}
+                    </Text>
+                    <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#15803D' }}>✓ VERIFIED</Text>
+                    </View>
+                  </View>
+
+                  {/* Category & Rating */}
+                  <Text style={{ fontSize: 12.5, color: '#64748B', fontWeight: '500', textAlign: 'center', marginBottom: 2 }}>
+                    {currentMerchantStore?.categoryLabel || (currentMerchantStore?.storeType === 'pharmacy' ? 'Licensed Community Pharmacy' : 'Gourmet Groceries & Deli')}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center' }}>
+                    ★ {currentMerchantStore?.rating || '5.0'} ({currentMerchantStore?.reviewCount || '100+'} reviews) • {currentMerchantStore?.district || 'Abuja, Nigeria'}
+                  </Text>
+
+                  {/* Interactive Status Controller Pill */}
                   <TouchableOpacity
-                    style={styles.storePreviewPillBtn}
-                    onPress={() => setSelectedStore(currentMerchantStore)}
-                    activeOpacity={0.85}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      paddingVertical: 9,
+                      paddingHorizontal: 16,
+                      borderRadius: 24,
+                      backgroundColor: storeOpenStatus ? '#ECFDF5' : '#FEF3C7',
+                      borderWidth: 1,
+                      borderColor: storeOpenStatus ? '#A7F3D0' : '#FDE68A',
+                      marginTop: 14,
+                    }}
+                    onPress={handleToggleStoreLive}
+                    activeOpacity={0.8}
                   >
-                    <Text style={styles.storePreviewPillText}>👀 View as Buyer</Text>
+                    <View
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        backgroundColor: storeOpenStatus ? '#10B981' : '#F59E0B',
+                        marginRight: 7,
+                      }}
+                    />
+                    <Text
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: '800',
+                        color: storeOpenStatus ? '#065F46' : '#92400E',
+                      }}
+                    >
+                      {storeOpenStatus
+                        ? '🟢 Store Live & Accepting Orders • Pause ➔'
+                        : '⏸️ Store is Paused • Go Live ➔'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
 
-                {/* --- HERO STORE SHOWCASE CARD --- */}
-                <View style={styles.heroStoreShowcaseCard}>
-                  {/* Banner with Cover Image & Floating Actions */}
-                  <View style={styles.heroStoreBannerWrap}>
-                    <Image
-                      source={{
-                        uri: optimizeImageUrl(currentMerchantStore?.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=500&q=65', 500, 65),
-                        cache: 'force-cache',
+                {/* =========================================================================
+                    A. MAIN PROFILE HUB VIEW (When merchantProfileSubView is null)
+                    ========================================================================= */}
+                {merchantProfileSubView === null && (
+                  <View style={{ marginTop: 18 }}>
+                    {/* 1. Profile & Identity Page Button */}
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        marginBottom: 12,
+                        shadowColor: '#000000',
+                        shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: 0.04,
+                        shadowRadius: 4,
+                        elevation: 1,
                       }}
-                      style={styles.heroStoreBannerImg}
-                      resizeMode="cover"
-                    />
-                    <View style={styles.heroStoreBannerScrim} />
-
-                    {/* Change Cover Photo Floating Action Pill */}
-                    <TouchableOpacity
-                      style={styles.changeCoverBtnFloating}
-                      onPress={handleOpenStoreImageModal}
-                      activeOpacity={0.85}
+                      onPress={() => setMerchantProfileSubView('profile')}
+                      activeOpacity={0.8}
                     >
-                      <Text style={styles.changeCoverBtnIcon}>📸</Text>
-                      <Text style={styles.changeCoverBtnText}>Change Photo</Text>
-                    </TouchableOpacity>
-
-                    {/* Live Operating Status Floating Badge */}
-                    <View style={styles.heroStoreLiveBadgeFloat}>
-                      <View style={[styles.pulseDotSmall, { backgroundColor: storeOpenStatus ? '#10B981' : '#F59E0B' }]} />
-                      <Text style={styles.heroStoreLiveBadgeText}>
-                        {storeOpenStatus ? '🟢 LIVE ON GETIT' : '⏸ PAUSED (OFFLINE)'}
-                      </Text>
-                    </View>
-
-                    {/* Floating Store Brand Avatar */}
-                    <TouchableOpacity
-                      style={styles.floatingStoreAvatar}
-                      onPress={handleOpenStoreImageModal}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.floatingStoreAvatarInitials}>
-                        {(currentMerchantStore?.name || 'S')
-                          .split(' ')
-                          .map((w) => w[0])
-                          .slice(0, 2)
-                          .join('')
-                          .toUpperCase()}
-                      </Text>
-                      <View style={styles.avatarCameraBadge}>
-                        <Text style={{ fontSize: 9 }}>📷</Text>
+                      <View
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 12,
+                          backgroundColor: '#ECFDF5',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          marginRight: 14,
+                          borderWidth: 1,
+                          borderColor: '#A7F3D0',
+                        }}
+                      >
+                        <Text style={{ fontSize: 22 }}>👤</Text>
                       </View>
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Store Identity Content */}
-                  <View style={styles.heroStoreBody}>
-                    <View style={styles.heroStoreTitleRow}>
                       <View style={{ flex: 1, paddingRight: 8 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                          <Text style={styles.heroStoreName} numberOfLines={2}>
-                            {currentMerchantStore?.name}
-                          </Text>
-                          <View style={styles.verifiedPartnerBadge}>
-                            <Text style={styles.verifiedPartnerText}>✓ VERIFIED</Text>
-                          </View>
-                        </View>
-
-                        <View style={styles.heroStoreMetaRow}>
-                          <View style={styles.heroCategoryPill}>
-                            <Text style={styles.heroCategoryText}>
-                              {currentMerchantStore?.categoryLabel || 'Gourmet Groceries & Deli'}
-                            </Text>
-                          </View>
-                          <Text style={styles.heroStoreRatingText}>
-                            ★ {currentMerchantStore?.rating || '5.0'} ({currentMerchantStore?.reviewCount || '100+'} reviews)
-                          </Text>
-                        </View>
+                        <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>
+                          Profile & Identity
+                        </Text>
+                        <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                          Store profile, bio, contact, and GPS map pin
+                        </Text>
                       </View>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: '#056B4B' }}>➔</Text>
+                    </TouchableOpacity>
 
-                      {/* Edit Store Info Button */}
+                    {/* 2. Settings & Operations Page Button */}
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        marginBottom: 12,
+                        shadowColor: '#000000',
+                        shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: 0.04,
+                        shadowRadius: 4,
+                        elevation: 1,
+                      }}
+                      onPress={() => setMerchantProfileSubView('settings')}
+                      activeOpacity={0.8}
+                    >
+                      <View
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 12,
+                          backgroundColor: '#FFFBEB',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          marginRight: 14,
+                          borderWidth: 1,
+                          borderColor: '#FDE68A',
+                        }}
+                      >
+                        <Text style={{ fontSize: 22 }}>⚙️</Text>
+                      </View>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>
+                          Settings & Operations
+                        </Text>
+                        <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                          Customer direct chat, operating hours, catalog
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: '#D97706' }}>➔</Text>
+                    </TouchableOpacity>
+
+                    {/* 3. Business & Branches Page Button */}
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        marginBottom: 12,
+                        shadowColor: '#000000',
+                        shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: 0.04,
+                        shadowRadius: 4,
+                        elevation: 1,
+                      }}
+                      onPress={() => setMerchantProfileSubView('business')}
+                      activeOpacity={0.8}
+                    >
+                      <View
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 12,
+                          backgroundColor: '#FAF5FF',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          marginRight: 14,
+                          borderWidth: 1,
+                          borderColor: '#E9D5FF',
+                        }}
+                      >
+                        <Text style={{ fontSize: 22 }}>🏢</Text>
+                      </View>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>
+                          Business & Branches
+                        </Text>
+                        <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                          Payouts, preview store, and branch switcher
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: '#7C3AED' }}>➔</Text>
+                    </TouchableOpacity>
+
+                    {/* 4. Store Categories & Product Specialisations Manager Button */}
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1.5,
+                        borderColor: '#10B981',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        marginBottom: 12,
+                        shadowColor: '#000000',
+                        shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: 0.04,
+                        shadowRadius: 4,
+                        elevation: 1,
+                      }}
+                      onPress={() => {
+                        const prof = normalizeStoreTaxonomyProfile(currentMerchantStore || {}, marketplaceTaxonomy);
+                        setRegPrimaryDepartmentId(prof.primaryDepartmentId || 'grocery');
+                        setRegStoreTypeFormat(prof.storeTypeFormat || 'supermarket');
+                        setRegSelectedSubcategories(prof.specialisationSubcategories || []);
+                        setRegSelectedVarieties(prof.specialisationProducts || []);
+                        setRegSellsOtherDepartments((prof.additionalDepartmentIds || []).length > 0);
+                        setRegAdditionalDepartments(prof.additionalDepartmentIds || []);
+                        setRegPremisesLicenseNo(prof.premisesLicenseNo || '');
+                        setMerchantTaxonomyModalVisible(true);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <View
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 12,
+                          backgroundColor: '#ECFDF5',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          marginRight: 14,
+                          borderWidth: 1,
+                          borderColor: '#A7F3D0',
+                        }}
+                      >
+                        <Text style={{ fontSize: 22 }}>🐐</Text>
+                      </View>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>
+                          Categories & Specialisations
+                        </Text>
+                        <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                          Primary department, subcategories (e.g. Goat Meat), multi-department tags
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: '#059669' }}>➔</Text>
+                    </TouchableOpacity>
+
+                    {/* Bottom Action Buttons */}
+                    <View style={{ marginTop: 16, gap: 10 }}>
                       <TouchableOpacity
-                        style={styles.editStoreInfoBtn}
-                        onPress={handleOpenEditStoreDetailsModal}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          paddingVertical: 13,
+                          paddingHorizontal: 16,
+                          borderRadius: 12,
+                          backgroundColor: '#ECFDF5',
+                          borderWidth: 1,
+                          borderColor: '#A7F3D0',
+                        }}
+                        onPress={() => setAppMode('customer')}
                         activeOpacity={0.85}
                       >
-                        <Text style={styles.editStoreInfoBtnText}>✏️ Edit Details</Text>
+                        <Text style={{ fontSize: 16, marginRight: 6 }}>🛒</Text>
+                        <Text style={{ fontSize: 13.5, fontWeight: '800', color: '#065F46' }}>
+                          Switch to Customer Shopping Mode ➔
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          paddingVertical: 13,
+                          paddingHorizontal: 16,
+                          borderRadius: 12,
+                          backgroundColor: '#FEF2F2',
+                          borderWidth: 1,
+                          borderColor: '#FECACA',
+                        }}
+                        onPress={handleLogout}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={{ fontSize: 15, marginRight: 6 }}>🚪</Text>
+                        <Text style={{ fontSize: 13.5, fontWeight: '800', color: '#DC2626' }}>
+                          Sign Out from Partner Portal
+                        </Text>
                       </TouchableOpacity>
                     </View>
-
-                    {/* Address & Store Phone */}
-                    <View style={styles.heroStoreLocationBox}>
-                      <Text style={styles.heroStoreLocationText} numberOfLines={2}>
-                        📍 {currentMerchantStore?.address || 'Nigeria'}
-                      </Text>
-                      {currentMerchantStore?.phone ? (
-                        <Text style={styles.heroStorePhoneText}>
-                          📞 Official Order Line: {currentMerchantStore?.phone}
-                        </Text>
-                      ) : null}
-                    </View>
-
-                    {currentMerchantStore?.description ? (
-                      <Text style={styles.heroStoreDescription} numberOfLines={3}>
-                        {currentMerchantStore?.description}
-                      </Text>
-                    ) : null}
-                  </View>
-                </View>
-
-                {/* --- FRIENDLY INTERACTIVE STATUS CONTROLLER CARD --- */}
-                <View style={[styles.friendlyStatusCard, storeOpenStatus ? styles.statusCardLive : styles.statusCardPaused]}>
-                  <View style={{ flex: 1, paddingRight: 12 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 20, marginRight: 8 }}>{storeOpenStatus ? '🟢' : '⏸️'}</Text>
-                      <Text style={styles.friendlyStatusTitle}>
-                        {storeOpenStatus ? 'Store is Live & Accepting Orders' : 'Store is Paused / Taking a Break'}
-                      </Text>
-                    </View>
-                    <Text style={styles.friendlyStatusSub}>
-                      {storeOpenStatus
-                        ? 'Customers in your area can browse your catalog and checkout for rapid dispatch.'
-                        : 'Your products remain saved, but customers will be informed that the store is currently closed.'}
-                    </Text>
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.friendlyStatusToggleBtn, storeOpenStatus ? styles.toggleBtnLive : styles.toggleBtnPaused]}
-                    onPress={handleToggleStoreLive}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.friendlyStatusToggleText}>
-                      {storeOpenStatus ? 'Pause Store' : 'Go Live Now ➔'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* --- 4 OPERATIONAL HIGHLIGHT CARDS (2x2 GRID) --- */}
-                <Text style={styles.sectionHeaderTitle}>Store Highlights & Operations</Text>
-                <View style={styles.storeMetricsGrid}>
-                  {/* Hours Card */}
-                  <TouchableOpacity
-                    style={styles.metricGridCard}
-                    onPress={openTimingModal}
-                    activeOpacity={0.85}
-                  >
-                    <View style={styles.metricCardTop}>
-                      <Text style={{ fontSize: 22 }}>⏰</Text>
-                      <Text style={styles.metricCardActionText}>Adjust ➔</Text>
-                    </View>
-                    <Text style={styles.metricCardLabel}>Operating Schedule</Text>
-                    <Text style={styles.metricCardValue} numberOfLines={1}>
-                      {storeTiming.is24Hours ? '⚡ 24 Hours Daily' : `${storeTiming.openTime} – ${storeTiming.closeTime}`}
-                    </Text>
-                    <Text style={styles.metricCardNote}>{storeTiming.operatingDays}</Text>
-                  </TouchableOpacity>
-
-                  {/* Catalog Card */}
-                  <TouchableOpacity
-                    style={styles.metricGridCard}
-                    onPress={() => setMerchantTab('products')}
-                    activeOpacity={0.85}
-                  >
-                    <View style={styles.metricCardTop}>
-                      <Text style={{ fontSize: 22 }}>📦</Text>
-                      <Text style={styles.metricCardActionText}>Stock ➔</Text>
-                    </View>
-                    <Text style={styles.metricCardLabel}>Catalog Products</Text>
-                    <Text style={styles.metricCardValue}>
-                      {currentMerchantStore?.products?.length || 0} Listed Items
-                    </Text>
-                    <Text style={styles.metricCardNote}>Tap to manage inventory</Text>
-                  </TouchableOpacity>
-
-                  {/* Delivery Logistics */}
-                  <View style={styles.metricGridCard}>
-                    <View style={styles.metricCardTop}>
-                      <Text style={{ fontSize: 22 }}>🚚</Text>
-                      <View style={styles.topMerchantBadge}>
-                        <Text style={{ fontSize: 9.5, color: COLORS.emeraldDeep, fontWeight: '800' }}>AUTOMATED</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.metricCardLabel}>Rider Dispatch</Text>
-                    <Text style={styles.metricCardValue}>
-                      {currentMerchantStore?.deliveryTime || '15-20 min'}
-                    </Text>
-                    <Text style={styles.metricCardNote}>Calculated by distance</Text>
-                  </View>
-
-                  {/* Reputation Card */}
-                  <View style={styles.metricGridCard}>
-                    <View style={styles.metricCardTop}>
-                      <Text style={{ fontSize: 22 }}>⭐</Text>
-                      <View style={styles.topMerchantBadge}>
-                        <Text style={{ fontSize: 10, color: COLORS.emeraldDeep, fontWeight: '800' }}>VERIFIED</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.metricCardLabel}>Customer Rating</Text>
-                    <Text style={styles.metricCardValue}>
-                      {currentMerchantStore?.rating || '5.0'} ★ Luxe
-                    </Text>
-                    <Text style={styles.metricCardNote}>100% Verified Quality</Text>
-                  </View>
-                </View>
-
-                {/* --- QUICK ACTION MANAGEMENT TILES --- */}
-                <View style={styles.quickActionTileList}>
-                  <TouchableOpacity
-                    style={styles.quickActionTile}
-                    onPress={handleOpenStoreImageModal}
-                    activeOpacity={0.85}
-                  >
-                    <View style={styles.quickActionTileIconWrap}>
-                      <Text style={{ fontSize: 22 }}>🖼️</Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.quickActionTileTitle}>Update Store Cover Photo</Text>
-                      <Text style={styles.quickActionTileSub}>Pick from luxury supermarket presets or upload your photo</Text>
-                    </View>
-                    <Text style={styles.quickActionTileArrow}>➔</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.quickActionTile}
-                    onPress={handleOpenEditStoreDetailsModal}
-                    activeOpacity={0.85}
-                  >
-                    <View style={styles.quickActionTileIconWrap}>
-                      <Text style={{ fontSize: 22 }}>🏪</Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.quickActionTileTitle}>Edit Store Profile & Contact</Text>
-                      <Text style={styles.quickActionTileSub}>Modify your store name, business address, and phone number</Text>
-                    </View>
-                    <Text style={styles.quickActionTileArrow}>➔</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.quickActionTile}
-                    onPress={openTimingModal}
-                    activeOpacity={0.85}
-                  >
-                    <View style={styles.quickActionTileIconWrap}>
-                      <Text style={{ fontSize: 22 }}>⏰</Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.quickActionTileTitle}>Set Daily Opening & 24h Schedule</Text>
-                      <Text style={styles.quickActionTileSub}>Configure regular hours or run 24-hours continuously</Text>
-                    </View>
-                    <Text style={styles.quickActionTileArrow}>➔</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* --- CREATE / REGISTER NEW STORE PROMPT --- */}
-                <View style={styles.createStorePromptCard}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={styles.createStoreIconWrap}>
-                      <Text style={{ fontSize: 26 }}>🏬</Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.createStorePromptTitle}>Open a New Branch on GETIT</Text>
-                      <Text style={styles.createStorePromptSub}>
-                        Register a second store or supermarket branch anywhere in Nigeria.
-                      </Text>
-                    </View>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.createStoreLaunchBtn}
-                    onPress={() => setCreateStoreModalVisible(true)}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.createStoreLaunchBtnText}>+ Register & Launch New Branch ✨</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* --- SWITCH STORE BRANCH CARD --- */}
-                {merchantOwnedStores.length > 1 && (
-                  <View style={styles.switchBranchCard}>
-                    <Text style={styles.financeCardTitle}>Select Store Branch to Manage</Text>
-                    <Text style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 12 }}>
-                      Tap any branch below to view its live stock and incoming orders:
-                    </Text>
-                    {merchantOwnedStores.map((st, stIdx) => {
-                      const isSelected = st.id === (merchantStoreId || currentMerchantStore?.id);
-                      return (
-                        <TouchableOpacity
-                          key={`merchant-branch-${st.id}-${stIdx}`}
-                          style={[styles.branchItem, isSelected && styles.branchItemActive]}
-                          onPress={() => handleSelectMerchantBranch(st.id)}
-                          activeOpacity={0.85}
-                        >
-                          <Image
-                            source={{
-                              uri: optimizeImageUrl(st.image || 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=300&q=60', 300, 60),
-                              cache: 'force-cache',
-                            }}
-                            style={styles.branchImageThumb}
-                          />
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.branchName, isSelected && styles.branchNameActive]} numberOfLines={1}>
-                              {st.name}
-                            </Text>
-                            <Text style={styles.branchSub} numberOfLines={1}>
-                              {st.categoryLabel} • {st.address}
-                            </Text>
-                          </View>
-                          {isSelected ? (
-                            <View style={styles.activeBranchCheckBadge}>
-                              <Text style={styles.activeBranchCheckText}>ACTIVE</Text>
-                            </View>
-                          ) : null}
-                        </TouchableOpacity>
-                      );
-                    })}
                   </View>
                 )}
 
-                {/* Switch to Customer View Button */}
-                <TouchableOpacity
-                  style={[styles.merchantSwitchBtn, { marginTop: 14 }]}
-                  onPress={() => setAppMode('customer')}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.merchantSwitchBtnText}>
-                    🛒 Switch to Customer Shopping Mode ➔
-                  </Text>
-                </TouchableOpacity>
+                {/* =========================================================================
+                    B. SUB-PAGE 1: PROFILE & IDENTITY PAGE
+                    ========================================================================= */}
+                {merchantProfileSubView === 'profile' && (
+                  <View style={{ marginTop: 14 }}>
+                    {/* Back Navigation Bar */}
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        alignSelf: 'flex-start',
+                        paddingVertical: 6,
+                        paddingHorizontal: 12,
+                        borderRadius: 20,
+                        backgroundColor: '#F1F5F9',
+                        marginBottom: 14,
+                      }}
+                      onPress={() => setMerchantProfileSubView(null)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#1E293B', marginRight: 4 }}>
+                        ← Back to Hub
+                      </Text>
+                    </TouchableOpacity>
+
+                    <Text style={{ fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 4 }}>
+                      Store Profile & Identity
+                    </Text>
+                    <Text style={{ fontSize: 12.5, color: '#64748B', marginBottom: 16 }}>
+                      Manage how customers discover, contact, and view your store.
+                    </Text>
+
+                    {/* --- TASK BUTTONS CONTAINER --- */}
+                    <View style={{ gap: 12 }}>
+                      {/* 1. Live Customer Preview Button */}
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#F8FAFC',
+                          borderRadius: 16,
+                          padding: 16,
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          shadowColor: '#000000',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.04,
+                          shadowRadius: 4,
+                          elevation: 1,
+                        }}
+                        onPress={() => setSelectedStore(currentMerchantStore)}
+                        activeOpacity={0.8}
+                      >
+                        <View
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 12,
+                            backgroundColor: '#E2E8F0',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginRight: 14,
+                          }}
+                        >
+                          <Text style={{ fontSize: 22 }}>👀</Text>
+                        </View>
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                          <Text style={{ fontSize: 15.5, fontWeight: '800', color: '#0F172A' }}>
+                            Live Customer Preview
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                            See your shelves, live products, and pricing as customers see them
+                          </Text>
+                        </View>
+                        <View
+                          style={{
+                            backgroundColor: '#0F172A',
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: 20,
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
+                            Preview ➔
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      {/* 2. Store Identity & Branding Button */}
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 16,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          shadowColor: '#000000',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.04,
+                          shadowRadius: 4,
+                          elevation: 1,
+                        }}
+                        onPress={() => handleOpenEditStoreDetailsModal('identity')}
+                        activeOpacity={0.8}
+                      >
+                        <View
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 12,
+                            backgroundColor: '#ECFDF5',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginRight: 14,
+                            borderWidth: 1,
+                            borderColor: '#A7F3D0',
+                          }}
+                        >
+                          <Text style={{ fontSize: 22 }}>🏪</Text>
+                        </View>
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                          <Text style={{ fontSize: 15.5, fontWeight: '800', color: '#0F172A' }}>
+                            Store Identity & Branding
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                            Store business name, category tag, and branding
+                          </Text>
+                        </View>
+                        <View
+                          style={{
+                            backgroundColor: '#ECFDF5',
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: 20,
+                            borderWidth: 1,
+                            borderColor: '#A7F3D0',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#056B4B' }}>
+                            Identity ➔
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      {/* 3. Storefront Banner & Photo Button */}
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 16,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          shadowColor: '#000000',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.04,
+                          shadowRadius: 4,
+                          elevation: 1,
+                        }}
+                        onPress={() => handleOpenEditStoreDetailsModal('photo')}
+                        activeOpacity={0.8}
+                      >
+                        <View
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 12,
+                            backgroundColor: '#FEF3C7',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginRight: 14,
+                            borderWidth: 1,
+                            borderColor: '#FDE68A',
+                          }}
+                        >
+                          <Text style={{ fontSize: 22 }}>📸</Text>
+                        </View>
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                          <Text style={{ fontSize: 15.5, fontWeight: '800', color: '#0F172A' }}>
+                            Storefront Banner & Photo
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                            Upload custom cover photo or select luxury curated store presets
+                          </Text>
+                        </View>
+                        <View
+                          style={{
+                            backgroundColor: '#FFFBEB',
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: 20,
+                            borderWidth: 1,
+                            borderColor: '#FDE68A',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#B45309' }}>
+                            Photo ➔
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      {/* 4. Location & Customer Contact Button */}
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 16,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          shadowColor: '#000000',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.04,
+                          shadowRadius: 4,
+                          elevation: 1,
+                        }}
+                        onPress={() => handleOpenEditStoreDetailsModal('location')}
+                        activeOpacity={0.8}
+                      >
+                        <View
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 12,
+                            backgroundColor: '#F0F9FF',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginRight: 14,
+                            borderWidth: 1,
+                            borderColor: '#BAE6FD',
+                          }}
+                        >
+                          <Text style={{ fontSize: 22 }}>📍</Text>
+                        </View>
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                          <Text style={{ fontSize: 15.5, fontWeight: '800', color: '#0F172A' }}>
+                            Location & Customer Contact
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                            {currentMerchantStore?.address || 'Set pickup address, official phone & GPS map pin'}
+                          </Text>
+                        </View>
+                        <View
+                          style={{
+                            backgroundColor: '#F0F9FF',
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: 20,
+                            borderWidth: 1,
+                            borderColor: '#BAE6FD',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#0284C7' }}>
+                            Location ➔
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      {/* 5. Store Bio & Specialty Button */}
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 16,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          shadowColor: '#000000',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.04,
+                          shadowRadius: 4,
+                          elevation: 1,
+                        }}
+                        onPress={() => handleOpenEditStoreDetailsModal('bio')}
+                        activeOpacity={0.8}
+                      >
+                        <View
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 12,
+                            backgroundColor: '#FAF5FF',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginRight: 14,
+                            borderWidth: 1,
+                            borderColor: '#E9D5FF',
+                          }}
+                        >
+                          <Text style={{ fontSize: 22 }}>📝</Text>
+                        </View>
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                          <Text style={{ fontSize: 15.5, fontWeight: '800', color: '#0F172A' }}>
+                            Store Bio & Specialty
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                            {currentMerchantStore?.description || 'Tell buyers about fresh arrivals, imports & specialties'}
+                          </Text>
+                        </View>
+                        <View
+                          style={{
+                            backgroundColor: '#FAF5FF',
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: 20,
+                            borderWidth: 1,
+                            borderColor: '#E9D5FF',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#7C3AED' }}>
+                            Bio ➔
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      {/* 6. Allow Customer In-App Chat Button */}
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 16,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          shadowColor: '#000000',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.04,
+                          shadowRadius: 4,
+                          elevation: 1,
+                        }}
+                        onPress={() => handleOpenEditStoreDetailsModal('chat')}
+                        activeOpacity={0.8}
+                      >
+                        <View
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 12,
+                            backgroundColor: currentMerchantStore?.allowCustomerMessaging !== false ? '#ECFDF5' : '#F1F5F9',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginRight: 14,
+                            borderWidth: 1,
+                            borderColor: currentMerchantStore?.allowCustomerMessaging !== false ? '#A7F3D0' : '#E2E8F0',
+                          }}
+                        >
+                          <Text style={{ fontSize: 22 }}>
+                            {currentMerchantStore?.allowCustomerMessaging !== false ? '💬' : '🔇'}
+                          </Text>
+                        </View>
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                          <Text style={{ fontSize: 15.5, fontWeight: '800', color: '#0F172A' }}>
+                            Allow Customer In-App Chat
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                            {currentMerchantStore?.allowCustomerMessaging !== false
+                              ? '🟢 Chat enabled for customer orders and questions'
+                              : '🔇 Direct chat disabled • Shoppers call official line'}
+                          </Text>
+                        </View>
+                        <View
+                          style={{
+                            backgroundColor: currentMerchantStore?.allowCustomerMessaging !== false ? '#ECFDF5' : '#F1F5F9',
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: 20,
+                            borderWidth: 1,
+                            borderColor: currentMerchantStore?.allowCustomerMessaging !== false ? '#A7F3D0' : '#CBD5E1',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: currentMerchantStore?.allowCustomerMessaging !== false ? '#056B4B' : '#64748B' }}>
+                            Chat ➔
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                {/* =========================================================================
+                    C. SUB-PAGE 2: SETTINGS & OPERATIONS PAGE
+                    ========================================================================= */}
+                {merchantProfileSubView === 'settings' && (
+                  <View style={{ marginTop: 14 }}>
+                    {/* Back Navigation Bar */}
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        alignSelf: 'flex-start',
+                        paddingVertical: 6,
+                        paddingHorizontal: 12,
+                        borderRadius: 20,
+                        backgroundColor: '#F1F5F9',
+                        marginBottom: 14,
+                      }}
+                      onPress={() => setMerchantProfileSubView(null)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#1E293B', marginRight: 4 }}>
+                        ← Back to Hub
+                      </Text>
+                    </TouchableOpacity>
+
+                    <Text style={{ fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 4 }}>
+                      Settings & Operations
+                    </Text>
+                    <Text style={{ fontSize: 12.5, color: '#64748B', marginBottom: 16 }}>
+                      Manage customer messaging, opening hours, and catalog inventory.
+                    </Text>
+
+                    {/* Customer Direct Chat Card */}
+                    {currentMerchantStore?.storeType !== 'pharmacy' &&
+                    currentMerchantStore?.category !== 'pharmacy' &&
+                    !(currentMerchantStore?.categoryLabel && currentMerchantStore.categoryLabel.toLowerCase().includes('pharm')) ? (
+                      <View
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 16,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          marginBottom: 14,
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: currentMerchantStore?.allowCustomerMessaging !== false ? '#ECFDF5' : '#F1F5F9', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                              <Text style={{ fontSize: 18 }}>
+                                {currentMerchantStore?.allowCustomerMessaging !== false ? '💬' : '🔇'}
+                              </Text>
+                            </View>
+                            <Text style={{ fontSize: 15, fontWeight: '800', color: '#1E293B' }}>
+                              Customer Direct Chat
+                            </Text>
+                          </View>
+                          <Switch
+                            value={currentMerchantStore?.allowCustomerMessaging !== false}
+                            onValueChange={handleToggleStoreMessaging}
+                            trackColor={{ false: '#CBD5E1', true: '#10B981' }}
+                            thumbColor="#FFFFFF"
+                          />
+                        </View>
+                        <Text style={{ fontSize: 12.5, color: '#64748B', lineHeight: 18 }}>
+                          {currentMerchantStore?.allowCustomerMessaging !== false
+                            ? '🟢 Active: Shoppers can send in-app messages and real-time questions regarding their orders.'
+                            : '🔇 Paused: Direct in-app messaging is turned off. Customers will be prompted to call your official store phone.'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <View
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 16,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          marginBottom: 14,
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                              <Text style={{ fontSize: 18 }}>🩺</Text>
+                            </View>
+                            <Text style={{ fontSize: 15, fontWeight: '800', color: '#1E293B' }}>
+                              Clinical Tele-Pharmacy
+                            </Text>
+                          </View>
+                          <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#15803D' }}>ACTIVE</Text>
+                          </View>
+                        </View>
+                        <Text style={{ fontSize: 12.5, color: '#2563EB', lineHeight: 18 }}>
+                          Prescription verification and tele-consultation messaging remain enabled 24/7 in compliance with healthcare regulations.
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Operating Hours Card */}
+                    <View
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        marginBottom: 14,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                        <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#FFFBEB', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                          <Text style={{ fontSize: 18 }}>⏰</Text>
+                        </View>
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#1E293B' }}>
+                          Operating Hours & Schedule
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A', marginTop: 2 }}>
+                        {storeTiming.is24Hours ? '⚡ Open 24 Hours Daily' : `${storeTiming.openTime} – ${storeTiming.closeTime}`}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2, marginBottom: 12 }}>
+                        Active Days: {storeTiming.operatingDays}
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FFFBEB',
+                          borderRadius: 10,
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          alignItems: 'center',
+                          borderWidth: 1,
+                          borderColor: '#FDE68A',
+                        }}
+                        onPress={openTimingModal}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#B45309' }}>
+                          ⏰ Adjust Store Hours & Schedule ➔
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Catalog & Inventory Card */}
+                    <View
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        marginBottom: 14,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                        <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#FAF5FF', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                          <Text style={{ fontSize: 18 }}>📦</Text>
+                        </View>
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#1E293B' }}>
+                          Catalog & Products
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A', marginTop: 2 }}>
+                        {currentMerchantStore?.products?.length || 0} Listed Items
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2, marginBottom: 12 }}>
+                        Update prices, toggle item stock availability, and manage categories.
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FAF5FF',
+                          borderRadius: 10,
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          alignItems: 'center',
+                          borderWidth: 1,
+                          borderColor: '#E9D5FF',
+                        }}
+                        onPress={() => setMerchantTab('inventory')}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#7C3AED' }}>
+                          📦 Open Catalog & Stock Manager ➔
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                {/* =========================================================================
+                    D. SUB-PAGE 3: BUSINESS & BRANCHES PAGE
+                    ========================================================================= */}
+                {merchantProfileSubView === 'business' && (
+                  <View style={{ marginTop: 14 }}>
+                    {/* Back Navigation Bar */}
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        alignSelf: 'flex-start',
+                        paddingVertical: 6,
+                        paddingHorizontal: 12,
+                        borderRadius: 20,
+                        backgroundColor: '#F1F5F9',
+                        marginBottom: 14,
+                      }}
+                      onPress={() => setMerchantProfileSubView(null)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#1E293B', marginRight: 4 }}>
+                        ← Back to Hub
+                      </Text>
+                    </TouchableOpacity>
+
+                    <Text style={{ fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 4 }}>
+                      Business & Branches
+                    </Text>
+                    <Text style={{ fontSize: 12.5, color: '#64748B', marginBottom: 16 }}>
+                      Manage payouts, preview public storefront, and switch branches.
+                    </Text>
+
+                    {/* Bank Account & Payouts Card */}
+                    <View
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        marginBottom: 14,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                        <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#ECFDF5', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                          <Text style={{ fontSize: 18 }}>🏦</Text>
+                        </View>
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#1E293B' }}>
+                          Bank Account & Settlements
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 12.5, color: '#64748B', marginBottom: 12 }}>
+                        View daily settlement balance, payout history, and linked business bank account.
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#ECFDF5',
+                          borderRadius: 10,
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          alignItems: 'center',
+                          borderWidth: 1,
+                          borderColor: '#A7F3D0',
+                        }}
+                        onPress={() => setMerchantTab('finances')}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#056B4B' }}>
+                          🏦 Open Finances & Payouts ➔
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* View as Buyer Card */}
+                    <View
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        marginBottom: 14,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                        <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                          <Text style={{ fontSize: 18 }}>👀</Text>
+                        </View>
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#1E293B' }}>
+                          Public Store Preview
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 12.5, color: '#64748B', marginBottom: 12 }}>
+                        Preview how shoppers across Abuja see your storefront, prices, and products.
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#F8FAFC',
+                          borderRadius: 10,
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          alignItems: 'center',
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                        }}
+                        onPress={() => setSelectedStore(currentMerchantStore)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#334155' }}>
+                          👀 Preview Storefront as Customer ➔
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Open a New Branch Card */}
+                    <View
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        marginBottom: 14,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                        <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#FFF7ED', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                          <Text style={{ fontSize: 18 }}>🏬</Text>
+                        </View>
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#1E293B' }}>
+                          Expand & Open New Branch
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 12.5, color: '#64748B', marginBottom: 12 }}>
+                        Register an additional supermarket, grocery, or dispensary branch.
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FFF7ED',
+                          borderRadius: 10,
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          alignItems: 'center',
+                          borderWidth: 1,
+                          borderColor: '#FED7AA',
+                        }}
+                        onPress={() => setCreateStoreModalVisible(true)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#EA580C' }}>
+                          + Register New Branch ✨
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Multi-Store Branch Switcher */}
+                    {merchantOwnedStores.length > 1 && (
+                      <View
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 16,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          marginBottom: 14,
+                        }}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: '#1E293B', marginBottom: 10 }}>
+                          Your Branches ({merchantOwnedStores.length})
+                        </Text>
+                        {merchantOwnedStores.map((st, idx) => {
+                          const isSelected = st.id === (merchantStoreId || currentMerchantStore?.id);
+                          return (
+                            <TouchableOpacity
+                              key={`store-sub-branch-${st.id}`}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                padding: 12,
+                                backgroundColor: isSelected ? '#ECFDF5' : '#F8FAFC',
+                                borderRadius: 10,
+                                borderWidth: 1,
+                                borderColor: isSelected ? '#A7F3D0' : '#E2E8F0',
+                                marginBottom: idx < merchantOwnedStores.length - 1 ? 8 : 0,
+                              }}
+                              onPress={() => handleSelectMerchantBranch(st.id)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 20, marginRight: 10 }}>{st.storeType === 'pharmacy' ? '💊' : '🛒'}</Text>
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ fontSize: 13.5, fontWeight: isSelected ? '800' : '600', color: isSelected ? '#065F46' : '#1E293B' }} numberOfLines={1}>
+                                  {st.name}
+                                </Text>
+                                <Text style={{ fontSize: 11, color: '#64748B' }} numberOfLines={1}>
+                                  {st.district || st.address || 'Abuja'}
+                                </Text>
+                              </View>
+                              {isSelected ? (
+                                <View style={{ backgroundColor: '#10B981', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
+                                  <Text style={{ color: '#FFFFFF', fontSize: 9.5, fontWeight: '800' }}>ACTIVE</Text>
+                                </View>
+                              ) : (
+                                <Text style={{ fontSize: 11.5, color: '#64748B', fontWeight: '700' }}>Switch ➔</Text>
+                              )}
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
+                )}
               </ScrollView>
             )}
 
@@ -19273,7 +25869,14 @@ Support: help@getit.ng | Abuja, Nigeria`;
               {/* Category */}
               <Text style={[styles.customFieldLabel, { marginTop: 16 }]}>CATEGORY</Text>
               <View style={styles.customCatChoicesRow}>
-                {['Produce', 'Pantry', 'Drinks', 'Biscuits', 'Household', 'Deli/Bakery'].map((cat) => (
+                {Array.from(
+                  new Set(
+                    [
+                      ...(storeCatalogConfig?.customCategoryChips || ['Pantry']),
+                      editProductCategory,
+                    ].filter(Boolean)
+                  )
+                ).map((cat) => (
                   <TouchableOpacity
                     key={cat}
                     style={[
@@ -19660,7 +26263,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   addModalTab === 'suggested' && styles.addModalTabTextActive,
                 ]}
               >
-                ⚡ Suggested Catalog ({NIGERIAN_GROCERIES_CATALOG.length})
+                ⚡ Suggested Catalog ({(storeCatalogConfig?.allowedProducts || []).length})
               </Text>
             </TouchableOpacity>
 
@@ -19683,14 +26286,17 @@ Support: help@getit.ng | Abuja, Nigeria`;
             </TouchableOpacity>
           </View>
 
-          {/* TAB 1: SUGGESTED NIGERIAN GROCERIES (1-TAP QUICK ADD) */}
+          {/* TAB 1: SUGGESTED DEPARTMENT-MATCHED CATALOG (1-TAP QUICK ADD) */}
           {addModalTab === 'suggested' && (
             <View style={{ flex: 1, backgroundColor: COLORS.beigeBg }}>
               {/* Search Bar */}
               <View style={styles.addSearchWrap}>
                 <TextInput
                   style={styles.addSearchInput}
-                  placeholder="🔍 Search groceries, drinks, biscuits, skincare, panadol, indomie..."
+                  placeholder={
+                    storeCatalogConfig?.searchPlaceholder ||
+                    '🔍 Search products in your store category...'
+                  }
                   placeholderTextColor="#94A3B8"
                   value={suggestedSearch}
                   onChangeText={setSuggestedSearch}
@@ -19705,23 +26311,14 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 )}
               </View>
 
-              {/* Category Filter Pills */}
+              {/* Category Filter Pills (Strictly matched to this store's department!) */}
               <View style={{ height: 44 }}>
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.addCategoryScroll}
                 >
-                  {[
-                    { id: 'All', label: '🛒 All Products (General Store)' },
-                    { id: 'Pharmacy', label: '💊 Pharmacy & Healthcare' },
-                    { id: 'Pantry', label: '🍚 Groceries & Pantry' },
-                    { id: 'Drinks', label: '🥤 Drinks & Beverages' },
-                    { id: 'Biscuits', label: '🍪 Biscuits & Snacks' },
-                    { id: 'Skincare', label: '🧴 Skincare & Personal Care' },
-                    { id: 'Baby Care', label: '👶 Baby Care & Nutrition' },
-                    { id: 'Household', label: '🧼 Household & Cleaning' },
-                  ].map((cat) => {
+                  {(storeCatalogConfig?.categoryFilterPills || [{ id: 'All', label: '🛒 All Store Products' }]).map((cat) => {
                     const active = suggestedCategoryFilter === cat.id;
                     return (
                       <TouchableOpacity
@@ -19746,7 +26343,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 </ScrollView>
               </View>
 
-              {/* Suggested Groceries List (High Performance Virtualized FlatList) */}
+              {/* Suggested Store Products List (High Performance Virtualized FlatList) */}
               <FlatList
                 data={filteredSuggestedProducts}
                 keyExtractor={(item) => item.id}
@@ -19760,8 +26357,11 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 ListHeaderComponent={
                   <Text style={styles.addListHeaderNote}>
                     {suggestedCategoryFilter === 'All'
-                      ? 'Showing all everyday supermarket items (Pantry, Drinks, Snacks, Skincare, Baby & Household). For medicines and health supplies, select the Pharmacy & Healthcare category.'
-                      : `Showing items in ${suggestedCategoryFilter}. Tap the '+' sign to add any item to your shop with 1 click.`}
+                      ? `Showing ${storeCatalogConfig?.catalogTitle || 'Store Catalog'} tailored exclusively for ${currentMerchantStore?.name || 'your shop'}. Tap '+ Add to Store' to stock any item with 1 click.`
+                      : `Showing ${
+                          (storeCatalogConfig?.categoryFilterPills || []).find((p) => p.id === suggestedCategoryFilter)?.label ||
+                          suggestedCategoryFilter
+                        } for ${currentMerchantStore?.name || 'your shop'}. Tap '+ Add to Store' to stock any item with 1 click.`}
                   </Text>
                 }
                 ListEmptyComponent={
@@ -19769,7 +26369,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     <Text style={{ fontSize: 32, marginBottom: 8 }}>🔍</Text>
                     <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.textDark }}>No matching products</Text>
                     <Text style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 4, textAlign: 'center' }}>
-                      Try a different search term or category filter.
+                      Try a different search term or category filter, or switch to the Custom Product tab to upload your own item.
                     </Text>
                   </View>
                 }
@@ -19797,7 +26397,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         </View>
                         <View style={{ flex: 1, marginLeft: 10 }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={styles.suggestedCategoryTag}>{item.category.toUpperCase()}</Text>
+                            <Text style={styles.suggestedCategoryTag}>{String(item?.category || 'PROVISIONS').toUpperCase()}</Text>
                             <Text style={styles.suggestedRangeTag}>Range: {item.priceRange}</Text>
                           </View>
                           <Text style={styles.suggestedTitle}>{item.name}</Text>
@@ -19857,7 +26457,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
               <View style={styles.customHeroCard}>
                 <Text style={styles.customHeroTitle}>Add Custom Store Product</Text>
                 <Text style={styles.customHeroSub}>
-                  Upload a photo of your product, choose its category, and set your custom selling price.
+                  Upload a photo of your product, choose its category in {storeCatalogConfig?.catalogTitle || 'your store'}, and set your selling price.
                 </Text>
 
                 {/* Product Photo Upload Section */}
@@ -19890,12 +26490,12 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   </TouchableOpacity>
                 )}
 
-                {/* Fallback Icon Selector */}
+                {/* Fallback Icon Selector (Tailored to Store Department) */}
                 {!customProductImage && (
                   <View style={{ marginTop: 12 }}>
                     <Text style={styles.customFieldSubLabel}>Or choose an emoji icon:</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
-                      {['🛍️', '🥩', '🥖', '🍾', '🍯', '🥑', '🍅', '🧀', '🫒', '🐟', '🍉', '☕'].map((ico) => (
+                      {(storeCatalogConfig?.customEmojiIcons || ['🛍️', '🥩', '🥬', '🍎', '🐟', '🌾', '🥐']).map((ico) => (
                         <TouchableOpacity
                           key={ico}
                           style={[
@@ -19915,7 +26515,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 <Text style={[styles.customFieldLabel, { marginTop: 14 }]}>PRODUCT NAME</Text>
                 <TextInput
                   style={styles.customTextInput}
-                  placeholder="e.g. Fresh Goat Meat (500g Cut)"
+                  placeholder={storeCatalogConfig?.customNamePlaceholder || 'e.g. Fresh Goat Meat (500g Cut)'}
                   placeholderTextColor="#94A3B8"
                   value={customProductName}
                   onChangeText={setCustomProductName}
@@ -19932,10 +26532,10 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   onChangeText={setCustomProductPrice}
                 />
 
-                {/* Category Selection */}
+                {/* Category Selection (Strictly matched to Store Department) */}
                 <Text style={[styles.customFieldLabel, { marginTop: 14 }]}>CATEGORY</Text>
                 <View style={styles.customCatChoicesRow}>
-                  {['Produce', 'Pantry', 'Drinks', 'Biscuits', 'Household', 'Deli/Bakery'].map((cat) => (
+                  {(storeCatalogConfig?.customCategoryChips || ['Pantry']).map((cat) => (
                     <TouchableOpacity
                       key={cat}
                       style={[
@@ -20463,19 +27063,31 @@ Support: help@getit.ng | Abuja, Nigeria`;
               <Text style={styles.formLabel}>STORE CATEGORY *</Text>
               <View style={styles.categoryPillWrap}>
                 {[
-                  { id: 'Gourmet Marts', icon: '🛒', label: 'Gourmet Mart' },
-                  { id: 'Organic & Fresh', icon: '🌿', label: 'Organic & Produce' },
-                  { id: 'Artisan Bakery', icon: '🥖', label: 'Artisan Bakery' },
-                  { id: 'Pantry & Cellar', icon: '🍷', label: 'Pantry & Cellar' },
-                  { id: 'Local Specialties', icon: '🌾', label: 'Local Staples' },
-                  { id: 'Pharmacy & Health', icon: '💊', label: 'Pharmacy & Health' },
+                  { id: 'Gourmet Marts', deptId: 'grocery', format: 'supermarket', icon: '🛒', label: 'Supermarket / Mart' },
+                  { id: 'Meat & Poultry Shop', deptId: 'meat_poultry', format: 'butcher', icon: '🥩', label: 'Butcher / Meat Shop' },
+                  { id: 'Vegetable Shop', deptId: 'vegetables', format: 'greengrocer', icon: '🥬', label: 'Vegetable Shop' },
+                  { id: 'Fruit Shop', deptId: 'fruits', format: 'fruit_shop', icon: '🍎', label: 'Fruit Shop' },
+                  { id: 'Fish & Seafood Shop', deptId: 'fish_seafood', format: 'fishmonger', icon: '🐟', label: 'Fish & Seafood' },
+                  { id: 'Grains & Foodstuff', deptId: 'grains_foodstuff', format: 'grains_foodstuff', icon: '🌾', label: 'Grains & Foodstuff' },
+                  { id: 'Artisan Bakery', deptId: 'bakery', format: 'bakery', icon: '🥖', label: 'Artisan Bakery' },
+                  { id: 'Pantry & Cellar', deptId: 'drinks_beverages', format: 'drinks_beverages', icon: '🍷', label: 'Drinks & Cellar' },
+                  { id: 'Pharmacy & Health', deptId: 'pharmacy', format: 'pharmacy', icon: '💊', label: 'Pharmacy & Health' },
                 ].map((cat) => {
                   const active = newStoreCategory === cat.id;
                   return (
                     <TouchableOpacity
                       key={cat.id}
                       style={[styles.customCatPill, active && styles.customCatPillActive]}
-                      onPress={() => setNewStoreCategory(cat.id)}
+                      onPress={() => {
+                        setNewStoreCategory(cat.id);
+                        setRegPrimaryDepartmentId(cat.deptId);
+                        setRegStoreTypeFormat(cat.format);
+                        setNewStoreType(cat.deptId === 'pharmacy' ? 'pharmacy' : 'grocery');
+                        if (!newStoreHasCustomCover) {
+                          const catImgs = getCategoryCoverOptions(cat.deptId, cat.format);
+                          if (catImgs.length > 0) setNewStoreCoverImage(catImgs[0].url);
+                        }
+                      }}
                     >
                       <Text style={{ fontSize: 13, marginRight: 6 }}>{cat.icon}</Text>
                       <Text style={[styles.customCatPillText, active && styles.customCatPillTextActive]}>
@@ -20487,35 +27099,128 @@ Support: help@getit.ng | Abuja, Nigeria`;
               </View>
             </View>
 
+            {/* Category-Specific Storefront Image Selector + Custom Upload Button */}
+            {(() => {
+              const coverOpts = getCategoryCoverOptions(regPrimaryDepartmentId, regStoreTypeFormat);
+              const activeCover =
+                newStoreCoverImage ||
+                coverOpts[0]?.url ||
+                getDefaultStoreCoverImage(regPrimaryDepartmentId, regStoreTypeFormat);
+              return (
+                <View style={styles.formGroup}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text style={styles.formLabel}>STORE MAIN COVER IMAGE *</Text>
+                    <TouchableOpacity
+                      onPress={() =>
+                        handlePickCustomRegistrationImage(setNewStoreCoverImage, setNewStoreHasCustomCover)
+                      }
+                      style={{
+                        backgroundColor: '#064E3B',
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 8,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <Text style={{ fontSize: 12 }}>📷</Text>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#FFFFFF' }}>
+                        Upload Custom Photo
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View
+                    style={{
+                      height: 120,
+                      borderRadius: 12,
+                      overflow: 'hidden',
+                      marginBottom: 8,
+                      borderWidth: 1,
+                      borderColor: '#CBD5E1',
+                    }}
+                  >
+                    <Image source={{ uri: activeCover }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                    {coverOpts.map((imgOpt) => {
+                      const isChosen = activeCover === imgOpt.url;
+                      return (
+                        <TouchableOpacity
+                          key={imgOpt.id}
+                          onPress={() => {
+                            setNewStoreCoverImage(imgOpt.url);
+                            setNewStoreHasCustomCover(false);
+                          }}
+                          style={{
+                            width: 112,
+                            borderRadius: 10,
+                            overflow: 'hidden',
+                            backgroundColor: '#FFFFFF',
+                            borderWidth: isChosen ? 2.5 : 1,
+                            borderColor: isChosen ? '#059669' : '#CBD5E1',
+                          }}
+                        >
+                          <Image source={{ uri: imgOpt.url }} style={{ width: '100%', height: 62 }} resizeMode="cover" />
+                          <View style={{ paddingHorizontal: 6, paddingVertical: 4 }}>
+                            <Text
+                              style={{
+                                fontSize: 9.5,
+                                fontWeight: isChosen ? '900' : '700',
+                                color: isChosen ? '#064E3B' : '#334155',
+                              }}
+                              numberOfLines={1}
+                            >
+                              {isChosen ? `✓ ${imgOpt.label}` : imgOpt.label}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              );
+            })()}
+
             {/* District Location Selection */}
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>ABUJA DISTRICT / ZONE *</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text style={styles.formLabel}>STORE DISTRICT / ZONE *</Text>
+                <TouchableOpacity
+                  onPress={() => handleDetectRegistrationGps(true)}
+                  disabled={isFetchingRegGps}
+                  style={{
+                    backgroundColor: '#064E3B',
+                    paddingHorizontal: 10,
+                    paddingVertical: 5,
+                    borderRadius: 8,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  {isFetchingRegGps ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={{ fontSize: 11 }}>🎯</Text>
+                  )}
+                  <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
+                    {isFetchingRegGps ? 'Locating...' : 'Use Live GPS'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
               <View style={styles.categoryPillWrap}>
-                {[
-                  'Maitama District, Abuja',
-                  'Wuse 2, Abuja',
-                  'Asokoro Presidential Wing, Abuja',
-                  'Jabi District, Abuja',
-                  'Gwarinpa Estate, Abuja',
-                  'Garki District, Abuja',
-                  'Katampe, Abuja',
-                  'Guzape District, Abuja',
-                ].map((dist) => {
-                  const active = newStoreDistrict === dist;
-                  const shortName = dist
-                    .split(',')[0]
-                    .replace(' Presidential Wing', '')
-                    .replace(' District', '')
-                    .replace(' Estate', '');
+                {REGISTRATION_STORE_DISTRICTS.map((distObj) => {
+                  const active = newStoreDistrict === distObj.district;
                   return (
                     <TouchableOpacity
-                      key={dist}
+                      key={distObj.district}
                       style={[styles.customCatPill, active && styles.customCatPillActive]}
-                      onPress={() => setNewStoreDistrict(dist)}
+                      onPress={() => handleSelectRegDistrict(distObj, true)}
                     >
                       <Text style={{ fontSize: 12, marginRight: 4 }}>📍</Text>
                       <Text style={[styles.customCatPillText, active && styles.customCatPillTextActive]}>
-                        {shortName}
+                        {distObj.label}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -20533,6 +27238,55 @@ Support: help@getit.ng | Abuja, Nigeria`;
                 value={newStoreAddress}
                 onChangeText={setNewStoreAddress}
               />
+            </View>
+
+            {/* Interactive Store GPS Map Pin */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>PIN STOREFRONT ON MAP (TAP OR DRAG PIN) *</Text>
+              <View style={[styles.storeMiniMapContainer, { height: 150, marginTop: 4 }]}>
+                <MapView
+                  ref={createStoreMiniMapRef}
+                  style={styles.storeMiniMap}
+                  initialRegion={{
+                    latitude: Number(newStoreLatitude) || 9.0882,
+                    longitude: Number(newStoreLongitude) || 7.4933,
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
+                  }}
+                  scrollEnabled={true}
+                  zoomEnabled={true}
+                  showsUserLocation={true}
+                  showsMyLocationButton={false}
+                  onPress={(e) => {
+                    if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                      setNewStoreLatitude(e.nativeEvent.coordinate.latitude);
+                      setNewStoreLongitude(e.nativeEvent.coordinate.longitude);
+                    }
+                  }}
+                >
+                  <Marker
+                    coordinate={{
+                      latitude: Number(newStoreLatitude) || 9.0882,
+                      longitude: Number(newStoreLongitude) || 7.4933,
+                    }}
+                    draggable={true}
+                    onDragEnd={(e) => {
+                      if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                        setNewStoreLatitude(e.nativeEvent.coordinate.latitude);
+                        setNewStoreLongitude(e.nativeEvent.coordinate.longitude);
+                      }
+                    }}
+                    title={newStoreName || 'New Storefront'}
+                    description={newStoreDistrict}
+                    pinColor={COLORS.emeraldPrimary}
+                  />
+                </MapView>
+                <View style={styles.storeMiniMapBadge}>
+                  <Text style={styles.storeMiniMapBadgeText}>
+                    🎯 Pinned: {(Number(newStoreLatitude) || 9.0882).toFixed(4)}° N, {(Number(newStoreLongitude) || 7.4933).toFixed(4)}° E
+                  </Text>
+                </View>
+              </View>
             </View>
 
             {/* Phone & Delivery Fee Row */}
@@ -20588,13 +27342,16 @@ Support: help@getit.ng | Abuja, Nigeria`;
 
             {/* Submit Button */}
             <TouchableOpacity
-              style={[styles.primaryActionBtn, { marginTop: 12 }]}
+              style={[styles.primaryActionBtn, { marginTop: 12 }, isCreatingStore && { opacity: 0.75 }]}
               onPress={handleCreateStore}
               disabled={isCreatingStore}
               activeOpacity={0.85}
             >
               {isCreatingStore ? (
-                <ActivityIndicator color="#FFFFFF" />
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                  <Text style={styles.primaryActionBtnText}>Checking & Launching Store...</Text>
+                </View>
               ) : (
                 <Text style={styles.primaryActionBtnText}>
                   🚀 Launch Store on GETIT ➔
@@ -21237,8 +27994,32 @@ Support: help@getit.ng | Abuja, Nigeria`;
             </TouchableOpacity>
 
             <View style={styles.editProfileHeaderCenter}>
-              <Text style={styles.editProfileHeaderTitle}>🏪 Store Profile</Text>
-              <Text style={styles.editProfileHeaderSub}>Live Storefront Settings</Text>
+              <Text style={styles.editProfileHeaderTitle}>
+                {editStoreActiveSection === 'identity'
+                  ? '🏪 Store Identity'
+                  : editStoreActiveSection === 'photo'
+                  ? '📸 Storefront Photo'
+                  : editStoreActiveSection === 'location'
+                  ? '📍 Location & Contact'
+                  : editStoreActiveSection === 'bio'
+                  ? '📝 Store Bio'
+                  : editStoreActiveSection === 'chat'
+                  ? '💬 In-App Messaging'
+                  : '🏪 Store Profile'}
+              </Text>
+              <Text style={styles.editProfileHeaderSub}>
+                {editStoreActiveSection === 'identity'
+                  ? 'Name & Category'
+                  : editStoreActiveSection === 'photo'
+                  ? 'Cover Banner & Presets'
+                  : editStoreActiveSection === 'location'
+                  ? 'Address, Phone & GPS Pin'
+                  : editStoreActiveSection === 'bio'
+                  ? 'Bio & Specialties'
+                  : editStoreActiveSection === 'chat'
+                  ? 'Shopper Chat Settings'
+                  : 'Live Storefront Settings'}
+              </Text>
             </View>
 
             <TouchableOpacity
@@ -21257,339 +28038,319 @@ Support: help@getit.ng | Abuja, Nigeria`;
             showsVerticalScrollIndicator={false}
           >
             {/* 1. LIVE STORE CARD PREVIEW */}
-            <View style={styles.editProfileSectionHeader}>
-              <Text style={styles.editProfileSectionTitle}>👁️ Live Customer Preview</Text>
-              <Text style={styles.editProfileSectionSub}>Real-time preview of how your shop appears to buyers</Text>
-            </View>
+            {(editStoreActiveSection === 'all' || editStoreActiveSection === 'photo') && (
+              <View>
+                <View style={styles.editProfileSectionHeader}>
+                  <Text style={styles.editProfileSectionTitle}>👁️ Live Customer Preview</Text>
+                  <Text style={styles.editProfileSectionSub}>Real-time preview of how your shop appears to buyers</Text>
+                </View>
 
-            <View style={styles.editProfilePreviewCard}>
-              <View style={styles.editProfilePreviewImageWrap}>
-                <Image
-                  source={{
-                    uri:
-                      editStoreImage ||
-                      currentMerchantStore?.image ||
-                      'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=1200&q=80',
-                  }}
-                  style={styles.editProfilePreviewImage}
-                  resizeMode="cover"
-                />
-                <View style={styles.editProfilePreviewGradientOverlay} />
+                <View style={styles.editProfilePreviewCard}>
+                  <View style={styles.editProfilePreviewImageWrap}>
+                    <Image
+                      source={{
+                        uri:
+                          editStoreImage ||
+                          currentMerchantStore?.image ||
+                          'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=1200&q=80',
+                      }}
+                      style={styles.editProfilePreviewImage}
+                      resizeMode="cover"
+                    />
+                    <View style={styles.editProfilePreviewGradientOverlay} />
 
-                {/* Badges on preview image */}
-                <View style={styles.editProfilePreviewBadgesRow}>
-                  <View style={styles.editProfilePreviewBadge}>
-                    <Text style={styles.editProfilePreviewBadgeText}>✨ VERIFIED PARTNER</Text>
+                    {/* Badges on preview image */}
+                    <View style={styles.editProfilePreviewBadgesRow}>
+                      <View style={styles.editProfilePreviewBadge}>
+                        <Text style={styles.editProfilePreviewBadgeText}>✨ VERIFIED PARTNER</Text>
+                      </View>
+                      <View style={[styles.editProfilePreviewBadge, { backgroundColor: 'rgba(16, 185, 129, 0.9)' }]}>
+                        <Text style={styles.editProfilePreviewBadgeText}>● OPEN NOW</Text>
+                      </View>
+                    </View>
+
+                    {/* Quick overlay change photo button */}
+                    <TouchableOpacity
+                      style={styles.editProfilePreviewChangePhotoBtn}
+                      onPress={handlePickEditStoreImage}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.editProfilePreviewChangePhotoText}>📷 Change Cover</Text>
+                    </TouchableOpacity>
                   </View>
-                  <View style={[styles.editProfilePreviewBadge, { backgroundColor: 'rgba(16, 185, 129, 0.9)' }]}>
-                    <Text style={styles.editProfilePreviewBadgeText}>● OPEN NOW</Text>
+
+                  <View style={styles.editProfilePreviewDetails}>
+                    <Text style={styles.editProfilePreviewStoreName} numberOfLines={1}>
+                      {editStoreName || 'Your Store Name'}
+                    </Text>
+                    <View style={styles.editProfilePreviewMetaRow}>
+                      <View style={styles.editProfilePreviewCategoryTag}>
+                        <Text style={styles.editProfilePreviewCategoryText} numberOfLines={1}>
+                          🏷️ {editStoreCategory || 'Gourmet Groceries'}
+                        </Text>
+                      </View>
+                      <View style={styles.editProfilePreviewFeeTag}>
+                        <Text style={styles.editProfilePreviewFeeText}>
+                          ⚡ Rapid Courier Dispatch
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.editProfilePreviewAddress} numberOfLines={1}>
+                      📍 {editStoreAddress || 'Add your store address'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* 2. CARD: STORE IDENTITY */}
+            {(editStoreActiveSection === 'all' || editStoreActiveSection === 'identity') && (
+              <View style={styles.editProfileCard}>
+                <View style={styles.editProfileCardHeader}>
+                  <View style={styles.editProfileCardIconBox}>
+                    <Text style={{ fontSize: 18 }}>🏪</Text>
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.editProfileCardTitle}>Store Identity & Branding</Text>
+                    <Text style={styles.editProfileCardSubtitle}>Your business name and grocery category</Text>
                   </View>
                 </View>
 
-                {/* Quick overlay change photo button */}
+                {/* Store Name Input */}
+                <View style={styles.editProfileInputGroup}>
+                  <Text style={styles.editProfileInputLabel}>STORE / BUSINESS NAME *</Text>
+                  <View style={styles.editProfileInputWrap}>
+                    <Text style={styles.editProfileInputLeadingIcon}>🏪</Text>
+                    <TextInput
+                      style={styles.editProfileInput}
+                      value={editStoreName}
+                      onChangeText={setEditStoreName}
+                      placeholder="e.g. Fresh Mart Maitama"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    {editStoreName.length > 0 && (
+                      <TouchableOpacity onPress={() => setEditStoreName('')} style={styles.editProfileClearBtn}>
+                        <Text style={{ color: '#94A3B8', fontSize: 14 }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <Text style={styles.editProfileInputHint}>Appears prominently at the top of customer search results</Text>
+                </View>
+
+                {/* Store Category Input */}
+                <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
+                  <Text style={styles.editProfileInputLabel}>PRIMARY CATEGORY *</Text>
+                  <View style={styles.editProfileInputWrap}>
+                    <Text style={styles.editProfileInputLeadingIcon}>🏷️</Text>
+                    <TextInput
+                      style={styles.editProfileInput}
+                      value={editStoreCategory}
+                      onChangeText={setEditStoreCategory}
+                      placeholder="e.g. Gourmet Groceries & Deli"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+
+                  {/* Quick Category Chips */}
+                  <Text style={[styles.editProfileInputHint, { marginTop: 8, marginBottom: 6, fontWeight: '700' }]}>
+                    ⚡ Tap to choose a popular category:
+                  </Text>
+                  <View style={styles.editProfileChipsWrap}>
+                    {[
+                      { label: 'Gourmet Groceries & Deli', icon: '🛒' },
+                      { label: 'Farm-to-Table & Produce', icon: '🥦' },
+                      { label: 'French Bakery & Pastries', icon: '🥐' },
+                      { label: 'Sommelier & Luxury Pantry', icon: '🍾' },
+                      { label: 'Supermarket & Provisions', icon: '🏪' },
+                      { label: 'Pharmacy & Health', icon: '💊' },
+                      { label: 'Premium Nigerian Staples', icon: '🥩' },
+                      { label: 'Artisan Cafe & Treats', icon: '☕' },
+                    ].map((cat) => {
+                      const isSelected = editStoreCategory === cat.label;
+                      return (
+                        <TouchableOpacity
+                          key={cat.label}
+                          style={[styles.editProfileChip, isSelected && styles.editProfileChipSelected]}
+                          onPress={() => setEditStoreCategory(cat.label)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.editProfileChipIcon}>{cat.icon}</Text>
+                          <Text style={[styles.editProfileChipText, isSelected && styles.editProfileChipTextSelected]}>
+                            {cat.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* 3. CARD: STOREFRONT COVER PHOTO */}
+            {(editStoreActiveSection === 'all' || editStoreActiveSection === 'photo') && (
+              <View style={styles.editProfileCard}>
+                <View style={styles.editProfileCardHeader}>
+                  <View style={styles.editProfileCardIconBox}>
+                    <Text style={{ fontSize: 18 }}>📸</Text>
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.editProfileCardTitle}>Storefront Banner & Photo</Text>
+                    <Text style={styles.editProfileCardSubtitle}>High-res photo to represent your storefront</Text>
+                  </View>
+                </View>
+
+                {/* Upload Action Button */}
                 <TouchableOpacity
-                  style={styles.editProfilePreviewChangePhotoBtn}
+                  style={styles.editProfileUploadBtn}
                   onPress={handlePickEditStoreImage}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.editProfilePreviewChangePhotoText}>📷 Change Cover</Text>
+                  <View style={styles.editProfileUploadBtnIconBox}>
+                    <Text style={{ fontSize: 20 }}>📁</Text>
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.editProfileUploadBtnTitle}>Upload Photo from Device</Text>
+                    <Text style={styles.editProfileUploadBtnSubtitle}>Choose any image or logo from your photo gallery</Text>
+                  </View>
+                  <Text style={styles.editProfileUploadBtnArrow}>➔</Text>
                 </TouchableOpacity>
-              </View>
 
-              <View style={styles.editProfilePreviewDetails}>
-                <Text style={styles.editProfilePreviewStoreName} numberOfLines={1}>
-                  {editStoreName || 'Your Store Name'}
+                {/* Luxury Preset Swatches */}
+                <Text style={[styles.editProfileInputHint, { marginTop: 14, marginBottom: 8, fontWeight: '700' }]}>
+                  ✨ Or select a curated luxury storefront:
                 </Text>
-                <View style={styles.editProfilePreviewMetaRow}>
-                  <View style={styles.editProfilePreviewCategoryTag}>
-                    <Text style={styles.editProfilePreviewCategoryText} numberOfLines={1}>
-                      🏷️ {editStoreCategory || 'Gourmet Groceries'}
-                    </Text>
-                  </View>
-                  <View style={styles.editProfilePreviewFeeTag}>
-                    <Text style={styles.editProfilePreviewFeeText}>
-                      ⚡ Rapid Courier Dispatch
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.editProfilePreviewAddress} numberOfLines={1}>
-                  📍 {editStoreAddress || 'Add your store address'}
-                </Text>
-              </View>
-            </View>
-
-            {/* 2. CARD: STORE IDENTITY */}
-            <View style={styles.editProfileCard}>
-              <View style={styles.editProfileCardHeader}>
-                <View style={styles.editProfileCardIconBox}>
-                  <Text style={{ fontSize: 18 }}>🏪</Text>
-                </View>
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.editProfileCardTitle}>Store Identity & Branding</Text>
-                  <Text style={styles.editProfileCardSubtitle}>Your business name and grocery category</Text>
-                </View>
-              </View>
-
-              {/* Store Name Input */}
-              <View style={styles.editProfileInputGroup}>
-                <Text style={styles.editProfileInputLabel}>STORE / BUSINESS NAME *</Text>
-                <View style={styles.editProfileInputWrap}>
-                  <Text style={styles.editProfileInputLeadingIcon}>🏪</Text>
-                  <TextInput
-                    style={styles.editProfileInput}
-                    value={editStoreName}
-                    onChangeText={setEditStoreName}
-                    placeholder="e.g. Fresh Mart Maitama"
-                    placeholderTextColor="#94A3B8"
-                  />
-                  {editStoreName.length > 0 && (
-                    <TouchableOpacity onPress={() => setEditStoreName('')} style={styles.editProfileClearBtn}>
-                      <Text style={{ color: '#94A3B8', fontSize: 14 }}>✕</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <Text style={styles.editProfileInputHint}>Appears prominently at the top of customer search results</Text>
-              </View>
-
-              {/* Store Category Input */}
-              <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
-                <Text style={styles.editProfileInputLabel}>PRIMARY CATEGORY *</Text>
-                <View style={styles.editProfileInputWrap}>
-                  <Text style={styles.editProfileInputLeadingIcon}>🏷️</Text>
-                  <TextInput
-                    style={styles.editProfileInput}
-                    value={editStoreCategory}
-                    onChangeText={setEditStoreCategory}
-                    placeholder="e.g. Gourmet Groceries & Deli"
-                    placeholderTextColor="#94A3B8"
-                  />
-                </View>
-
-                {/* Quick Category Chips */}
-                <Text style={[styles.editProfileInputHint, { marginTop: 8, marginBottom: 6, fontWeight: '700' }]}>
-                  ⚡ Tap to choose a popular category:
-                </Text>
-                <View style={styles.editProfileChipsWrap}>
-                  {[
-                    { label: 'Gourmet Groceries & Deli', icon: '🛒' },
-                    { label: 'Farm-to-Table & Produce', icon: '🥦' },
-                    { label: 'French Bakery & Pastries', icon: '🥐' },
-                    { label: 'Sommelier & Luxury Pantry', icon: '🍾' },
-                    { label: 'Supermarket & Provisions', icon: '🏪' },
-                    { label: 'Pharmacy & Health', icon: '💊' },
-                    { label: 'Premium Nigerian Staples', icon: '🥩' },
-                    { label: 'Artisan Cafe & Treats', icon: '☕' },
-                  ].map((cat) => {
-                    const isSelected = editStoreCategory === cat.label;
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 10, paddingVertical: 4 }}
+                >
+                  {STORE_COVER_PRESETS.map((preset) => {
+                    const isCur = (editStoreImage || currentMerchantStore?.image) === preset.url;
                     return (
                       <TouchableOpacity
-                        key={cat.label}
-                        style={[styles.editProfileChip, isSelected && styles.editProfileChipSelected]}
-                        onPress={() => setEditStoreCategory(cat.label)}
-                        activeOpacity={0.8}
+                        key={preset.id}
+                        style={[styles.editProfilePresetThumbCard, isCur && styles.editProfilePresetThumbCardActive]}
+                        onPress={() => setEditStoreImage(preset.url)}
+                        activeOpacity={0.85}
                       >
-                        <Text style={styles.editProfileChipIcon}>{cat.icon}</Text>
-                        <Text style={[styles.editProfileChipText, isSelected && styles.editProfileChipTextSelected]}>
-                          {cat.label}
-                        </Text>
+                        <Image source={{ uri: preset.url }} style={styles.editProfilePresetThumbImg} />
+                        <View style={styles.editProfilePresetThumbFooter}>
+                          <Text style={{ fontSize: 11 }}>{preset.icon}</Text>
+                          <Text style={styles.editProfilePresetThumbTitle} numberOfLines={1}>
+                            {preset.title}
+                          </Text>
+                        </View>
+                        {isCur && (
+                          <View style={styles.editProfilePresetCheckBadge}>
+                            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>✓</Text>
+                          </View>
+                        )}
                       </TouchableOpacity>
                     );
                   })}
+                </ScrollView>
+
+                {/* URL input */}
+                <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
+                  <Text style={styles.editProfileInputLabel}>OR PASTE PHOTO URL</Text>
+                  <View style={styles.editProfileInputWrap}>
+                    <Text style={styles.editProfileInputLeadingIcon}>🔗</Text>
+                    <TextInput
+                      style={styles.editProfileInput}
+                      value={editStoreImage}
+                      onChangeText={setEditStoreImage}
+                      placeholder="https://images.unsplash.com/..."
+                      placeholderTextColor="#94A3B8"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  </View>
                 </View>
               </View>
-            </View>
-
-            {/* 3. CARD: STOREFRONT COVER PHOTO */}
-            <View style={styles.editProfileCard}>
-              <View style={styles.editProfileCardHeader}>
-                <View style={styles.editProfileCardIconBox}>
-                  <Text style={{ fontSize: 18 }}>📸</Text>
-                </View>
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.editProfileCardTitle}>Storefront Banner & Photo</Text>
-                  <Text style={styles.editProfileCardSubtitle}>High-res photo to represent your storefront</Text>
-                </View>
-              </View>
-
-              {/* Upload Action Button */}
-              <TouchableOpacity
-                style={styles.editProfileUploadBtn}
-                onPress={handlePickEditStoreImage}
-                activeOpacity={0.85}
-              >
-                <View style={styles.editProfileUploadBtnIconBox}>
-                  <Text style={{ fontSize: 20 }}>📁</Text>
-                </View>
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.editProfileUploadBtnTitle}>Upload Photo from Device</Text>
-                  <Text style={styles.editProfileUploadBtnSubtitle}>Choose any image or logo from your photo gallery</Text>
-                </View>
-                <Text style={styles.editProfileUploadBtnArrow}>➔</Text>
-              </TouchableOpacity>
-
-              {/* Luxury Preset Swatches */}
-              <Text style={[styles.editProfileInputHint, { marginTop: 14, marginBottom: 8, fontWeight: '700' }]}>
-                ✨ Or select a curated luxury storefront:
-              </Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: 10, paddingVertical: 4 }}
-              >
-                {STORE_COVER_PRESETS.map((preset) => {
-                  const isCur = (editStoreImage || currentMerchantStore?.image) === preset.url;
-                  return (
-                    <TouchableOpacity
-                      key={preset.id}
-                      style={[styles.editProfilePresetThumbCard, isCur && styles.editProfilePresetThumbCardActive]}
-                      onPress={() => setEditStoreImage(preset.url)}
-                      activeOpacity={0.85}
-                    >
-                      <Image source={{ uri: preset.url }} style={styles.editProfilePresetThumbImg} />
-                      <View style={styles.editProfilePresetThumbFooter}>
-                        <Text style={{ fontSize: 11 }}>{preset.icon}</Text>
-                        <Text style={styles.editProfilePresetThumbTitle} numberOfLines={1}>
-                          {preset.title}
-                        </Text>
-                      </View>
-                      {isCur && (
-                        <View style={styles.editProfilePresetCheckBadge}>
-                          <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>✓</Text>
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {/* URL input */}
-              <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
-                <Text style={styles.editProfileInputLabel}>OR PASTE PHOTO URL</Text>
-                <View style={styles.editProfileInputWrap}>
-                  <Text style={styles.editProfileInputLeadingIcon}>🔗</Text>
-                  <TextInput
-                    style={styles.editProfileInput}
-                    value={editStoreImage}
-                    onChangeText={setEditStoreImage}
-                    placeholder="https://images.unsplash.com/..."
-                    placeholderTextColor="#94A3B8"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                </View>
-              </View>
-            </View>
+            )}
 
             {/* 4. CARD: LOCATION & CONTACT */}
-            <View style={styles.editProfileCard}>
-              <View style={styles.editProfileCardHeader}>
-                <View style={styles.editProfileCardIconBox}>
-                  <Text style={{ fontSize: 18 }}>📍</Text>
-                </View>
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.editProfileCardTitle}>Location & Customer Contact</Text>
-                  <Text style={styles.editProfileCardSubtitle}>Pickup address and merchant support phone</Text>
-                </View>
-              </View>
-
-              {/* Address */}
-              <View style={styles.editProfileInputGroup}>
-                <Text style={styles.editProfileInputLabel}>PHYSICAL ADDRESS / LANDMARK *</Text>
-                <View style={styles.editProfileInputWrap}>
-                  <Text style={styles.editProfileInputLeadingIcon}>📍</Text>
-                  <TextInput
-                    style={styles.editProfileInput}
-                    value={editStoreAddress}
-                    onChangeText={setEditStoreAddress}
-                    placeholder="e.g. Plot 14 Gana Street, Maitama, Abuja"
-                    placeholderTextColor="#94A3B8"
-                  />
-                </View>
-                <Text style={styles.editProfileInputHint}>Riders and shoppers navigate here for pickup orders</Text>
-              </View>
-
-              {/* Phone */}
-              <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
-                <Text style={styles.editProfileInputLabel}>OFFICIAL PHONE / WHATSAPP NUMBER *</Text>
-                <View style={styles.editProfileInputWrap}>
-                  <Text style={styles.editProfileInputLeadingIcon}>📞</Text>
-                  <TextInput
-                    style={styles.editProfileInput}
-                    value={editStorePhone}
-                    onChangeText={setEditStorePhone}
-                    placeholder="e.g. +234 803 123 4567"
-                    placeholderTextColor="#94A3B8"
-                    keyboardType="phone-pad"
-                  />
-                </View>
-                <Text style={styles.editProfileInputHint}>Used for order notifications and dispatch rider calls</Text>
-              </View>
-
-              {/* Store GPS Map Location Box */}
-              <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={styles.editProfileInputLabel}>STOREFRONT GPS PIN ON MAP *</Text>
-                  <TouchableOpacity
-                    onPress={() => setStoreMapModalVisible(true)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={{ fontSize: 11, fontWeight: '800', color: COLORS.emeraldPrimary }}>
-                      ⛶ Fullscreen ➔
-                    </Text>
-                  </TouchableOpacity>
+            {(editStoreActiveSection === 'all' || editStoreActiveSection === 'location') && (
+              <View style={styles.editProfileCard}>
+                <View style={styles.editProfileCardHeader}>
+                  <View style={styles.editProfileCardIconBox}>
+                    <Text style={{ fontSize: 18 }}>📍</Text>
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.editProfileCardTitle}>Location & Customer Contact</Text>
+                    <Text style={styles.editProfileCardSubtitle}>Pickup address and merchant support phone</Text>
+                  </View>
                 </View>
 
-                <View style={styles.storeMiniMapContainer}>
-                  <MapView
-                    ref={storeMiniMapRef}
-                    style={styles.storeMiniMap}
-                    initialRegion={{
-                      latitude: Number(editStoreLatitude) || 9.0882,
-                      longitude: Number(editStoreLongitude) || 7.4933,
-                      latitudeDelta: 0.008,
-                      longitudeDelta: 0.008,
-                    }}
-                    scrollEnabled={true}
-                    zoomEnabled={true}
-                    pitchEnabled={true}
-                    rotateEnabled={true}
-                    zoomTapEnabled={true}
-                    zoomControlEnabled={false}
-                    showsUserLocation={true}
-                    showsMyLocationButton={false}
-                    onRegionChangeComplete={(r) => {
-                      if (r) setStoreMapRegion(r);
-                    }}
-                    onPress={(e) => {
-                      if (e && e.nativeEvent && e.nativeEvent.coordinate) {
-                        const { latitude, longitude } = e.nativeEvent.coordinate;
-                        setEditStoreLatitude(latitude);
-                        setEditStoreLongitude(longitude);
-                        setStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
-                      }
-                    }}
-                  >
-                    {/* Live Phone Location Blue Dot Beacon */}
-                    {userLiveCoords && (
-                      <Marker
-                        coordinate={userLiveCoords}
-                        title="📱 Your Current Phone Location"
-                        description="Live GPS position of your phone"
-                        anchor={{ x: 0.5, y: 0.5 }}
-                      >
-                        <View style={styles.liveBeaconOuter}>
-                          <View style={styles.liveBeaconInner} />
-                        </View>
-                      </Marker>
-                    )}
+                {/* Address */}
+                <View style={styles.editProfileInputGroup}>
+                  <Text style={styles.editProfileInputLabel}>PHYSICAL ADDRESS / LANDMARK *</Text>
+                  <View style={styles.editProfileInputWrap}>
+                    <Text style={styles.editProfileInputLeadingIcon}>📍</Text>
+                    <TextInput
+                      style={styles.editProfileInput}
+                      value={editStoreAddress}
+                      onChangeText={setEditStoreAddress}
+                      placeholder="e.g. Plot 14 Gana Street, Maitama, Abuja"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+                  <Text style={styles.editProfileInputHint}>Riders and shoppers navigate here for pickup orders</Text>
+                </View>
 
-                    <Marker
-                      coordinate={{
+                {/* Phone */}
+                <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
+                  <Text style={styles.editProfileInputLabel}>OFFICIAL PHONE / WHATSAPP NUMBER *</Text>
+                  <View style={styles.editProfileInputWrap}>
+                    <Text style={styles.editProfileInputLeadingIcon}>📞</Text>
+                    <TextInput
+                      style={styles.editProfileInput}
+                      value={editStorePhone}
+                      onChangeText={setEditStorePhone}
+                      placeholder="e.g. +234 803 123 4567"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="phone-pad"
+                    />
+                  </View>
+                  <Text style={styles.editProfileInputHint}>Used for order notifications and dispatch rider calls</Text>
+                </View>
+
+                {/* Store GPS Map Location Box */}
+                <View style={[styles.editProfileInputGroup, { marginTop: 14 }]}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.editProfileInputLabel}>STOREFRONT GPS PIN ON MAP *</Text>
+                    <TouchableOpacity
+                      onPress={() => setStoreMapModalVisible(true)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: COLORS.emeraldPrimary }}>
+                        ⛶ Fullscreen ➔
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.storeMiniMapContainer}>
+                    <MapView
+                      ref={storeMiniMapRef}
+                      style={styles.storeMiniMap}
+                      initialRegion={{
                         latitude: Number(editStoreLatitude) || 9.0882,
                         longitude: Number(editStoreLongitude) || 7.4933,
+                        latitudeDelta: 0.008,
+                        longitudeDelta: 0.008,
                       }}
-                      draggable={true}
-                      onDragEnd={(e) => {
+                      scrollEnabled={true}
+                      zoomEnabled={true}
+                      pitchEnabled={true}
+                      rotateEnabled={true}
+                      zoomTapEnabled={true}
+                      zoomControlEnabled={false}
+                      showsUserLocation={true}
+                      showsMyLocationButton={false}
+                      onRegionChangeComplete={(r) => {
+                        if (r) setStoreMapRegion(r);
+                      }}
+                      onPress={(e) => {
                         if (e && e.nativeEvent && e.nativeEvent.coordinate) {
                           const { latitude, longitude } = e.nativeEvent.coordinate;
                           setEditStoreLatitude(latitude);
@@ -21597,99 +28358,181 @@ Support: help@getit.ng | Abuja, Nigeria`;
                           setStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
                         }
                       }}
-                      title={editStoreName || 'Your Store'}
-                      description="Drag or tap to place shop pin"
-                      pinColor={COLORS.emeraldPrimary}
-                    />
-                  </MapView>
-
-                  {/* Top Guide Hint Pill */}
-                  <View style={styles.storeMiniMapTopHint}>
-                    <Text style={styles.storeMiniMapTopHintText} numberOfLines={1}>
-                      👆 Drag pin to shop • 🔵 Blue dot = Phone GPS
-                    </Text>
-                  </View>
-
-                  {/* Mini Map Floating Zoom FABs */}
-                  <View style={styles.storeMiniMapZoomFabCol}>
-                    <TouchableOpacity
-                      style={styles.storeMiniMapZoomBtn}
-                      onPress={() => handleZoomStoreMiniMap(true)}
-                      activeOpacity={0.8}
                     >
-                      <Text style={styles.storeMiniMapZoomText}>➕</Text>
-                    </TouchableOpacity>
+                      {/* Live Phone Location Blue Dot Beacon */}
+                      {userLiveCoords && (
+                        <Marker
+                          coordinate={userLiveCoords}
+                          title="📱 Your Current Phone Location"
+                          description="Live GPS position of your phone"
+                          anchor={{ x: 0.5, y: 0.5 }}
+                        >
+                          <View style={styles.liveBeaconOuter}>
+                            <View style={styles.liveBeaconInner} />
+                          </View>
+                        </Marker>
+                      )}
+
+                      <Marker
+                        coordinate={{
+                          latitude: Number(editStoreLatitude) || 9.0882,
+                          longitude: Number(editStoreLongitude) || 7.4933,
+                        }}
+                        draggable={true}
+                        onDragEnd={(e) => {
+                          if (e && e.nativeEvent && e.nativeEvent.coordinate) {
+                            const { latitude, longitude } = e.nativeEvent.coordinate;
+                            setEditStoreLatitude(latitude);
+                            setEditStoreLongitude(longitude);
+                            setStoreMapRegion((prev) => ({ ...prev, latitude, longitude }));
+                          }
+                        }}
+                        title={editStoreName || 'Your Store'}
+                        description="Drag or tap to place shop pin"
+                        pinColor={COLORS.emeraldPrimary}
+                      />
+                    </MapView>
+
+                    {/* Top Guide Hint Pill */}
+                    <View style={styles.storeMiniMapTopHint}>
+                      <Text style={styles.storeMiniMapTopHintText} numberOfLines={1}>
+                        👆 Drag pin to shop • 🔵 Blue dot = Phone GPS
+                      </Text>
+                    </View>
+
+                    {/* Mini Map Floating Zoom FABs */}
+                    <View style={styles.storeMiniMapZoomFabCol}>
+                      <TouchableOpacity
+                        style={styles.storeMiniMapZoomBtn}
+                        onPress={() => handleZoomStoreMiniMap(true)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.storeMiniMapZoomText}>➕</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.storeMiniMapZoomBtn}
+                        onPress={() => handleZoomStoreMiniMap(false)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.storeMiniMapZoomText}>➖</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Overlay Coordinates Pill */}
+                    <View style={styles.storeMiniMapBadge}>
+                      <Text style={styles.storeMiniMapBadgeText}>
+                        🎯 Pinned: {(Number(editStoreLatitude) || 9.0882).toFixed(4)}° N, {(Number(editStoreLongitude) || 7.4933).toFixed(4)}° E
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Map Pin Action Buttons Row */}
+                  <View style={styles.storeMapActionRow}>
                     <TouchableOpacity
-                      style={styles.storeMiniMapZoomBtn}
-                      onPress={() => handleZoomStoreMiniMap(false)}
-                      activeOpacity={0.8}
+                      style={styles.storeMapOpenBtn}
+                      onPress={() => setStoreMapModalVisible(true)}
+                      activeOpacity={0.85}
                     >
-                      <Text style={styles.storeMiniMapZoomText}>➖</Text>
+                      <Text style={styles.storeMapOpenBtnText}>📍 Pin on Fullscreen Map ➔</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.storeMapGpsBtn}
+                      onPress={handleGetMerchantStoreLiveLocation}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.storeMapGpsBtnText}>🎯 Locate GPS</Text>
                     </TouchableOpacity>
                   </View>
-
-                  {/* Overlay Coordinates Pill */}
-                  <View style={styles.storeMiniMapBadge}>
-                    <Text style={styles.storeMiniMapBadgeText}>
-                      🎯 Pinned: {(Number(editStoreLatitude) || 9.0882).toFixed(4)}° N, {(Number(editStoreLongitude) || 7.4933).toFixed(4)}° E
-                    </Text>
-                  </View>
+                  <Text style={styles.editProfileInputHint}>
+                    This pin ensures buyers in your neighborhood discover your shop on the map and receive accurate delivery estimates.
+                  </Text>
                 </View>
-
-                {/* Map Pin Action Buttons Row */}
-                <View style={styles.storeMapActionRow}>
-                  <TouchableOpacity
-                    style={styles.storeMapOpenBtn}
-                    onPress={() => setStoreMapModalVisible(true)}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.storeMapOpenBtnText}>📍 Pin on Fullscreen Map ➔</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.storeMapGpsBtn}
-                    onPress={handleGetMerchantStoreLiveLocation}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.storeMapGpsBtnText}>🎯 Locate GPS</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.editProfileInputHint}>
-                  This pin ensures buyers in your neighborhood discover your shop on the map and receive accurate delivery estimates.
-                </Text>
               </View>
-            </View>
+            )}
 
             {/* 5. CARD: ABOUT & SPECIALTY */}
-            <View style={styles.editProfileCard}>
-              <View style={styles.editProfileCardHeader}>
-                <View style={styles.editProfileCardIconBox}>
-                  <Text style={{ fontSize: 18 }}>📝</Text>
+            {(editStoreActiveSection === 'all' || editStoreActiveSection === 'bio') && (
+              <View style={styles.editProfileCard}>
+                <View style={styles.editProfileCardHeader}>
+                  <View style={styles.editProfileCardIconBox}>
+                    <Text style={{ fontSize: 18 }}>📝</Text>
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.editProfileCardTitle}>Store Bio & Specialty</Text>
+                    <Text style={styles.editProfileCardSubtitle}>Tell buyers about fresh arrivals, imports & specialty</Text>
+                  </View>
                 </View>
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.editProfileCardTitle}>Store Bio & Specialty</Text>
-                  <Text style={styles.editProfileCardSubtitle}>Tell buyers about fresh arrivals, imports & specialty</Text>
-                </View>
-              </View>
 
-              <View style={styles.editProfileInputGroup}>
-                <Text style={styles.editProfileInputLabel}>STORE DESCRIPTION</Text>
-                <View style={[styles.editProfileInputWrap, { alignItems: 'flex-start', paddingTop: 10 }]}>
-                  <Text style={[styles.editProfileInputLeadingIcon, { marginTop: 2 }]}>✍️</Text>
-                  <TextInput
-                    style={[styles.editProfileInput, { height: 90, textAlignVertical: 'top' }]}
-                    value={editStoreDescription}
-                    onChangeText={setEditStoreDescription}
-                    placeholder="Describe your store (e.g. Daily fresh organic produce, imported European cheese, fine wines, and same-day doorstep dispatch)..."
-                    placeholderTextColor="#94A3B8"
-                    multiline
-                  />
+                <View style={styles.editProfileInputGroup}>
+                  <Text style={styles.editProfileInputLabel}>STORE DESCRIPTION</Text>
+                  <View style={[styles.editProfileInputWrap, { alignItems: 'flex-start', paddingTop: 10 }]}>
+                    <Text style={[styles.editProfileInputLeadingIcon, { marginTop: 2 }]}>✍️</Text>
+                    <TextInput
+                      style={[styles.editProfileInput, { height: 90, textAlignVertical: 'top' }]}
+                      value={editStoreDescription}
+                      onChangeText={setEditStoreDescription}
+                      placeholder="Describe your store (e.g. Daily fresh organic produce, imported European cheese, fine wines, and same-day doorstep dispatch)..."
+                      placeholderTextColor="#94A3B8"
+                      multiline
+                    />
+                  </View>
+                  <Text style={styles.editProfileInputHint}>
+                    A friendly, welcoming bio helps build shopper confidence and increases orders.
+                  </Text>
                 </View>
-                <Text style={styles.editProfileInputHint}>
-                  A friendly, welcoming bio helps build shopper confidence and increases orders.
-                </Text>
               </View>
-            </View>
+            )}
+
+            {/* 6. CARD: CUSTOMER DIRECT MESSAGING (Non-Pharmacy Only) */}
+            {(editStoreActiveSection === 'all' || editStoreActiveSection === 'chat') && (
+              currentMerchantStore?.storeType === 'pharmacy' ||
+              currentMerchantStore?.category === 'pharmacy' ||
+              (currentMerchantStore?.categoryLabel && currentMerchantStore.categoryLabel.toLowerCase().includes('pharm')) ? (
+                <View style={[styles.editProfileCard, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
+                  <View style={styles.editProfileCardHeader}>
+                    <View style={[styles.editProfileCardIconBox, { backgroundColor: '#DCFCE7' }]}>
+                      <Text style={{ fontSize: 18 }}>🩺</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={[styles.editProfileCardTitle, { color: '#065F46' }]}>Tele-Pharmacy Consultations Active</Text>
+                      <Text style={[styles.editProfileCardSubtitle, { color: '#047857' }]}>
+                        Clinical pharmacist chat & prescription verification remain enabled 24/7 for patient safety regulations.
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.editProfileCard}>
+                  <View style={styles.editProfileCardHeader}>
+                    <View style={[styles.editProfileCardIconBox, { backgroundColor: editStoreAllowMessaging ? '#ECFDF5' : '#F1F5F9' }]}>
+                      <Text style={{ fontSize: 18 }}>{editStoreAllowMessaging ? '💬' : '🔇'}</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.editProfileCardTitle}>Allow Customer In-App Chat</Text>
+                      <Text style={styles.editProfileCardSubtitle}>
+                        {editStoreAllowMessaging
+                          ? 'Customers can chat directly regarding orders and stock'
+                          : 'Direct in-app messaging is turned off for customers'}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={editStoreAllowMessaging}
+                      onValueChange={setEditStoreAllowMessaging}
+                      trackColor={{ false: '#CBD5E1', true: '#10B981' }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </View>
+                  <View style={{ marginTop: 8, padding: 10, borderRadius: 8, backgroundColor: editStoreAllowMessaging ? '#F0FDF4' : '#F8FAFC' }}>
+                    <Text style={{ fontSize: 12, color: editStoreAllowMessaging ? '#065F46' : '#64748B', lineHeight: 17 }}>
+                      {editStoreAllowMessaging
+                        ? '✅ Chat Enabled: Customers who order from your shop can send you in-app questions, voice notes, and item inquiries.'
+                        : '🔇 Chat Disabled: Customers will not be able to send in-app messages. They will be directed to call your official order phone line instead.'}
+                    </Text>
+                  </View>
+                </View>
+              )
+            )}
 
             {/* Bottom Save Action Button */}
             <TouchableOpacity
@@ -21698,7 +28541,17 @@ Support: help@getit.ng | Abuja, Nigeria`;
               activeOpacity={0.85}
             >
               <Text style={styles.editProfilePrimarySaveBtnText}>
-                ✨ Save & Publish Store Profile ➔
+                {editStoreActiveSection === 'identity'
+                  ? '✨ Save Store Identity ➔'
+                  : editStoreActiveSection === 'photo'
+                  ? '✨ Save Storefront Photo ➔'
+                  : editStoreActiveSection === 'location'
+                  ? '✨ Save Location & Contact ➔'
+                  : editStoreActiveSection === 'bio'
+                  ? '✨ Save Store Bio & Specialty ➔'
+                  : editStoreActiveSection === 'chat'
+                  ? '✨ Save Chat Settings ➔'
+                  : '✨ Save & Publish Store Profile ➔'}
               </Text>
             </TouchableOpacity>
 
@@ -22228,6 +29081,72 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     </Text>
                   </TouchableOpacity>
 
+                  {/* Action 1.5: Switch to Another Shop with Original Item in Stock */}
+                  {(() => {
+                    const p = proposal;
+                    if (!p) return null;
+                    const altRes = getAlternativeShopsForOutOfStock(pendingReplacementOrder, {
+                      originalItemId: p.originalItemId,
+                      originalItemName: p.originalItemName,
+                      originalPrice: p.originalPrice,
+                      qty: p.qty,
+                      storeId: p.storeId,
+                      storeName: p.storeName,
+                    });
+                    if (!altRes || !altRes.alternativeShops || altRes.alternativeShops.length === 0) return null;
+                    return (
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#EFF6FF',
+                          borderWidth: 1.5,
+                          borderColor: '#93C5FD',
+                          borderRadius: 14,
+                          paddingVertical: 14,
+                          paddingHorizontal: 16,
+                          alignItems: 'center',
+                          marginBottom: 10,
+                        }}
+                        onPress={() => {
+                          const targetOrderId = String(pendingReplacementOrder.id);
+                          const propKey = String(p.proposedAt || p.originalItemId || p.originalItemName || '');
+                          resolvedProposalIdsRef.current.add(`rep:${targetOrderId}:${propKey}`);
+                          lastOrderMutationTimestampRef.current[targetOrderId] = Date.now();
+                          setCustomerDismissedReplacementId(`${pendingReplacementOrder.id}_${p.proposedAt}`);
+                          const newOosProposal = {
+                            status: 'pending',
+                            originalItemId: p.originalItemId,
+                            originalItemName: p.originalItemName,
+                            originalPrice: p.originalPrice,
+                            originalImage: p.originalImage || null,
+                            qty: p.qty,
+                            refundAmount: origTotal,
+                            storeId: p.storeId,
+                            storeName: p.storeName,
+                            proposedAt: new Date().toISOString(),
+                          };
+                          setOrders((prev) =>
+                            prev.map((o) =>
+                              String(o.id) === targetOrderId
+                                ? {
+                                    ...o,
+                                    replacementProposal: { ...p, status: 'declined_for_switch', resolvedAt: new Date().toISOString() },
+                                    outOfStockProposal: newOosProposal,
+                                  }
+                                : o
+                            )
+                          );
+                          setCustomerDismissedOutOfStockId(null);
+                          setSelectedAlternativeIndex(0);
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#1D4ED8', textAlign: 'center' }}>
+                          🏪 Switch to Another Shop with "{p.originalItemName}" ({altRes.alternativeShops.length} available)
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })()}
+
                   {/* Action 2: Decline & Refund Button */}
                   <TouchableOpacity
                     style={{
@@ -22244,6 +29163,342 @@ Support: help@getit.ng | Abuja, Nigeria`;
                   >
                     <Text style={{ fontSize: 13, fontWeight: '800', color: '#DC2626', textAlign: 'center' }}>
                       ❌ Decline & Refund {formatNaira(origTotal)} to Wallet
+                    </Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </View>
+            );
+          })()}
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* --- CUSTOMER OUT OF STOCK & SMART STORE SWITCH RESOLUTION MODAL --- */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={
+          Boolean(pendingOutOfStockOrder?.outOfStockProposal?.status === 'pending') &&
+          appMode === 'customer' &&
+          (!pendingOutOfStockOrder?.outOfStockProposal?.id || customerDismissedOutOfStockId !== pendingOutOfStockOrder.outOfStockProposal.id)
+        }
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => {
+          if (pendingOutOfStockOrder?.outOfStockProposal?.id) {
+            setCustomerDismissedOutOfStockId(pendingOutOfStockOrder.outOfStockProposal.id);
+          }
+        }}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+          {(() => {
+            if (!pendingOutOfStockOrder || !pendingOutOfStockOrder.outOfStockProposal) return null;
+            const proposal = pendingOutOfStockOrder.outOfStockProposal;
+            const proposalUniqueId = proposal.id || ('oos_' + pendingOutOfStockOrder.id);
+            const alternatives = getAlternativeShopsForOutOfStock(pendingOutOfStockOrder, proposal);
+            const selectedAlt = alternatives[selectedAlternativeIndex] || alternatives[0];
+
+            return (
+              <View style={{ flex: 1, backgroundColor: COLORS.beigeBg }}>
+                {/* Header */}
+                <View style={styles.modalHeader}>
+                  <TouchableOpacity
+                    style={styles.modalBackBtn}
+                    onPress={() => setCustomerDismissedOutOfStockId(proposalUniqueId)}
+                  >
+                    <Text style={styles.modalBackBtnText}>✕ Close</Text>
+                  </TouchableOpacity>
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={styles.modalHeaderTitle}>⚠️ Item Out of Stock</Text>
+                    <Text style={styles.modalHeaderSubtitle}>
+                      Order #{pendingOutOfStockOrder.id} • {proposal.storeName || 'Store'}
+                    </Text>
+                  </View>
+                  <View style={{ width: 60 }} />
+                </View>
+
+                <ScrollView
+                  style={{ flex: 1 }}
+                  contentContainerStyle={{ padding: 18, paddingBottom: 50 }}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {/* Store Notice Card */}
+                  <View
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 14,
+                      padding: 16,
+                      marginBottom: 14,
+                      borderLeftWidth: 5,
+                      borderLeftColor: '#EF4444',
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: 0.05,
+                      shadowRadius: 3,
+                      elevation: 2,
+                    }}
+                  >
+                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A', marginBottom: 4 }}>
+                      {proposal.storeName || 'Store'} is packing your order
+                    </Text>
+                    <Text style={{ fontSize: 13, color: '#475569', lineHeight: 18 }}>
+                      Unfortunately, <Text style={{ fontWeight: '700', color: '#DC2626' }}>{proposal.originalItemName} (x{proposal.quantity})</Text> is currently sold out.
+                    </Text>
+                    <Text style={{ fontSize: 13, color: '#059669', fontWeight: '600', marginTop: 4 }}>
+                      GETIT Smart Logistics has located {alternatives.length > 0 ? `${alternatives.length} nearby shop${alternatives.length > 1 ? 's' : ''}` : 'nearby shops'} with this item ready in stock!
+                    </Text>
+                  </View>
+
+                  {/* Out of Stock Item Snapshot */}
+                  <View
+                    style={{
+                      backgroundColor: '#FEF2F2',
+                      borderWidth: 1.5,
+                      borderColor: '#FECACA',
+                      borderRadius: 14,
+                      padding: 14,
+                      marginBottom: 16,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#DC2626', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        ❌ Missing Item
+                      </Text>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#991B1B' }}>
+                        {formatNaira(Number(proposal.originalPrice) * Number(proposal.quantity))}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#1F2937' }}>
+                      {proposal.originalItemName} <Text style={{ color: '#DC2626', fontWeight: '800' }}>x{proposal.quantity}</Text>
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>
+                      {formatNaira(proposal.originalPrice)} each at {proposal.storeName}
+                    </Text>
+                  </View>
+
+                  {/* Option 1 Section Header: Alternative Stores */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      🏪 OPTION 1: Switch to In-Stock Shop ({alternatives.length} Available)
+                    </Text>
+                  </View>
+
+                  {alternatives.length > 0 ? (
+                    <View style={{ marginBottom: 16 }}>
+                      {alternatives.map((alt, idx) => {
+                        const isSelected = selectedAlternativeIndex === idx;
+                        const netDiff = alt.netDiff || 0;
+                        const isTopUp = netDiff > 0;
+                        const isRefund = netDiff < 0;
+                        const isEven = netDiff === 0;
+
+                        return (
+                          <TouchableOpacity
+                            key={alt.storeId + '_' + idx}
+                            onPress={() => setSelectedAlternativeIndex(idx)}
+                            activeOpacity={0.88}
+                            style={{
+                              backgroundColor: isSelected ? '#F0FDF4' : '#FFFFFF',
+                              borderWidth: 2,
+                              borderColor: isSelected ? COLORS.emeraldDeep : '#E2E8F0',
+                              borderRadius: 16,
+                              padding: 16,
+                              marginBottom: 12,
+                              shadowColor: '#000',
+                              shadowOffset: { width: 0, height: 2 },
+                              shadowOpacity: isSelected ? 0.1 : 0.04,
+                              shadowRadius: 4,
+                              elevation: isSelected ? 3 : 1,
+                            }}
+                          >
+                            {/* Card Top Row: Store Name & Fulfillment Tag */}
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                                <View
+                                  style={{
+                                    width: 22,
+                                    height: 22,
+                                    borderRadius: 11,
+                                    borderWidth: 2,
+                                    borderColor: isSelected ? COLORS.emeraldDeep : '#94A3B8',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    marginRight: 10,
+                                    backgroundColor: isSelected ? COLORS.emeraldDeep : 'transparent',
+                                  }}
+                                >
+                                  {isSelected && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#FFFFFF' }} />}
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }} numberOfLines={1}>
+                                    {alt.storeName}
+                                  </Text>
+                                  <Text style={{ fontSize: 11, color: '#64748B' }}>
+                                    ⭐ {alt.storeRating} • {alt.storeAddress}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              {/* Fulfillment Badge */}
+                              <View
+                                style={{
+                                  backgroundColor: alt.isFullTransfer ? '#DCFCE7' : '#FEF3C7',
+                                  paddingHorizontal: 8,
+                                  paddingVertical: 4,
+                                  borderRadius: 8,
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: '800',
+                                    color: alt.isFullTransfer ? '#166534' : '#92400E',
+                                  }}
+                                >
+                                  {alt.isFullTransfer ? '✨ Full Order (1 Stop)' : '🛵 Multi-Store Stop'}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Item Matching Info */}
+                            <View
+                              style={{
+                                backgroundColor: isSelected ? '#DCFCE7' : '#F8FAFC',
+                                borderRadius: 10,
+                                padding: 10,
+                                marginVertical: 6,
+                              }}
+                            >
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: '#1E293B' }}>
+                                  📦 {alt.matchedProduct.name}
+                                </Text>
+                                <Text style={{ fontSize: 12, fontWeight: '800', color: COLORS.emeraldDeep }}>
+                                  {formatNaira(alt.newUnitPrice)} x{proposal.quantity}
+                                </Text>
+                              </View>
+
+                              {/* Delivery fee breakdown */}
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                                <Text style={{ fontSize: 11, color: '#64748B' }}>
+                                  {alt.isFullTransfer ? 'Delivery Fee (No extra stop):' : 'Additional Stop Delivery Fee:'}
+                                </Text>
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: alt.extraDeliveryFee > 0 ? '#B45309' : '#059669' }}>
+                                  {alt.extraDeliveryFee > 0 ? `+${formatNaira(alt.extraDeliveryFee)}` : '₦0.00 (Unchanged)'}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Net financial impact banner */}
+                            <View
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                marginTop: 6,
+                                paddingTop: 6,
+                                borderTopWidth: 1,
+                                borderTopColor: isSelected ? '#BBF7D0' : '#E2E8F0',
+                              }}
+                            >
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>
+                                Total Adjustment:
+                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                {isTopUp && (
+                                  <Text style={{ fontSize: 13, fontWeight: '800', color: '#D97706' }}>
+                                    Top-Up: +{formatNaira(netDiff)}
+                                  </Text>
+                                )}
+                                {isRefund && (
+                                  <Text style={{ fontSize: 13, fontWeight: '800', color: '#059669' }}>
+                                    Wallet Refund: -{formatNaira(Math.abs(netDiff))}
+                                  </Text>
+                                )}
+                                {isEven && (
+                                  <Text style={{ fontSize: 13, fontWeight: '800', color: '#059669' }}>
+                                    No Extra Charge
+                                  </Text>
+                                )}
+                              </View>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+
+                      {/* Primary Switch Store Action Button */}
+                      {selectedAlt && (
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: COLORS.emeraldDeep,
+                            borderRadius: 14,
+                            paddingVertical: 16,
+                            paddingHorizontal: 16,
+                            alignItems: 'center',
+                            marginBottom: 16,
+                            shadowColor: COLORS.emeraldDeep,
+                            shadowOffset: { width: 0, height: 4 },
+                            shadowOpacity: 0.3,
+                            shadowRadius: 6,
+                            elevation: 4,
+                          }}
+                          onPress={() => handleSwitchStoreForOutOfStock(pendingOutOfStockOrder, selectedAlt)}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={{ fontSize: 14, fontWeight: '800', color: '#FFFFFF', textAlign: 'center' }}>
+                            {selectedAlt.netDiff > 0
+                              ? `💳 Top-Up ${formatNaira(selectedAlt.netDiff)} & Switch to ${selectedAlt.storeName}`
+                              : selectedAlt.netDiff < 0
+                                ? `✓ Switch to ${selectedAlt.storeName} (Refund ${formatNaira(Math.abs(selectedAlt.netDiff))} to Wallet)`
+                                : `✓ Switch to ${selectedAlt.storeName} (No Extra Cost)`}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ) : (
+                    <View
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 12,
+                        padding: 16,
+                        marginBottom: 16,
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, color: '#64748B', textAlign: 'center' }}>
+                        No alternate shops currently have "{proposal.originalItemName}" in stock.
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Section Divider: Option 2 */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 12 }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: '#CBD5E1' }} />
+                    <Text style={{ paddingHorizontal: 10, fontSize: 11, fontWeight: '800', color: '#64748B', letterSpacing: 0.6 }}>
+                      OR OPTION 2: REFUND TO WALLET
+                    </Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: '#CBD5E1' }} />
+                  </View>
+
+                  {/* Instant Refund Button */}
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      borderWidth: 1.5,
+                      borderColor: '#FECACA',
+                      borderRadius: 14,
+                      paddingVertical: 15,
+                      paddingHorizontal: 16,
+                      alignItems: 'center',
+                    }}
+                    onPress={() => handleAcceptOutOfStockRefund(pendingOutOfStockOrder)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#DC2626', textAlign: 'center' }}>
+                      💳 Just Refund {formatNaira(proposal.refundAmount)} to My Wallet
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 3 }}>
+                      {proposal.storeName} will prepare and deliver your remaining items
                     </Text>
                   </TouchableOpacity>
                 </ScrollView>
@@ -23122,8 +30377,55 @@ Support: help@getit.ng | Abuja, Nigeria`;
               </View>
             )}
 
-            {/* Input composer row */}
-            {isVoiceRecording ? (
+            {/* Input composer row OR Store Messaging Disabled Notice */}
+            {appMode !== 'merchant' &&
+            targetChatPartner?.role === 'merchant' &&
+            !isStoreMessagingEnabled(targetChatPartner?.targetStore || targetChatOrder) ? (
+              <View
+                style={{
+                  paddingHorizontal: 16,
+                  paddingVertical: 14,
+                  backgroundColor: '#F8FAFC',
+                  borderTopWidth: 1,
+                  borderTopColor: '#E2E8F0',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ fontSize: 16 }}>🔇</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#1E293B' }}>
+                      Direct Messaging Paused
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 3, lineHeight: 16 }}>
+                    {targetChatPartner?.storeName || targetChatOrder?.storeName || 'This grocery store'} currently does not accept in-app messages.
+                  </Text>
+                </View>
+
+                {(targetChatPartner?.phone || targetChatOrder?.storePhone || currentMerchantStore?.phone) ? (
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#056B4B',
+                      paddingHorizontal: 14,
+                      paddingVertical: 9,
+                      borderRadius: 8,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                    onPress={() => Linking.openURL(`tel:${targetChatPartner?.phone || targetChatOrder?.storePhone || currentMerchantStore?.phone}`)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 13 }}>📞</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>Call Store</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : isVoiceRecording ? (
               <View style={styles.voiceRecordingComposerRow}>
                 <View style={styles.voiceRecordingPulseDot} />
                 <Text style={styles.voiceRecordingTimerText}>
@@ -23580,34 +30882,47 @@ Support: help@getit.ng | Abuja, Nigeria`;
                     <View style={styles.receiptDashedLine} />
 
                     {/* Financial Summary Breakdown */}
-                    <View style={styles.receiptFinanceBlock}>
-                      <View style={styles.receiptFinanceRow}>
-                        <Text style={styles.receiptFinanceLabel}>Items Subtotal</Text>
-                        <Text style={styles.receiptFinanceVal}>{formatNaira(subtotal)}</Text>
-                      </View>
-                      <View style={styles.receiptFinanceRow}>
-                        <Text style={styles.receiptFinanceLabel}>Delivery & Dispatch</Text>
-                        <Text style={styles.receiptFinanceVal}>
-                          {deliveryFee > 0 ? formatNaira(deliveryFee) : '₦0.00 (Free)'}
-                        </Text>
-                      </View>
-                      <View style={styles.receiptFinanceRow}>
-                        <Text style={styles.receiptFinanceLabel}>Service & VAT (7.5%)</Text>
-                        <Text style={[styles.receiptFinanceVal, { color: '#059669' }]}>₦0.00 (Waived)</Text>
-                      </View>
+                    {(() => {
+                      const conciergeFeeVal = Number(
+                        ord.conciergeFee ?? ord.concierge_fee ?? Math.max(0, total - subtotal - deliveryFee)
+                      );
+                      return (
+                        <View style={styles.receiptFinanceBlock}>
+                          <View style={styles.receiptFinanceRow}>
+                            <Text style={styles.receiptFinanceLabel}>Items Subtotal</Text>
+                            <Text style={styles.receiptFinanceVal}>{formatNaira(subtotal)}</Text>
+                          </View>
+                          {conciergeFeeVal > 0 && (
+                            <View style={styles.receiptFinanceRow}>
+                              <Text style={styles.receiptFinanceLabel}>Concierge & Packaging (5%)</Text>
+                              <Text style={styles.receiptFinanceVal}>{formatNaira(conciergeFeeVal)}</Text>
+                            </View>
+                          )}
+                          <View style={styles.receiptFinanceRow}>
+                            <Text style={styles.receiptFinanceLabel}>Delivery & Dispatch</Text>
+                            <Text style={styles.receiptFinanceVal}>
+                              {deliveryFee > 0 ? formatNaira(deliveryFee) : '₦0.00 (Free)'}
+                            </Text>
+                          </View>
+                          <View style={styles.receiptFinanceRow}>
+                            <Text style={styles.receiptFinanceLabel}>Service & VAT (7.5%)</Text>
+                            <Text style={[styles.receiptFinanceVal, { color: '#059669' }]}>₦0.00 (Waived)</Text>
+                          </View>
 
-                      {/* Double Underline */}
-                      <View style={styles.receiptTotalDivider} />
+                          {/* Double Underline */}
+                          <View style={styles.receiptTotalDivider} />
 
-                      {/* Grand Total */}
-                      <View style={styles.receiptGrandTotalRow}>
-                        <View>
-                          <Text style={styles.receiptGrandTotalLabel}>TOTAL PAID</Text>
-                          <Text style={styles.receiptPaymentMethod}>Paystack Instant Settlement</Text>
+                          {/* Grand Total */}
+                          <View style={styles.receiptGrandTotalRow}>
+                            <View>
+                              <Text style={styles.receiptGrandTotalLabel}>TOTAL PAID</Text>
+                              <Text style={styles.receiptPaymentMethod}>Paystack Instant Settlement</Text>
+                            </View>
+                            <Text style={styles.receiptGrandTotalVal}>{formatNaira(total)}</Text>
+                          </View>
                         </View>
-                        <Text style={styles.receiptGrandTotalVal}>{formatNaira(total)}</Text>
-                      </View>
-                    </View>
+                      );
+                    })()}
 
                     {/* Security Verification & Courier Badge */}
                     <View style={styles.receiptSecurityBlock}>
@@ -24093,6 +31408,2310 @@ Support: help@getit.ng | Abuja, Nigeria`;
           </SafeAreaView>
         </View>
       )}
+
+      {/* =========================================================================
+          1. MERCHANT CATEGORY & SPECIALISATIONS MANAGER MODAL
+          ========================================================================= */}
+      <Modal
+        visible={merchantTaxonomyModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setMerchantTaxonomyModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={COLORS.emeraldDeep} />
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setMerchantTaxonomyModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={styles.modalHeaderTitle}>Store Specialisations</Text>
+              <Text style={{ fontSize: 10.5, color: '#A7F3D0', fontWeight: '700' }}>
+                {currentMerchantStore?.name || 'Merchant Store'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={{
+                backgroundColor: COLORS.goldPrimary,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 999,
+              }}
+              onPress={() => {
+                setMerchantTaxonomyModalVisible(false);
+                setRequestCategoryModalVisible(true);
+              }}
+            >
+              <Text style={{ fontSize: 11, fontWeight: '900', color: '#000000' }}>+ Request</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView
+            style={{ flex: 1, backgroundColor: '#F8FAFC' }}
+            contentContainerStyle={{ padding: 16, paddingBottom: 60 }}
+          >
+            {(() => {
+              const allDepts = marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS;
+              const currentDept =
+                allDepts.find((d) => d.id === regPrimaryDepartmentId) || allDepts[0];
+              const availableSubs = (currentDept.subcategories || []).filter((s) => s.enabled !== false);
+              const allStoreTypes = (marketplaceTaxonomy?.storeTypes || DEFAULT_STORE_TYPES).filter(
+                (st) => st.id !== 'all' && st.enabled !== false
+              );
+              const selectedStoreTypeObj =
+                allStoreTypes.find((st) => st.id === regStoreTypeFormat) || allStoreTypes[0];
+
+              const handleSaveMerchantTaxonomy = () => {
+                if (!currentMerchantStore) return;
+                const isPharm = regPrimaryDepartmentId === 'pharmacy';
+                const updatedTaxonomy = {
+                  primaryDepartmentId: regPrimaryDepartmentId,
+                  storeTypeFormat: isPharm ? 'pharmacy' : regStoreTypeFormat,
+                  storeTypeLabel: isPharm
+                    ? 'Licensed Community Pharmacy'
+                    : `${selectedStoreTypeObj?.icon || currentDept?.icon || '🏪'} ${selectedStoreTypeObj?.label || currentDept?.name}`,
+                  additionalDepartmentIds: regSellsOtherDepartments ? regAdditionalDepartments : [],
+                  specialisationSubcategories: regSelectedSubcategories,
+                  specialisationProducts: regSelectedVarieties,
+                  regulatoryStatus: isPharm
+                    ? (currentMerchantStore.regulatoryStatus || 'verified')
+                    : 'not_applicable',
+                  premisesLicenseNo: isPharm ? regPremisesLicenseNo : '',
+                };
+
+                updateAndPersistStores((prev) =>
+                  prev.map((st) => {
+                    if (st.id !== currentMerchantStore.id) return st;
+                    return {
+                      ...st,
+                      ...updatedTaxonomy,
+                      categoryLabel: updatedTaxonomy.storeTypeLabel,
+                      tag: isPharm
+                        ? 'VERIFIED PHARMACY'
+                        : (selectedStoreTypeObj?.label || 'VERIFIED MERCHANT').toUpperCase(),
+                    };
+                  })
+                );
+
+                updateDatabaseStore(currentMerchantStore.id, {
+                  ...currentMerchantStore,
+                  ...updatedTaxonomy,
+                  category: updatedTaxonomy.storeTypeLabel,
+                }).catch(() => {});
+
+                setMerchantTaxonomyModalVisible(false);
+                Alert.alert(
+                  '✓ Store Specialisations Saved!',
+                  `Your store "${currentMerchantStore.name}" is now classified under ${currentDept.name} (${selectedStoreTypeObj?.label || 'Store'}) with ${regSelectedSubcategories.length} subcategory specialisations and ${regSelectedVarieties.length} specific product varieties.`
+                );
+              };
+
+              return (
+                <>
+                  {/* Card 1: Primary Department */}
+                  <View
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 16,
+                      padding: 14,
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      marginBottom: 14,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '900', color: '#0F172A', marginBottom: 4 }}>
+                      1. PRIMARY BUSINESS DEPARTMENT (LEVEL 1)
+                    </Text>
+                    <Text style={{ fontSize: 11.5, color: '#64748B', marginBottom: 10 }}>
+                      Select the main department your shop operates under.
+                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                      {allDepts
+                        .filter((d) => d.enabled !== false)
+                        .map((dept) => {
+                          const isSelected = regPrimaryDepartmentId === dept.id;
+                          return (
+                            <TouchableOpacity
+                              key={dept.id}
+                              onPress={() => {
+                                setRegPrimaryDepartmentId(dept.id);
+                                setRegStoreTypeFormat(dept.defaultStoreType || 'supermarket');
+                                setRegSelectedSubcategories(
+                                  (dept.subcategories || []).slice(0, 2).map((s) => s.id)
+                                );
+                              }}
+                              style={{
+                                width: '48%',
+                                padding: 10,
+                                borderRadius: 12,
+                                backgroundColor: isSelected ? (dept.bgTint || '#ECFDF5') : '#F8FAFC',
+                                borderWidth: isSelected ? 2 : 1,
+                                borderColor: isSelected ? (dept.accentColor || '#059669') : '#CBD5E1',
+                              }}
+                            >
+                              <Text style={{ fontSize: 20 }}>{dept.icon}</Text>
+                              <Text
+                                style={{
+                                  fontSize: 12,
+                                  fontWeight: '800',
+                                  color: '#0F172A',
+                                  marginTop: 4,
+                                }}
+                                numberOfLines={1}
+                              >
+                                {dept.name}
+                              </Text>
+                              <Text style={{ fontSize: 10, color: '#64748B', marginTop: 1 }} numberOfLines={1}>
+                                {dept.subtitle}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                    </View>
+
+                    {/* Store Type Format */}
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: '#334155', marginTop: 14, marginBottom: 6 }}>
+                      STORE FORMAT CLASSIFICATION (OPTION B BROWSING)
+                    </Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                      {allStoreTypes.map((st) => {
+                        const active = regStoreTypeFormat === st.id;
+                        return (
+                          <TouchableOpacity
+                            key={st.id}
+                            onPress={() => setRegStoreTypeFormat(st.id)}
+                            style={{
+                              paddingHorizontal: 12,
+                              paddingVertical: 7,
+                              borderRadius: 999,
+                              backgroundColor: active ? '#064E3B' : '#F1F5F9',
+                              borderWidth: 1,
+                              borderColor: active ? '#064E3B' : '#CBD5E1',
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 5,
+                            }}
+                          >
+                            <Text style={{ fontSize: 13 }}>{st.icon}</Text>
+                            <Text style={{ fontSize: 11.5, fontWeight: '800', color: active ? '#FFFFFF' : '#334155' }}>
+                              {st.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+
+                  {/* Card 2: Subcategory & Product Variety Specialisations */}
+                  <View
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 16,
+                      padding: 14,
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      marginBottom: 14,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '900', color: '#0F172A', marginBottom: 4 }}>
+                      2. WHAT DO YOU SPECIALISE IN? (LEVEL 2 & LEVEL 3)
+                    </Text>
+                    <Text style={{ fontSize: 11.5, color: '#64748B', marginBottom: 10 }}>
+                      Select the exact subcategories and cuts/varieties your shop sells so customers filtering for them find your shop first.
+                    </Text>
+
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                      {availableSubs.map((sub) => {
+                        const isSelected = regSelectedSubcategories.includes(sub.id);
+                        return (
+                          <TouchableOpacity
+                            key={sub.id}
+                            onPress={() => {
+                              setRegSelectedSubcategories((prev) =>
+                                prev.includes(sub.id)
+                                  ? prev.filter((x) => x !== sub.id)
+                                  : [...prev, sub.id]
+                              );
+                            }}
+                            style={{
+                              paddingHorizontal: 12,
+                              paddingVertical: 8,
+                              borderRadius: 12,
+                              backgroundColor: isSelected ? '#ECFDF5' : '#F8FAFC',
+                              borderWidth: isSelected ? 2 : 1,
+                              borderColor: isSelected ? '#059669' : '#CBD5E1',
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                          >
+                            <Text style={{ fontSize: 14 }}>{sub.icon}</Text>
+                            <Text style={{ fontSize: 12, fontWeight: '800', color: isSelected ? '#064E3B' : '#334155' }}>
+                              {sub.label}
+                            </Text>
+                            {isSelected && <Text style={{ fontSize: 12, fontWeight: '900', color: '#059669' }}>✓</Text>}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Level 3 Varieties */}
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: '#334155', marginBottom: 6 }}>
+                      LEVEL 3 PRODUCT VARIETIES / CUTS:
+                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {availableSubs
+                        .filter((s) => regSelectedSubcategories.includes(s.id))
+                        .flatMap((s) => (s.varieties || []).filter((v) => v.enabled !== false))
+                        .map((v) => {
+                          const isVarSelected = regSelectedVarieties.includes(v.id);
+                          return (
+                            <TouchableOpacity
+                              key={v.id}
+                              onPress={() => {
+                                setRegSelectedVarieties((prev) =>
+                                  prev.includes(v.id) ? prev.filter((x) => x !== v.id) : [...prev, v.id]
+                                );
+                              }}
+                              style={{
+                                paddingHorizontal: 10,
+                                paddingVertical: 6,
+                                borderRadius: 999,
+                                backgroundColor: isVarSelected ? '#064E3B' : '#F1F5F9',
+                                borderWidth: 1,
+                                borderColor: isVarSelected ? '#064E3B' : '#CBD5E1',
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: '700',
+                                  color: isVarSelected ? '#FFFFFF' : '#334155',
+                                }}
+                              >
+                                {isVarSelected ? '✓ ' : '+ '}
+                                {v.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                    </View>
+                  </View>
+
+                  {/* Card 3: Additional Departments */}
+                  <View
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 16,
+                      padding: 14,
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      marginBottom: 18,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <View style={{ flex: 1, paddingRight: 10 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '900', color: '#0F172A' }}>
+                          3. DO YOU SELL OTHER PRODUCTS TOO?
+                        </Text>
+                        <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                          Enable if your store also stocks items from other departments
+                        </Text>
+                      </View>
+                      <Switch
+                        value={regSellsOtherDepartments}
+                        onValueChange={setRegSellsOtherDepartments}
+                        trackColor={{ false: '#CBD5E1', true: '#10B981' }}
+                        thumbColor="#FFFFFF"
+                      />
+                    </View>
+
+                    {regSellsOtherDepartments && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+                        {allDepts
+                          .filter((d) => d.enabled !== false && d.id !== regPrimaryDepartmentId && !d.isRegulated)
+                          .map((dept) => {
+                            const added = regAdditionalDepartments.includes(dept.id);
+                            return (
+                              <TouchableOpacity
+                                key={dept.id}
+                                onPress={() => {
+                                  setRegAdditionalDepartments((prev) =>
+                                    prev.includes(dept.id) ? prev.filter((x) => x !== dept.id) : [...prev, dept.id]
+                                  );
+                                }}
+                                style={{
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 7,
+                                  borderRadius: 10,
+                                  backgroundColor: added ? '#064E3B' : '#F8FAFC',
+                                  borderWidth: 1,
+                                  borderColor: added ? '#064E3B' : '#CBD5E1',
+                                }}
+                              >
+                                <Text style={{ fontSize: 11.5, fontWeight: '800', color: added ? '#FFFFFF' : '#334155' }}>
+                                  {dept.icon} {added ? '✓ ' : '+ '}
+                                  {dept.name}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                      </View>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, { backgroundColor: '#064E3B' }]}
+                    onPress={handleSaveMerchantTaxonomy}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.primaryActionBtnText}>
+                      💾 Save Store Category & Specialisations ➔
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* =========================================================================
+          2. MERCHANT REQUEST NEW CATEGORY / SUBCATEGORY MODAL
+          ========================================================================= */}
+      <Modal
+        visible={requestCategoryModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setRequestCategoryModalVisible(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            justifyContent: 'center',
+            padding: 18,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: 20,
+              padding: 18,
+              borderWidth: 1,
+              borderColor: '#E2E8F0',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <Text style={{ fontSize: 16, fontWeight: '900', color: '#0F172A' }}>
+                ➕ Request New Marketplace Category
+              </Text>
+              <TouchableOpacity onPress={() => setRequestCategoryModalVisible(false)}>
+                <Text style={{ fontSize: 16, fontWeight: '900', color: '#64748B' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={{ fontSize: 12, color: '#64748B', marginBottom: 12 }}>
+              Don't see your exact specialty? Submit a request to the GETIT Admin team to add it to the 3-level catalogue.
+            </Text>
+
+            <Text style={{ fontSize: 11, fontWeight: '800', color: '#334155', marginBottom: 6 }}>
+              CATEGORY LEVEL
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              {[
+                { id: 'department', label: 'Level 1: Department' },
+                { id: 'subcategory', label: 'Level 2: Subcategory' },
+                { id: 'variety', label: 'Level 3: Variety' },
+              ].map((lv) => {
+                const active = requestedCategoryLevel === lv.id;
+                return (
+                  <TouchableOpacity
+                    key={lv.id}
+                    onPress={() => setRequestedCategoryLevel(lv.id)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 8,
+                      paddingHorizontal: 6,
+                      borderRadius: 10,
+                      backgroundColor: active ? '#064E3B' : '#F1F5F9',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ fontSize: 10.5, fontWeight: '800', color: active ? '#FFFFFF' : '#334155' }}>
+                      {lv.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={{ fontSize: 11, fontWeight: '800', color: '#334155', marginBottom: 6 }}>
+              PROPOSED CATEGORY / PRODUCT VARIETY NAME *
+            </Text>
+            <TextInput
+              style={{
+                borderWidth: 1,
+                borderColor: '#CBD5E1',
+                borderRadius: 12,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                fontSize: 13.5,
+                color: '#0F172A',
+                marginBottom: 12,
+              }}
+              placeholder="e.g. Bush Meat, Quail Eggs, Kilishi & Suya Cuts..."
+              placeholderTextColor="#94A3B8"
+              value={requestedCategoryName}
+              onChangeText={setRequestedCategoryName}
+            />
+
+            <Text style={{ fontSize: 11, fontWeight: '800', color: '#334155', marginBottom: 6 }}>
+              NOTES / EXAMPLES OF ITEMS YOU SELL
+            </Text>
+            <TextInput
+              style={{
+                borderWidth: 1,
+                borderColor: '#CBD5E1',
+                borderRadius: 12,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                fontSize: 13,
+                color: '#0F172A',
+                marginBottom: 14,
+              }}
+              placeholder="e.g. Smoked guinea fowl, dressed rabbit meat..."
+              placeholderTextColor="#94A3B8"
+              value={requestedCategoryNotes}
+              onChangeText={setRequestedCategoryNotes}
+            />
+
+            <TouchableOpacity
+              style={[styles.primaryActionBtn, { backgroundColor: '#064E3B' }]}
+              onPress={async () => {
+                if (!requestedCategoryName.trim()) {
+                  Alert.alert('Name Required', 'Please enter the name of the category or variety you want added.');
+                  return;
+                }
+                const res = await submitMerchantCategoryRequest({
+                  storeId: currentMerchantStore?.id || 'pending-registration',
+                  storeName: currentMerchantStore?.name || authSignupBusinessName || 'Merchant Partner',
+                  merchantName: currentUser?.fullName || authSignupFullName || 'Shop Owner',
+                  level: requestedCategoryLevel,
+                  parentDepartmentId: regPrimaryDepartmentId || requestedCategoryParent,
+                  requestedName: requestedCategoryName.trim(),
+                  notes: requestedCategoryNotes.trim(),
+                });
+                if (res?.requests) {
+                  setCategoryRequests(res.requests);
+                }
+                setRequestedCategoryName('');
+                setRequestedCategoryNotes('');
+                setRequestCategoryModalVisible(false);
+                Alert.alert(
+                  '✓ Category Request Submitted!',
+                  'Your request has been sent to the GETIT Admin Category Console and can be approved with one tap.'
+                );
+              }}
+            >
+              <Text style={styles.primaryActionBtnText}>Submit Request to GETIT Admin ➔</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* =========================================================================
+          3. GETIT CENTRAL MANAGEMENT SYSTEM (WEB-ONLY — DISABLED ON MOBILE APP)
+          ========================================================================= */}
+      <Modal
+        visible={false}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setAdminTaxonomyModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <StatusBar barStyle="light-content" backgroundColor="#05130B" />
+          <View style={[styles.modalHeader, { backgroundColor: '#05130B', borderBottomWidth: 1, borderBottomColor: '#1E293B' }]}>
+            <TouchableOpacity
+              style={styles.modalBackBtn}
+              onPress={() => setAdminTaxonomyModalVisible(false)}
+            >
+              <Text style={styles.modalBackBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+            <View style={{ alignItems: 'center', flex: 1 }}>
+              <Text style={[styles.modalHeaderTitle, { color: '#D4AF37', fontSize: 14 }]}>
+                🛡️ GETIT CENTRAL MANAGEMENT
+              </Text>
+              <Text style={{ fontSize: 10, color: '#6EE7B7', fontWeight: '800' }}>
+                {COMPANY_IDENTITY.legalName} • RBAC & Audit Portal
+              </Text>
+            </View>
+            <View style={{ width: 52 }} />
+          </View>
+
+          {/* Active Staff Account & RBAC Switcher Strip */}
+          {(() => {
+            const activeCmsStaff =
+              cmsStaffAccounts.find((s) => s.staffId === cmsActiveStaffId) || cmsStaffAccounts[0];
+            const pendingApprovalsCount = cmsApprovalRequests.filter((r) => r.status === 'PENDING').length;
+
+            const cmsNavTabs = [
+              { id: 'ceo_dashboard', label: '🏛️ CEO Overview', permModule: 'ceo_dashboard' },
+              { id: 'staff_permissions', label: '🪪 Staff & RBAC Matrix', permModule: 'staff_access_management' },
+              { id: 'finance_settlements', label: '💳 Finance & Payouts', permModule: 'finance_dashboard' },
+              { id: 'business_rules', label: '⚖️ Business Rules', permModule: 'business_rules_config' },
+              {
+                id: 'approvals_queue',
+                label: `✅ Approvals (${pendingApprovalsCount})`,
+                permModule: 'maker_checker_approvals',
+              },
+              { id: 'accountability_audit', label: '🕵️ Audit & Logs', permModule: 'accountability_centre' },
+              { id: 'regional_field', label: '🗺️ State & Field Ops', permModule: 'state_manager_dashboard' },
+              { id: 'hierarchy', label: '🗂️ 3-Level Taxonomy', permModule: 'catalogue_inventory_dashboard' },
+              { id: 'store_types', label: '🏪 Store Types', permModule: 'merchant_management_dashboard' },
+              {
+                id: 'requests',
+                label: `📥 Cat. Requests (${categoryRequests.filter((r) => r.status === 'pending').length})`,
+                permModule: 'catalogue_inventory_dashboard',
+              },
+              { id: 'pharmacies', label: '⚕️ PCN Compliance', permModule: 'compliance_verification_dashboard' },
+            ].filter(
+              (tab) =>
+                activeCmsStaff.tierLevel <= 2 ||
+                canStaffPerform(activeCmsStaff, tab.permModule, 'view') ||
+                (tab.id === 'regional_field' && canStaffPerform(activeCmsStaff, 'field_agent_dashboard', 'view'))
+            );
+
+            return (
+              <View style={{ backgroundColor: '#0F172A', borderBottomWidth: 1, borderBottomColor: '#1E293B' }}>
+                {/* Staff Identity Switcher */}
+                <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <Text style={{ fontSize: 10.5, fontWeight: '900', color: '#94A3B8' }}>
+                      SIGNED IN AS: <Text style={{ color: '#FFFFFF' }}>{activeCmsStaff.fullName}</Text> ({activeCmsStaff.staffId} • {activeCmsStaff.roleTitle})
+                    </Text>
+                    <View style={{ backgroundColor: '#064E3B', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                      <Text style={{ fontSize: 9.5, fontWeight: '900', color: '#6EE7B7' }}>
+                        {activeCmsStaff.territoryName}
+                      </Text>
+                    </View>
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                    {cmsStaffAccounts.map((st) => {
+                      const isCurrent = st.staffId === activeCmsStaff.staffId;
+                      return (
+                        <TouchableOpacity
+                          key={st.staffId}
+                          onPress={() => {
+                            setCmsActiveStaffId(st.staffId);
+                            const logEntry = buildImmutableAuditLog({
+                              staff: st,
+                              moduleId: 'staff_access_management',
+                              moduleName: 'Staff Session Switch',
+                              actionType: 'LOGIN_SWITCH',
+                              targetEntity: `${st.staffId} (${st.roleTitle})`,
+                              previousValue: activeCmsStaff.staffId,
+                              newValue: st.staffId,
+                              reason: 'Switched active staff session in Mobile Central Management Console',
+                              approvedBy: 'SELF_AUTH_2FA',
+                              severity: 'INFO',
+                            });
+                            setCmsAuditLogs((prev) => [logEntry, ...prev]);
+                          }}
+                          style={{
+                            paddingHorizontal: 10,
+                            paddingVertical: 5,
+                            borderRadius: 8,
+                            backgroundColor: isCurrent ? '#D4AF37' : '#1E293B',
+                            borderWidth: 1,
+                            borderColor: isCurrent ? '#FDE68A' : '#334155',
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 10.5,
+                              fontWeight: '900',
+                              color: isCurrent ? '#05130B' : '#E2E8F0',
+                            }}
+                          >
+                            {st.avatar} {st.staffId} • {(st.roleTitle || 'Staff').split(' ')[0]}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+
+                {/* Permission-Scoped Dashboard Tabs */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8, gap: 6 }}
+                >
+                  {cmsNavTabs.map((t) => {
+                    const active = adminActiveTaxonomyTab === t.id;
+                    return (
+                      <TouchableOpacity
+                        key={t.id}
+                        onPress={() => setAdminActiveTaxonomyTab(t.id)}
+                        style={{
+                          paddingVertical: 7,
+                          paddingHorizontal: 12,
+                          borderRadius: 10,
+                          backgroundColor: active ? '#10B981' : '#1E293B',
+                          borderWidth: 1,
+                          borderColor: active ? '#34D399' : '#334155',
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 11,
+                            fontWeight: '900',
+                            color: active ? '#05130B' : '#CBD5E1',
+                          }}
+                        >
+                          {t.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            );
+          })()}
+
+          <ScrollView
+            style={{ flex: 1, backgroundColor: '#F8FAFC' }}
+            contentContainerStyle={{ padding: 16, paddingBottom: 80 }}
+          >
+            {(() => {
+              const activeCmsStaff =
+                cmsStaffAccounts.find((s) => s.staffId === cmsActiveStaffId) || cmsStaffAccounts[0];
+              const inspectStaff =
+                cmsStaffAccounts.find((s) => s.staffId === cmsInspectStaffId) || cmsStaffAccounts[2];
+
+              const recordCmsAudit = (params) => {
+                const entry = buildImmutableAuditLog({
+                  staff: activeCmsStaff,
+                  ...params,
+                });
+                setCmsAuditLogs((prev) => [entry, ...prev]);
+              };
+
+              // 1. CEO EXECUTIVE OVERVIEW DASHBOARD
+              if (adminActiveTaxonomyTab === 'ceo_dashboard') {
+                const totalStoreCount = storesList?.length || 0;
+                const totalOrderCount = orders.length;
+                const liveGmv = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0) + 18450000;
+                const getitEarnings = Math.round(liveGmv * (cmsBusinessRules.defaultMerchantCommissionPct / 100));
+
+                return (
+                  <View style={{ gap: 14 }}>
+                    <View
+                      style={{
+                        backgroundColor: '#05130B',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1,
+                        borderColor: '#D4AF37',
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#D4AF37', letterSpacing: 0.6 }}>
+                        EXECUTIVE COMMAND • {COMPANY_IDENTITY.legalName}
+                      </Text>
+                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#FFFFFF', marginTop: 4 }}>
+                        One Platform. Multiple Dashboards. Controlled Access.
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#A7F3D0', marginTop: 4, lineHeight: 17 }}>
+                        Signed in as {activeCmsStaff.fullName} ({activeCmsStaff.staffId}). All 16 departmental modules, Maker–Checker approvals, and SHA-256 tamper-evident logs are active.
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                      {[
+                        { label: 'Total Platform GMV', value: `₦${liveGmv.toLocaleString()}`, sub: '+18.4% MoM growth', color: '#059669' },
+                        { label: 'GETIT Net Earnings', value: `₦${getitEarnings.toLocaleString()}`, sub: `${cmsBusinessRules.defaultMerchantCommissionPct}% avg commission`, color: '#D97706' },
+                        { label: 'Active Stores', value: String(totalStoreCount), sub: 'Verified across Lagos & Abuja', color: '#2563EB' },
+                        { label: 'Staff & Pending Approvals', value: `${cmsStaffAccounts.length} Staff / ${cmsApprovalRequests.filter((r) => r.status === 'PENDING').length} Req`, sub: 'Maker–Checker enforced', color: '#7C3AED' },
+                      ].map((kpi, idx) => (
+                        <View
+                          key={idx}
+                          style={{
+                            width: '48%',
+                            backgroundColor: '#FFFFFF',
+                            borderRadius: 14,
+                            padding: 12,
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                          }}
+                        >
+                          <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#64748B' }}>{kpi.label}</Text>
+                          <Text style={{ fontSize: 16, fontWeight: '900', color: kpi.color, marginTop: 4 }}>{kpi.value}</Text>
+                          <Text style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>{kpi.sub}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* 16 Central Dashboard Directory Quick Launcher */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <Text style={{ fontSize: 13.5, fontWeight: '900', color: '#0F172A', marginBottom: 4 }}>
+                        🧭 All 16+ Central Management Dashboards (Role-Scoped)
+                      </Text>
+                      <Text style={{ fontSize: 11.5, color: '#64748B', marginBottom: 10 }}>
+                        Showing modules authorized for {activeCmsStaff.staffId} ({activeCmsStaff.roleTitle}):
+                      </Text>
+                      {getAuthorizedDashboardsForStaff(activeCmsStaff).map((mod) => (
+                        <View
+                          key={mod.id}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            paddingVertical: 9,
+                            borderBottomWidth: 1,
+                            borderBottomColor: '#F1F5F9',
+                          }}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                            <Text style={{ fontSize: 18 }}>{mod.icon}</Text>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#0F172A' }}>
+                                #{mod.number}. {mod.title}
+                              </Text>
+                              <Text style={{ fontSize: 10.5, color: '#64748B' }} numberOfLines={1}>
+                                {mod.subtitle}
+                              </Text>
+                            </View>
+                          </View>
+                          <View style={{ backgroundColor: '#ECFDF5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '900', color: '#059669' }}>AUTHORIZED ✓</Text>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                );
+              }
+
+              // 2. STAFF ACCOUNTS & GRANULAR PERMISSION MATRIX
+              if (adminActiveTaxonomyTab === 'staff_permissions') {
+                const canManageStaff = canStaffPerform(activeCmsStaff, 'staff_access_management', 'manage');
+                return (
+                  <View style={{ gap: 14 }}>
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A' }}>
+                        🪪 Staff Directory & Individual Accounts
+                      </Text>
+                      <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 2, marginBottom: 10 }}>
+                        Tap any staff member to inspect or toggle their 8 atomic permissions (View, Create, Edit, Approve, Delete, Export, Suspend, Manage).
+                      </Text>
+
+                      {cmsStaffAccounts.map((st) => {
+                        const selected = st.staffId === inspectStaff.staffId;
+                        return (
+                          <TouchableOpacity
+                            key={st.staffId}
+                            onPress={() => setCmsInspectStaffId(st.staffId)}
+                            style={{
+                              padding: 10,
+                              borderRadius: 12,
+                              marginBottom: 8,
+                              backgroundColor: selected ? '#ECFDF5' : '#F8FAFC',
+                              borderWidth: 1.5,
+                              borderColor: selected ? '#059669' : '#E2E8F0',
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                            }}
+                          >
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#0F172A' }}>
+                                {st.avatar} {st.fullName} ({st.staffId})
+                              </Text>
+                              <Text style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                                {st.roleTitle} • {st.department} • {st.territoryName}
+                              </Text>
+                            </View>
+                            <View
+                              style={{
+                                backgroundColor: st.status === 'ACTIVE' ? '#D1FAE5' : '#FEE2E2',
+                                paddingHorizontal: 8,
+                                paddingVertical: 4,
+                                borderRadius: 8,
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: '900',
+                                  color: st.status === 'ACTIVE' ? '#065F46' : '#991B1B',
+                                }}
+                              >
+                                {st.status}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Granular Permission Matrix for Selected Staff */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <Text style={{ fontSize: 13.5, fontWeight: '900', color: '#0F172A' }}>
+                        🔐 Granular Permission Matrix: {inspectStaff.fullName} ({inspectStaff.staffId})
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2, marginBottom: 10 }}>
+                        {canManageStaff
+                          ? 'Tap any action badge to grant or revoke permission in real time (logged in Audit Centre).'
+                          : 'Read-only view. Switch to GET-001 (CEO) or GET-002 (Super Admin) to modify staff permissions.'}
+                      </Text>
+
+                      {CENTRAL_DASHBOARD_MODULES.slice(0, 12).map((mod) => {
+                        const modPerms = inspectStaff.permissions?.[mod.id] || {};
+                        return (
+                          <View
+                            key={mod.id}
+                            style={{
+                              paddingVertical: 10,
+                              borderBottomWidth: 1,
+                              borderBottomColor: '#F1F5F9',
+                            }}
+                          >
+                            <Text style={{ fontSize: 12, fontWeight: '800', color: '#0F172A', marginBottom: 6 }}>
+                              {mod.icon} {mod.title}
+                            </Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                              {PERMISSION_ACTIONS.map((act) => {
+                                const allowed = Boolean(modPerms[act.id]);
+                                return (
+                                  <TouchableOpacity
+                                    key={act.id}
+                                    disabled={!canManageStaff}
+                                    onPress={() => {
+                                      const nextVal = !allowed;
+                                      setCmsStaffAccounts((prev) =>
+                                        prev.map((s) =>
+                                          s.staffId === inspectStaff.staffId
+                                            ? {
+                                                ...s,
+                                                permissions: {
+                                                  ...s.permissions,
+                                                  [mod.id]: {
+                                                    ...(s.permissions?.[mod.id] || {}),
+                                                    [act.id]: nextVal,
+                                                  },
+                                                },
+                                              }
+                                            : s
+                                        )
+                                      );
+                                      recordCmsAudit({
+                                        moduleId: 'staff_access_management',
+                                        moduleName: 'Staff & Access Management',
+                                        actionType: 'UPDATE_PERMISSION',
+                                        targetEntity: `${inspectStaff.staffId} (${inspectStaff.fullName}) › ${mod.title}`,
+                                        previousValue: `${act.label}: ${allowed ? 'YES' : 'NO'}`,
+                                        newValue: `${act.label}: ${nextVal ? 'YES' : 'NO'}`,
+                                        reason: `Granular RBAC permission updated by ${activeCmsStaff.staffId}`,
+                                        approvedBy: activeCmsStaff.staffId,
+                                        severity: 'HIGH',
+                                      });
+                                    }}
+                                    style={{
+                                      paddingHorizontal: 8,
+                                      paddingVertical: 4,
+                                      borderRadius: 6,
+                                      backgroundColor: allowed ? '#D1FAE5' : '#F1F5F9',
+                                      borderWidth: 1,
+                                      borderColor: allowed ? '#10B981' : '#CBD5E1',
+                                    }}
+                                  >
+                                    <Text
+                                      style={{
+                                        fontSize: 10,
+                                        fontWeight: '900',
+                                        color: allowed ? '#065F46' : '#64748B',
+                                      }}
+                                    >
+                                      {act.label}: {allowed ? 'YES' : 'NO'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                );
+              }
+
+              // 3. FINANCE & MERCHANT SETTLEMENTS (MAKER-CHECKER SEPARATION OF DUTIES)
+              if (adminActiveTaxonomyTab === 'finance_settlements') {
+                const canCreateBatch = canStaffPerform(activeCmsStaff, 'merchant_settlements', 'create');
+                const canApproveBatch = canStaffPerform(activeCmsStaff, 'merchant_settlements', 'approve');
+
+                return (
+                  <View style={{ gap: 14 }}>
+                    <View style={{ backgroundColor: '#064E3B', borderRadius: 16, padding: 14 }}>
+                      <Text style={{ fontSize: 13.5, fontWeight: '900', color: '#FFFFFF' }}>
+                        💳 Finance & Merchant Settlements (Maker–Checker Protected)
+                      </Text>
+                      <Text style={{ fontSize: 11.5, color: '#A7F3D0', marginTop: 4 }}>
+                        Finance Officers (GET-003) can prepare settlement batches, but cannot approve their own payouts above ₦{cmsBusinessRules.dualControlPayoutThresholdNaira.toLocaleString()}. Senior Approvers (GET-001 / GET-002) must authorize release.
+                      </Text>
+                    </View>
+
+                    {cmsSettlements.map((stl) => (
+                      <View
+                        key={stl.id}
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 14,
+                          padding: 14,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text style={{ fontSize: 13, fontWeight: '900', color: '#0F172A' }}>
+                            {stl.merchantName}
+                          </Text>
+                          <View
+                            style={{
+                              backgroundColor: stl.status === 'COMPLETED' ? '#D1FAE5' : '#FEF3C7',
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 6,
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 10,
+                                fontWeight: '900',
+                                color: stl.status === 'COMPLETED' ? '#065F46' : '#92400E',
+                              }}
+                            >
+                              {stl.status}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                          {stl.id} • {stl.bankName} ({stl.accountMasked}) • Cycle: {stl.cycle}
+                        </Text>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
+                          <Text style={{ fontSize: 11.5, color: '#475569' }}>
+                            Gross: ₦{stl.grossSales.toLocaleString()} | Comm ({stl.commissionPct}%): -₦{stl.commissionDeducted.toLocaleString()}
+                          </Text>
+                          <Text style={{ fontSize: 13, fontWeight: '900', color: '#059669' }}>
+                            Net: ₦{stl.netPayable.toLocaleString()}
+                          </Text>
+                        </View>
+
+                        {stl.status !== 'COMPLETED' && (
+                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                            {canCreateBatch && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  const newReq = {
+                                    id: `APR-${Date.now().toString().slice(-4)}`,
+                                    type: 'MERCHANT_PAYOUT_BATCH',
+                                    title: `Release Settlement ${stl.id} for ${stl.merchantName}`,
+                                    moduleId: 'merchant_settlements',
+                                    requestedByStaffId: activeCmsStaff.staffId,
+                                    requestedByName: activeCmsStaff.fullName,
+                                    requestedByRole: activeCmsStaff.roleTitle,
+                                    createdAt: new Date().toISOString(),
+                                    status: 'PENDING',
+                                    requiredApproverRoles: ['ceo', 'super_admin'],
+                                    amountNaira: stl.netPayable,
+                                    currentValue: 'Status: PENDING_APPROVAL',
+                                    proposedValue: `Disburse ₦${stl.netPayable.toLocaleString()} to ${stl.bankName}`,
+                                    reason: `Prepared by ${activeCmsStaff.staffId} for cycle ${stl.cycle}`,
+                                  };
+                                  setCmsApprovalRequests((prev) => [newReq, ...prev]);
+                                  recordCmsAudit({
+                                    moduleId: 'merchant_settlements',
+                                    moduleName: 'Merchant Payments & Settlements',
+                                    actionType: 'PREPARE_SETTLEMENT_BATCH',
+                                    targetEntity: `${stl.id} (${stl.merchantName})`,
+                                    previousValue: stl.status,
+                                    newValue: 'QUEUED_FOR_MAKER_CHECKER_APPROVAL',
+                                    reason: 'Prepared settlement payout batch',
+                                    approvedBy: 'PENDING_SENIOR_APPROVAL',
+                                    severity: 'HIGH',
+                                  });
+                                  Alert.alert('Queued for Approval', `Settlement ${stl.id} has been submitted to the Maker–Checker Approvals Queue.`);
+                                }}
+                                style={{
+                                  flex: 1,
+                                  backgroundColor: '#1E293B',
+                                  paddingVertical: 8,
+                                  borderRadius: 8,
+                                  alignItems: 'center',
+                                }}
+                              >
+                                <Text style={{ fontSize: 11, fontWeight: '800', color: '#FFFFFF' }}>
+                                  📤 Submit to Approver (Maker)
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                            {canApproveBatch && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  if (stl.preparedBy === activeCmsStaff.staffId) {
+                                    Alert.alert(
+                                      'Maker–Checker Violation Blocked',
+                                      'Separation of Duties: A staff member cannot approve a payout batch they prepared themselves.'
+                                    );
+                                    return;
+                                  }
+                                  setCmsSettlements((prev) =>
+                                    prev.map((item) =>
+                                      item.id === stl.id
+                                        ? { ...item, status: 'COMPLETED', approvedBy: activeCmsStaff.staffId }
+                                        : item
+                                    )
+                                  );
+                                  recordCmsAudit({
+                                    moduleId: 'merchant_settlements',
+                                    moduleName: 'Merchant Payments & Settlements',
+                                    actionType: 'APPROVE_SETTLEMENT_PAYOUT',
+                                    targetEntity: `${stl.id} (${stl.merchantName})`,
+                                    previousValue: stl.status,
+                                    newValue: 'COMPLETED',
+                                    reason: `Executive payout release authorized by ${activeCmsStaff.staffId}`,
+                                    approvedBy: activeCmsStaff.staffId,
+                                    severity: 'CRITICAL',
+                                  });
+                                  Alert.alert('✓ Payout Released', `₦${stl.netPayable.toLocaleString()} released to ${stl.merchantName}.`);
+                                }}
+                                style={{
+                                  flex: 1,
+                                  backgroundColor: '#059669',
+                                  paddingVertical: 8,
+                                  borderRadius: 8,
+                                  alignItems: 'center',
+                                }}
+                              >
+                                <Text style={{ fontSize: 11, fontWeight: '900', color: '#FFFFFF' }}>
+                                  ✓ Approve & Disburse (Checker)
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                );
+              }
+
+              // 4. BUSINESS RULES & REVENUE CONFIGURATION
+              if (adminActiveTaxonomyTab === 'business_rules') {
+                const canEditRules = canStaffPerform(activeCmsStaff, 'business_rules_config', 'edit');
+                return (
+                  <View style={{ gap: 14 }}>
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A' }}>
+                        ⚖️ Business Rules & Revenue Configuration ({cmsBusinessRules.version})
+                      </Text>
+                      <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 2, marginBottom: 12 }}>
+                        Centralized platform commissions, service fees, delivery fares, and Maker–Checker thresholds.
+                      </Text>
+
+                      {[
+                        { key: 'defaultMerchantCommissionPct', label: 'Default Merchant Commission (%)', suffix: '%', step: 0.5 },
+                        { key: 'customerServiceFeePct', label: 'Customer Service Fee (%)', suffix: '%', step: 0.5 },
+                        { key: 'baseDeliveryFeeNaira', label: 'Base Delivery Fee (₦)', suffix: '₦', step: 100 },
+                        { key: 'minimumOrderValueNaira', label: 'Minimum Order Value (₦)', suffix: '₦', step: 500 },
+                        { key: 'dualControlPayoutThresholdNaira', label: 'Maker–Checker Payout Threshold (₦)', suffix: '₦', step: 50000 },
+                      ].map((rule) => (
+                        <View
+                          key={rule.key}
+                          style={{
+                            flexDirection: 'row',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            paddingVertical: 10,
+                            borderBottomWidth: 1,
+                            borderBottomColor: '#F1F5F9',
+                          }}
+                        >
+                          <View style={{ flex: 1, paddingRight: 8 }}>
+                            <Text style={{ fontSize: 12, fontWeight: '800', color: '#0F172A' }}>{rule.label}</Text>
+                            <Text style={{ fontSize: 11, color: '#059669', fontWeight: '900', marginTop: 2 }}>
+                              Current: {rule.suffix === '₦' ? `₦${Number(cmsBusinessRules[rule.key]).toLocaleString()}` : `${cmsBusinessRules[rule.key]}%`}
+                            </Text>
+                          </View>
+                          {canEditRules && (
+                            <View style={{ flexDirection: 'row', gap: 6 }}>
+                              <TouchableOpacity
+                                onPress={() => {
+                                  const prevVal = cmsBusinessRules[rule.key];
+                                  const nextVal = Math.max(0, Number(prevVal) - rule.step);
+                                  setCmsBusinessRules((prev) => ({ ...prev, [rule.key]: nextVal }));
+                                  recordCmsAudit({
+                                    moduleId: 'business_rules_config',
+                                    moduleName: 'Business Rules & Revenue Config',
+                                    actionType: 'UPDATE_COMMERCIAL_RULE',
+                                    targetEntity: rule.label,
+                                    previousValue: String(prevVal),
+                                    newValue: String(nextVal),
+                                    reason: `Commercial parameter adjusted by ${activeCmsStaff.staffId}`,
+                                    approvedBy: activeCmsStaff.staffId,
+                                    severity: 'CRITICAL',
+                                  });
+                                }}
+                                style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                              >
+                                <Text style={{ fontSize: 13, fontWeight: '900', color: '#0F172A' }}>−</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                onPress={() => {
+                                  const prevVal = cmsBusinessRules[rule.key];
+                                  const nextVal = Number(prevVal) + rule.step;
+                                  setCmsBusinessRules((prev) => ({ ...prev, [rule.key]: nextVal }));
+                                  recordCmsAudit({
+                                    moduleId: 'business_rules_config',
+                                    moduleName: 'Business Rules & Revenue Config',
+                                    actionType: 'UPDATE_COMMERCIAL_RULE',
+                                    targetEntity: rule.label,
+                                    previousValue: String(prevVal),
+                                    newValue: String(nextVal),
+                                    reason: `Commercial parameter adjusted by ${activeCmsStaff.staffId}`,
+                                    approvedBy: activeCmsStaff.staffId,
+                                    severity: 'CRITICAL',
+                                  });
+                                }}
+                                style={{ backgroundColor: '#059669', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                              >
+                                <Text style={{ fontSize: 13, fontWeight: '900', color: '#FFFFFF' }}>+</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                );
+              }
+
+              // 5. MAKER-CHECKER APPROVALS QUEUE
+              if (adminActiveTaxonomyTab === 'approvals_queue') {
+                const canApprove = canStaffPerform(activeCmsStaff, 'maker_checker_approvals', 'approve');
+                return (
+                  <View style={{ gap: 12 }}>
+                    <View style={{ backgroundColor: '#1E293B', borderRadius: 16, padding: 14 }}>
+                      <Text style={{ fontSize: 13.5, fontWeight: '900', color: '#FFFFFF' }}>
+                        ✅ Maker–Checker Dual-Control Approvals Queue
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#CBD5E1', marginTop: 4 }}>
+                        Sensitive actions (payout batches, commission changes, large refunds, merchant suspensions) require independent Checker approval.
+                      </Text>
+                    </View>
+
+                    {cmsApprovalRequests.map((req) => (
+                      <View
+                        key={req.id}
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 14,
+                          padding: 14,
+                          borderWidth: 1,
+                          borderColor: req.status === 'PENDING' ? '#F59E0B' : '#E2E8F0',
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#0F172A', flex: 1 }}>
+                            {req.title}
+                          </Text>
+                          <View
+                            style={{
+                              backgroundColor:
+                                req.status === 'APPROVED'
+                                  ? '#D1FAE5'
+                                  : req.status === 'REJECTED'
+                                    ? '#FEE2E2'
+                                    : '#FEF3C7',
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 6,
+                            }}
+                          >
+                            <Text style={{ fontSize: 10, fontWeight: '900', color: '#0F172A' }}>{req.status}</Text>
+                          </View>
+                        </View>
+                        <Text style={{ fontSize: 11, color: '#64748B', marginTop: 4 }}>
+                          Maker: {req.requestedByName} ({req.requestedByStaffId} • {req.requestedByRole})
+                        </Text>
+                        <View style={{ backgroundColor: '#F8FAFC', borderRadius: 8, padding: 8, marginTop: 8 }}>
+                          <Text style={{ fontSize: 11, color: '#475569' }}>Before: {req.currentValue}</Text>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#059669', marginTop: 2 }}>
+                            Proposed: {req.proposedValue}
+                          </Text>
+                          <Text style={{ fontSize: 10.5, color: '#64748B', marginTop: 4 }}>Reason: {req.reason}</Text>
+                        </View>
+
+                        {req.status === 'PENDING' && canApprove && (
+                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                            <TouchableOpacity
+                              onPress={() => {
+                                if (req.requestedByStaffId === activeCmsStaff.staffId) {
+                                  Alert.alert(
+                                    'Separation of Duties Enforced',
+                                    'Maker–Checker Rule: You cannot approve a request that you initiated yourself.'
+                                  );
+                                  return;
+                                }
+                                setCmsApprovalRequests((prev) =>
+                                  prev.map((r) =>
+                                    r.id === req.id
+                                      ? { ...r, status: 'APPROVED', approvedByStaffId: activeCmsStaff.staffId }
+                                      : r
+                                  )
+                                );
+                                recordCmsAudit({
+                                  moduleId: req.moduleId,
+                                  moduleName: 'Maker–Checker Approval Centre',
+                                  actionType: `APPROVE_${req.type}`,
+                                  targetEntity: req.title,
+                                  previousValue: req.currentValue,
+                                  newValue: req.proposedValue,
+                                  reason: req.reason,
+                                  approvedBy: `${activeCmsStaff.staffId} (${activeCmsStaff.fullName})`,
+                                  severity: 'CRITICAL',
+                                });
+                              }}
+                              style={{
+                                flex: 1,
+                                backgroundColor: '#059669',
+                                paddingVertical: 8,
+                                borderRadius: 8,
+                                alignItems: 'center',
+                              }}
+                            >
+                              <Text style={{ fontSize: 11.5, fontWeight: '900', color: '#FFFFFF' }}>✓ Approve</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setCmsApprovalRequests((prev) =>
+                                  prev.map((r) =>
+                                    r.id === req.id
+                                      ? { ...r, status: 'REJECTED', approvedByStaffId: activeCmsStaff.staffId }
+                                      : r
+                                  )
+                                );
+                                recordCmsAudit({
+                                  moduleId: req.moduleId,
+                                  moduleName: 'Maker–Checker Approval Centre',
+                                  actionType: `REJECT_${req.type}`,
+                                  targetEntity: req.title,
+                                  previousValue: req.currentValue,
+                                  newValue: 'REJECTED',
+                                  reason: `Rejected by ${activeCmsStaff.staffId}`,
+                                  approvedBy: activeCmsStaff.staffId,
+                                  severity: 'HIGH',
+                                });
+                              }}
+                              style={{
+                                flex: 1,
+                                backgroundColor: '#EF4444',
+                                paddingVertical: 8,
+                                borderRadius: 8,
+                                alignItems: 'center',
+                              }}
+                            >
+                              <Text style={{ fontSize: 11.5, fontWeight: '900', color: '#FFFFFF' }}>✕ Reject</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                );
+              }
+
+              // 6. TAMPER-RESISTANT STAFF ACTIVITY & ACCOUNTABILITY CENTRE
+              if (adminActiveTaxonomyTab === 'accountability_audit') {
+                return (
+                  <View style={{ gap: 12 }}>
+                    <View style={{ backgroundColor: '#05130B', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#10B981' }}>
+                      <Text style={{ fontSize: 13.5, fontWeight: '900', color: '#FFFFFF' }}>
+                        🕵️ Tamper-Resistant Staff Activity & Accountability Centre
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#A7F3D0', marginTop: 4 }}>
+                        Append-only ledger recording Staff Name, Staff ID, Role, Module, Action, Before/After Values, Reason, Approver, Device IP, and SHA-256 Integrity Hash. Cannot be edited or deleted by any staff member.
+                      </Text>
+                    </View>
+
+                    {cmsAuditLogs.map((log) => (
+                      <View
+                        key={log.id}
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 14,
+                          padding: 12,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text style={{ fontSize: 11.5, fontWeight: '900', color: '#0F172A' }}>
+                            {log.actionType} • {log.moduleName}
+                          </Text>
+                          <Text style={{ fontSize: 10, fontWeight: '800', color: '#059669' }}>{log.id}</Text>
+                        </View>
+                        <Text style={{ fontSize: 11, color: '#334155', marginTop: 3 }}>
+                          👤 {log.staffName} ({log.staffId} • {log.roleTitle})
+                        </Text>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A', marginTop: 3 }}>
+                          🎯 Target: {log.targetEntity}
+                        </Text>
+                        <View style={{ backgroundColor: '#F8FAFC', borderRadius: 8, padding: 8, marginTop: 6 }}>
+                          <Text style={{ fontSize: 10.5, color: '#DC2626' }}>− Before: {log.previousValue}</Text>
+                          <Text style={{ fontSize: 10.5, color: '#059669', marginTop: 2 }}>+ After: {log.newValue}</Text>
+                        </View>
+                        <Text style={{ fontSize: 10.5, color: '#475569', marginTop: 4 }}>
+                          📝 Reason: {log.reason} | Approved By: {log.approvedBy}
+                        </Text>
+                        <Text style={{ fontSize: 9.5, color: '#94A3B8', marginTop: 4, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }}>
+                          🔒 {log.integrityHash} • {log.ipAddress}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              }
+
+              // 7. REGIONAL STATE MANAGER & FIELD AGENT OPERATIONS
+              if (adminActiveTaxonomyTab === 'regional_field') {
+                return (
+                  <View style={{ gap: 14 }}>
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A' }}>
+                        🗺️ Multi-State & Multi-Country Territory Matrix
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2, marginBottom: 10 }}>
+                        Regional isolation scopes State Managers (e.g. GET-005 Lagos, GET-009 Abuja) to their assigned territory.
+                      </Text>
+                      {INITIAL_TERRITORIES.map((ter) => (
+                        <View
+                          key={ter.id}
+                          style={{
+                            paddingVertical: 10,
+                            borderBottomWidth: 1,
+                            borderBottomColor: '#F1F5F9',
+                            flexDirection: 'row',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#0F172A' }}>
+                              {ter.name} ({ter.country})
+                            </Text>
+                            <Text style={{ fontSize: 10.5, color: '#64748B' }}>
+                              Manager: {ter.managerStaffId} • Cities: {ter.cities.join(', ')}
+                            </Text>
+                          </View>
+                          <View style={{ backgroundColor: '#ECFDF5', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '900', color: '#059669' }}>{ter.status}</Text>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A', marginBottom: 8 }}>
+                        📍 Field Agent & Store Inspection Tasks (GET-006)
+                      </Text>
+                      {INITIAL_FIELD_TASKS.map((tsk) => (
+                        <View
+                          key={tsk.id}
+                          style={{
+                            padding: 10,
+                            borderRadius: 10,
+                            backgroundColor: '#F8FAFC',
+                            marginBottom: 8,
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '900', color: '#0F172A' }}>
+                            {tsk.storeName} ({tsk.category})
+                          </Text>
+                          <Text style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                            📍 {tsk.district} • GPS: {tsk.gpsCoords}
+                          </Text>
+                          <Text style={{ fontSize: 10.5, color: '#059669', fontWeight: '700', marginTop: 4 }}>
+                            {tsk.status} — {tsk.checklistNotes}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                );
+              }
+
+              const departments = marketplaceTaxonomy?.departments || DEFAULT_MARKETPLACE_DEPARTMENTS;
+              const storeTypes = marketplaceTaxonomy?.storeTypes || DEFAULT_STORE_TYPES;
+              const selectedDept =
+                departments.find((d) => d.id === adminSelectedDeptId) || departments[0];
+              const subcategories = selectedDept?.subcategories || [];
+              const selectedSub =
+                subcategories.find((s) => s.id === adminSelectedSubId) || subcategories[0];
+              const varieties = selectedSub?.varieties || [];
+
+              const persistUpdatedTaxonomy = async (nextTax) => {
+                setMarketplaceTaxonomy(nextTax);
+                await saveMarketplaceTaxonomy(nextTax);
+              };
+
+              const handleAddTaxonomyNode = async () => {
+                const cleanName = adminNewNodeName.trim();
+                if (!cleanName) {
+                  Alert.alert('Name Required', 'Please enter a name for the new category, subcategory, or product variety.');
+                  return;
+                }
+                const slug = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') + '_' + Date.now().toString().slice(-3);
+
+                if (adminNewNodeLevel === 'department') {
+                  const newDept = {
+                    id: slug,
+                    name: cleanName,
+                    label: cleanName,
+                    shortName: (cleanName || '').split(' ')[0],
+                    subtitle: adminNewNodeSubtitle.trim() || `${cleanName} specialist stores & vendors`,
+                    description: adminNewNodeSubtitle.trim() || `${cleanName} specialist stores & vendors`,
+                    icon: adminNewNodeIcon.trim() || '🛍️',
+                    accentColor: '#059669',
+                    bgTint: '#ECFDF5',
+                    heroImage: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=75',
+                    enabled: true,
+                    allowMerchantRegistration: true,
+                    showOnCustomerHome: true,
+                    isRegulated: false,
+                    defaultStoreType: 'supermarket',
+                    subcategories: [
+                      {
+                        id: `${slug}_general`,
+                        name: `General ${cleanName}`,
+                        label: `General ${cleanName}`,
+                        icon: adminNewNodeIcon.trim() || '🛍️',
+                        enabled: true,
+                        varieties: [
+                          { id: `${slug}_std`, name: `Fresh / Standard ${cleanName}`, label: `Fresh / Standard ${cleanName}`, enabled: true, keywords: [cleanName.toLowerCase()] },
+                        ],
+                      },
+                    ],
+                  };
+                  const nextTax = {
+                    ...marketplaceTaxonomy,
+                    departments: [...departments, newDept],
+                  };
+                  await persistUpdatedTaxonomy(nextTax);
+                  setAdminSelectedDeptId(newDept.id);
+                  setAdminNewNodeName('');
+                  setAdminNewNodeSubtitle('');
+                  Alert.alert('✓ Department Created', `"${cleanName}" is now live across Merchant Registration and Customer Discovery!`);
+                } else if (adminNewNodeLevel === 'subcategory' && selectedDept) {
+                  const newSub = {
+                    id: slug,
+                    name: cleanName,
+                    label: cleanName,
+                    icon: adminNewNodeIcon.trim() || selectedDept.icon || '🏷️',
+                    enabled: true,
+                    varieties: [
+                      {
+                        id: `${slug}_fresh`,
+                        name: cleanName,
+                        label: cleanName,
+                        enabled: true,
+                        keywords: [cleanName.toLowerCase()],
+                      },
+                    ],
+                  };
+                  const nextDepts = departments.map((d) =>
+                    d.id === selectedDept.id
+                      ? { ...d, subcategories: [...(d.subcategories || []), newSub] }
+                      : d
+                  );
+                  await persistUpdatedTaxonomy({ ...marketplaceTaxonomy, departments: nextDepts });
+                  setAdminSelectedSubId(newSub.id);
+                  setAdminNewNodeName('');
+                  Alert.alert('✓ Subcategory Added', `"${cleanName}" added under ${selectedDept.name}!`);
+                } else if (adminNewNodeLevel === 'variety' && selectedDept && selectedSub) {
+                  const newVar = {
+                    id: slug,
+                    name: cleanName,
+                    label: cleanName,
+                    enabled: true,
+                    keywords: [cleanName.toLowerCase()],
+                  };
+                  const nextDepts = departments.map((d) => {
+                    if (d.id !== selectedDept.id) return d;
+                    return {
+                      ...d,
+                      subcategories: (d.subcategories || []).map((s) =>
+                        s.id === selectedSub.id
+                          ? { ...s, varieties: [...(s.varieties || []), newVar] }
+                          : s
+                      ),
+                    };
+                  });
+                  await persistUpdatedTaxonomy({ ...marketplaceTaxonomy, departments: nextDepts });
+                  setAdminNewNodeName('');
+                  Alert.alert('✓ Product Variety Added', `"${cleanName}" added under ${selectedDept.name} › ${selectedSub.label}!`);
+                }
+              };
+
+              if (adminActiveTaxonomyTab === 'hierarchy') {
+                return (
+                  <>
+                    {/* Quick Create Bar */}
+                    <View
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        padding: 14,
+                        borderWidth: 1,
+                        borderColor: '#CBD5E1',
+                        marginBottom: 16,
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '900', color: '#0F172A', marginBottom: 8 }}>
+                        ➕ Add New Category, Subcategory, or Product Variety
+                      </Text>
+
+                      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 10 }}>
+                        {[
+                          { id: 'department', label: '+ L1 Department' },
+                          { id: 'subcategory', label: `+ L2 in ${selectedDept?.shortName || 'Dept'}` },
+                          { id: 'variety', label: `+ L3 in ${(selectedSub?.label || 'Sub').split(' ')[0]}` },
+                        ].map((b) => {
+                          const active = adminNewNodeLevel === b.id;
+                          return (
+                            <TouchableOpacity
+                              key={b.id}
+                              onPress={() => setAdminNewNodeLevel(b.id)}
+                              style={{
+                                flex: 1,
+                                paddingVertical: 8,
+                                paddingHorizontal: 6,
+                                borderRadius: 10,
+                                backgroundColor: active ? '#064E3B' : '#F1F5F9',
+                                alignItems: 'center',
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 10.5,
+                                  fontWeight: '800',
+                                  color: active ? '#FFFFFF' : '#334155',
+                                }}
+                                numberOfLines={1}
+                              >
+                                {b.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                        <TextInput
+                          style={{
+                            width: 54,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            borderRadius: 10,
+                            paddingHorizontal: 10,
+                            paddingVertical: 8,
+                            fontSize: 18,
+                            textAlign: 'center',
+                          }}
+                          value={adminNewNodeIcon}
+                          onChangeText={setAdminNewNodeIcon}
+                          placeholder="🐐"
+                        />
+                        <TextInput
+                          style={{
+                            flex: 1,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            borderRadius: 10,
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            fontSize: 13,
+                            color: '#0F172A',
+                          }}
+                          value={adminNewNodeName}
+                          onChangeText={setAdminNewNodeName}
+                          placeholder={
+                            adminNewNodeLevel === 'department'
+                              ? 'e.g. Frozen Foods & Cold Room'
+                              : adminNewNodeLevel === 'subcategory'
+                                ? `New subcategory in ${selectedDept?.name}...`
+                                : `New cut/variety in ${selectedSub?.label}...`
+                          }
+                          placeholderTextColor="#94A3B8"
+                        />
+                      </View>
+
+                      <TouchableOpacity
+                        onPress={handleAddTaxonomyNode}
+                        style={{
+                          backgroundColor: '#059669',
+                          borderRadius: 10,
+                          paddingVertical: 10,
+                          alignItems: 'center',
+                        }}
+                      >
+                        <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#FFFFFF' }}>
+                          Publish to Live GETIT Taxonomy ➔
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* inline Rename Modal / Box if editing */}
+                    {adminEditingNode && (
+                      <View
+                        style={{
+                          backgroundColor: '#FFFBEB',
+                          borderRadius: 14,
+                          padding: 12,
+                          borderWidth: 1.5,
+                          borderColor: '#F59E0B',
+                          marginBottom: 14,
+                        }}
+                      >
+                        <Text style={{ fontSize: 11.5, fontWeight: '900', color: '#92400E', marginBottom: 6 }}>
+                          ✏️ RENAME {String(adminEditingNode?.level || 'CATEGORY').toUpperCase()}
+                        </Text>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <TextInput
+                            style={{
+                              flex: 1,
+                              backgroundColor: '#FFFFFF',
+                              borderWidth: 1,
+                              borderColor: '#FCD34D',
+                              borderRadius: 10,
+                              paddingHorizontal: 10,
+                              paddingVertical: 8,
+                              fontSize: 13,
+                              color: '#0F172A',
+                            }}
+                            value={adminEditingNode.label}
+                            onChangeText={(txt) => setAdminEditingNode({ ...adminEditingNode, label: txt })}
+                          />
+                          <TouchableOpacity
+                            onPress={async () => {
+                              const newLabel = adminEditingNode.label.trim();
+                              if (!newLabel) return;
+                              const nextDepts = departments.map((d) => {
+                                if (d.id !== adminEditingNode.deptId) return d;
+                                if (adminEditingNode.level === 'department') {
+                                  return { ...d, name: newLabel, label: newLabel, shortName: (newLabel || '').split(' ')[0] };
+                                }
+                                return {
+                                  ...d,
+                                  subcategories: (d.subcategories || []).map((s) => {
+                                    if (s.id !== adminEditingNode.subId) return s;
+                                    if (adminEditingNode.level === 'subcategory') {
+                                      return { ...s, name: newLabel, label: newLabel };
+                                    }
+                                    return {
+                                      ...s,
+                                      varieties: (s.varieties || []).map((v) =>
+                                        v.id === adminEditingNode.varId ? { ...v, name: newLabel, label: newLabel } : v
+                                      ),
+                                    };
+                                  }),
+                                };
+                              });
+                              await persistUpdatedTaxonomy({ ...marketplaceTaxonomy, departments: nextDepts });
+                              setAdminEditingNode(null);
+                            }}
+                            style={{
+                              backgroundColor: '#064E3B',
+                              paddingHorizontal: 14,
+                              justifyContent: 'center',
+                              borderRadius: 10,
+                            }}
+                          >
+                            <Text style={{ color: '#FFFFFF', fontWeight: '900', fontSize: 12 }}>Save</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setAdminEditingNode(null)}
+                            style={{
+                              backgroundColor: '#E2E8F0',
+                              paddingHorizontal: 10,
+                              justifyContent: 'center',
+                              borderRadius: 10,
+                            }}
+                          >
+                            <Text style={{ color: '#334155', fontWeight: '800', fontSize: 12 }}>Cancel</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+
+                    {/* LEVEL 1: MAIN DEPARTMENTS */}
+                    <Text style={{ fontSize: 12, fontWeight: '900', color: '#0F172A', marginBottom: 8 }}>
+                      LEVEL 1: MAIN MARKETPLACE DEPARTMENTS ({departments.length})
+                    </Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginBottom: 14 }}>
+                      {departments.map((dept) => {
+                        const isSelected = selectedDept?.id === dept.id;
+                        return (
+                          <TouchableOpacity
+                            key={dept.id}
+                            onPress={() => {
+                              setAdminSelectedDeptId(dept.id);
+                              const firstSub = dept.subcategories?.[0]?.id || '';
+                              setAdminSelectedSubId(firstSub);
+                            }}
+                            style={{
+                              width: 175,
+                              padding: 12,
+                              borderRadius: 14,
+                              backgroundColor: isSelected ? '#0F172A' : '#FFFFFF',
+                              borderWidth: isSelected ? 2 : 1,
+                              borderColor: isSelected ? '#10B981' : '#CBD5E1',
+                              opacity: dept.enabled === false ? 0.55 : 1,
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Text style={{ fontSize: 22 }}>{dept.icon}</Text>
+                              <View style={{ flexDirection: 'row', gap: 6 }}>
+                                <TouchableOpacity
+                                  onPress={() =>
+                                    setAdminEditingNode({
+                                      level: 'department',
+                                      deptId: dept.id,
+                                      label: dept.name,
+                                    })
+                                  }
+                                >
+                                  <Text style={{ fontSize: 12 }}>✏️</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={async () => {
+                                    const nextDepts = departments.map((d) =>
+                                      d.id === dept.id ? { ...d, enabled: d.enabled === false ? true : false } : d
+                                    );
+                                    await persistUpdatedTaxonomy({ ...marketplaceTaxonomy, departments: nextDepts });
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 11, fontWeight: '900', color: dept.enabled === false ? '#EF4444' : '#10B981' }}>
+                                    {dept.enabled === false ? 'OFF' : 'ON'}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                            <Text
+                              style={{
+                                fontSize: 13,
+                                fontWeight: '900',
+                                color: isSelected ? '#FFFFFF' : '#0F172A',
+                                marginTop: 6,
+                              }}
+                              numberOfLines={1}
+                            >
+                              {dept.name}
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: 10.5,
+                                color: isSelected ? '#94A3B8' : '#64748B',
+                                marginTop: 2,
+                              }}
+                              numberOfLines={1}
+                            >
+                              {(dept.subcategories || []).length} subcategories
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+
+                    {/* LEVEL 2: SUBCATEGORIES IN SELECTED DEPARTMENT */}
+                    {selectedDept && (
+                      <View
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 14,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          marginBottom: 14,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '900', color: '#0F172A', marginBottom: 8 }}>
+                          LEVEL 2: SUBCATEGORIES IN {selectedDept?.icon || '🏪'} {String(selectedDept?.name || selectedDept?.label || 'DEPARTMENT').toUpperCase()} ({subcategories.length})
+                        </Text>
+                        <View style={{ gap: 8 }}>
+                          {subcategories.map((sub) => {
+                            const isSubSelected = selectedSub?.id === sub.id;
+                            return (
+                              <TouchableOpacity
+                                key={sub.id}
+                                onPress={() => setAdminSelectedSubId(sub.id)}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: 10,
+                                  borderRadius: 12,
+                                  backgroundColor: isSubSelected ? '#ECFDF5' : '#F8FAFC',
+                                  borderWidth: isSubSelected ? 1.5 : 1,
+                                  borderColor: isSubSelected ? '#059669' : '#E2E8F0',
+                                }}
+                              >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                                  <Text style={{ fontSize: 18 }}>{sub.icon}</Text>
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>
+                                      {sub.label}
+                                    </Text>
+                                    <Text style={{ fontSize: 10.5, color: '#64748B' }}>
+                                      {(sub.varieties || []).length} product varieties
+                                    </Text>
+                                  </View>
+                                </View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                  <TouchableOpacity
+                                    onPress={() =>
+                                      setAdminEditingNode({
+                                        level: 'subcategory',
+                                        deptId: selectedDept.id,
+                                        subId: sub.id,
+                                        label: sub.label,
+                                      })
+                                    }
+                                  >
+                                    <Text style={{ fontSize: 13 }}>✏️</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    onPress={async () => {
+                                      const nextDepts = departments.map((d) =>
+                                        d.id === selectedDept.id
+                                          ? {
+                                              ...d,
+                                              subcategories: (d.subcategories || []).map((s) =>
+                                                s.id === sub.id
+                                                  ? { ...s, enabled: s.enabled === false ? true : false }
+                                                  : s
+                                              ),
+                                            }
+                                          : d
+                                      );
+                                      await persistUpdatedTaxonomy({ ...marketplaceTaxonomy, departments: nextDepts });
+                                    }}
+                                    style={{
+                                      paddingHorizontal: 8,
+                                      paddingVertical: 4,
+                                      borderRadius: 6,
+                                      backgroundColor: sub.enabled === false ? '#FEE2E2' : '#DCFCE7',
+                                    }}
+                                  >
+                                    <Text
+                                      style={{
+                                        fontSize: 10.5,
+                                        fontWeight: '900',
+                                        color: sub.enabled === false ? '#DC2626' : '#15803D',
+                                      }}
+                                    >
+                                      {sub.enabled === false ? 'Disabled' : 'Enabled'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    )}
+
+                    {/* LEVEL 3: PRODUCT VARIETIES IN SELECTED SUBCATEGORY */}
+                    {selectedSub && (
+                      <View
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 14,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '900', color: '#0F172A', marginBottom: 8 }}>
+                          LEVEL 3: PRODUCT VARIETIES IN {selectedSub?.icon || '🏷️'} {String(selectedSub?.label || selectedSub?.name || 'SUBCATEGORY').toUpperCase()} ({varieties.length})
+                        </Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                          {varieties.map((v) => (
+                            <View
+                              key={v.id}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 6,
+                                paddingHorizontal: 10,
+                                paddingVertical: 7,
+                                borderRadius: 10,
+                                backgroundColor: v.enabled === false ? '#FEF2F2' : '#F1F5F9',
+                                borderWidth: 1,
+                                borderColor: v.enabled === false ? '#FECACA' : '#CBD5E1',
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 12,
+                                  fontWeight: '700',
+                                  color: v.enabled === false ? '#991B1B' : '#0F172A',
+                                }}
+                              >
+                                {v.label}
+                              </Text>
+                              <TouchableOpacity
+                                onPress={() =>
+                                  setAdminEditingNode({
+                                    level: 'variety',
+                                    deptId: selectedDept.id,
+                                    subId: selectedSub.id,
+                                    varId: v.id,
+                                    label: v.label,
+                                  })
+                                }
+                              >
+                                <Text style={{ fontSize: 11 }}>✏️</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                onPress={async () => {
+                                  const nextDepts = departments.map((d) => {
+                                    if (d.id !== selectedDept.id) return d;
+                                    return {
+                                      ...d,
+                                      subcategories: (d.subcategories || []).map((s) =>
+                                        s.id === selectedSub.id
+                                          ? {
+                                              ...s,
+                                              varieties: (s.varieties || []).map((vr) =>
+                                                vr.id === v.id
+                                                  ? { ...vr, enabled: vr.enabled === false ? true : false }
+                                                  : vr
+                                              ),
+                                            }
+                                          : s
+                                      ),
+                                    };
+                                  });
+                                  await persistUpdatedTaxonomy({ ...marketplaceTaxonomy, departments: nextDepts });
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: '900',
+                                    color: v.enabled === false ? '#DC2626' : '#059669',
+                                  }}
+                                >
+                                  {v.enabled === false ? 'OFF' : 'ON'}
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    )}
+                  </>
+                );
+              }
+
+              if (adminActiveTaxonomyTab === 'store_types') {
+                return (
+                  <View
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 16,
+                      padding: 14,
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '900', color: '#0F172A', marginBottom: 4 }}>
+                      🏪 Option B: Store Type Classifications
+                    </Text>
+                    <Text style={{ fontSize: 11.5, color: '#64748B', marginBottom: 12 }}>
+                      Control which Store Types appear when customers switch to "Shop by Store Type" (Supermarkets, Butchers, Bakeries, etc.).
+                    </Text>
+                    {storeTypes.map((st) => (
+                      <View
+                        key={st.id}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingVertical: 10,
+                          borderBottomWidth: 1,
+                          borderBottomColor: '#F1F5F9',
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                          <Text style={{ fontSize: 22 }}>{st.icon}</Text>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>{st.label}</Text>
+                            <Text style={{ fontSize: 11, color: '#64748B' }}>{st.description}</Text>
+                          </View>
+                        </View>
+                        {st.id !== 'all' && (
+                          <Switch
+                            value={st.enabled !== false}
+                            onValueChange={async (val) => {
+                              const nextTypes = storeTypes.map((item) =>
+                                item.id === st.id ? { ...item, enabled: val } : item
+                              );
+                              await persistUpdatedTaxonomy({ ...marketplaceTaxonomy, storeTypes: nextTypes });
+                            }}
+                            trackColor={{ false: '#CBD5E1', true: '#10B981' }}
+                            thumbColor="#FFFFFF"
+                          />
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                );
+              }
+
+              if (adminActiveTaxonomyTab === 'requests') {
+                return (
+                  <View>
+                    <Text style={{ fontSize: 13, fontWeight: '900', color: '#0F172A', marginBottom: 8 }}>
+                      📥 Merchant Category & Specialisation Requests ({categoryRequests.length})
+                    </Text>
+                    {categoryRequests.length === 0 ? (
+                      <View
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 24,
+                          alignItems: 'center',
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                        }}
+                      >
+                        <Text style={{ fontSize: 32, marginBottom: 6 }}>✅</Text>
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>
+                          No Pending Category Requests
+                        </Text>
+                        <Text style={{ fontSize: 12, color: '#64748B', textAlign: 'center', marginTop: 4 }}>
+                          When merchants request a new category, subcategory, or product variety during registration or in Store Settings, you can approve it with one tap here.
+                        </Text>
+                      </View>
+                    ) : (
+                      categoryRequests.map((req) => (
+                        <View
+                          key={req.id}
+                          style={{
+                            backgroundColor: '#FFFFFF',
+                            borderRadius: 14,
+                            padding: 14,
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                            marginBottom: 10,
+                          }}
+                        >
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A' }}>
+                              {req.requestedName}
+                            </Text>
+                            <View
+                              style={{
+                                paddingHorizontal: 8,
+                                paddingVertical: 3,
+                                borderRadius: 6,
+                                backgroundColor:
+                                  req.status === 'approved'
+                                    ? '#DCFCE7'
+                                    : req.status === 'rejected'
+                                      ? '#FEE2E2'
+                                      : '#FEF3C7',
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: '900',
+                                  color:
+                                    req.status === 'approved'
+                                      ? '#15803D'
+                                      : req.status === 'rejected'
+                                        ? '#DC2626'
+                                        : '#B45309',
+                                }}
+                              >
+                                {(req.status || 'pending').toUpperCase()}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={{ fontSize: 11.5, color: '#475569', marginTop: 4 }}>
+                            Requested by <Text style={{ fontWeight: '800' }}>{req.storeName}</Text> • Level: {req.level}
+                          </Text>
+                          {req.notes ? (
+                            <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>Notes: "{req.notes}"</Text>
+                          ) : null}
+
+                          {req.status === 'pending' && (
+                            <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                              <TouchableOpacity
+                                onPress={async () => {
+                                  const targetDeptId = req.parentDepartmentId || 'meat_poultry';
+                                  const slug = req.requestedName
+                                    .toLowerCase()
+                                    .replace(/[^a-z0-9]+/g, '_');
+                                  const nextDepts = departments.map((d) => {
+                                    if (d.id !== targetDeptId) return d;
+                                    return {
+                                      ...d,
+                                      subcategories: [
+                                        ...(d.subcategories || []),
+                                        {
+                                          id: slug,
+                                          label: req.requestedName,
+                                          icon: d.icon || '🛍️',
+                                          enabled: true,
+                                          varieties: [
+                                            {
+                                              id: `${slug}_std`,
+                                              label: req.requestedName,
+                                              enabled: true,
+                                              keywords: [req.requestedName.toLowerCase()],
+                                            },
+                                          ],
+                                        },
+                                      ],
+                                    };
+                                  });
+                                  await persistUpdatedTaxonomy({
+                                    ...marketplaceTaxonomy,
+                                    departments: nextDepts,
+                                  });
+                                  const nextReqs = categoryRequests.map((r) =>
+                                    r.id === req.id ? { ...r, status: 'approved' } : r
+                                  );
+                                  setCategoryRequests(nextReqs);
+                                  await saveMerchantCategoryRequests(nextReqs);
+                                  Alert.alert('✓ Approved & Published!', `"${req.requestedName}" is now live in the GETIT taxonomy.`);
+                                }}
+                                style={{
+                                  flex: 1,
+                                  backgroundColor: '#059669',
+                                  paddingVertical: 8,
+                                  borderRadius: 8,
+                                  alignItems: 'center',
+                                }}
+                              >
+                                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '900' }}>
+                                  ✓ Approve & Add to Catalogue
+                                </Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                onPress={async () => {
+                                  const nextReqs = categoryRequests.map((r) =>
+                                    r.id === req.id ? { ...r, status: 'rejected' } : r
+                                  );
+                                  setCategoryRequests(nextReqs);
+                                  await saveMerchantCategoryRequests(nextReqs);
+                                }}
+                                style={{
+                                  paddingHorizontal: 14,
+                                  backgroundColor: '#FEE2E2',
+                                  paddingVertical: 8,
+                                  borderRadius: 8,
+                                  alignItems: 'center',
+                                }}
+                              >
+                                <Text style={{ color: '#DC2626', fontSize: 12, fontWeight: '800' }}>Decline</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </View>
+                      ))
+                    )}
+                  </View>
+                );
+              }
+
+              // Tab 4: Regulated Pharmacies Verification
+              const pharmStores = storesList.filter(
+                (s) =>
+                  s.storeType === 'pharmacy' ||
+                  s.category === 'pharmacy' ||
+                  s.primaryDepartmentId === 'pharmacy'
+              );
+              return (
+                <View>
+                  <Text style={{ fontSize: 13, fontWeight: '900', color: '#0F172A', marginBottom: 4 }}>
+                    🩺 Regulated Pharmacy & PCN Compliance ({pharmStores.length})
+                  </Text>
+                  <Text style={{ fontSize: 11.5, color: '#64748B', marginBottom: 12 }}>
+                    Pharmacies require separate regulatory onboarding (Superintendent Pharmacist, PCN License & Premises Registration).
+                  </Text>
+                  {pharmStores.map((ph) => {
+                    const isVerified = ph.regulatoryStatus !== 'suspended';
+                    return (
+                      <View
+                        key={ph.id}
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 14,
+                          padding: 14,
+                          borderWidth: 1,
+                          borderColor: '#BFDBFE',
+                          marginBottom: 10,
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text style={{ fontSize: 14, fontWeight: '900', color: '#1E3A8A' }}>
+                            💊 {ph.name}
+                          </Text>
+                          <View
+                            style={{
+                              backgroundColor: isVerified ? '#DCFCE7' : '#FEE2E2',
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 6,
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 10,
+                                fontWeight: '900',
+                                color: isVerified ? '#15803D' : '#DC2626',
+                              }}
+                            >
+                              {isVerified ? 'PCN VERIFIED' : 'SUSPENDED'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={{ fontSize: 11.5, color: '#334155', marginTop: 4 }}>
+                          👨‍⚕️ Pharmacist: {ph.pharmacist?.name || 'On-Duty Clinical Pharmacist'}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                          📜 PCN License: {ph.pcnLicenseNo || ph.pharmacist?.licenseNo || 'PCN-REG-VERIFIED'} • Premises: {ph.premisesLicenseNo || 'PCN-PREM-VERIFIED'}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })()}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -26023,9 +35642,32 @@ const styles = StyleSheet.create({
   },
   storeImageContainer: {
     width: '100%',
-    height: 175,
+    height: 195,
     position: 'relative',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#E2E8F0',
+    overflow: 'hidden',
+  },
+  storeHeaderRowBelowImage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  storeBadgeInline: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  favoriteButtonInline: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: COLORS.borderBeige,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   storeImagePlaceholderBackdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -36371,6 +46013,125 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#475569',
     marginTop: 1,
+  },
+
+  // --- OTP AUTHENTICATION STYLES ---
+  otpMethodSwitchWrap: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 16,
+  },
+  otpMethodBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  otpMethodBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  otpMethodText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  otpMethodTextActive: {
+    color: '#064E3B',
+    fontWeight: '800',
+  },
+  otpBannerBox: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  otpBannerIcon: {
+    fontSize: 22,
+  },
+  otpBannerTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#065F46',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  otpBannerCodeText: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#047857',
+    marginTop: 2,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  otpVerifyHero: {
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingVertical: 10,
+  },
+  otpShieldMedallion: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    borderColor: '#BBF7D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  otpVerifyTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#111827',
+    textAlign: 'center',
+  },
+  otpVerifySub: {
+    fontSize: 12,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 18,
+    paddingHorizontal: 16,
+  },
+  otpResendRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+    gap: 6,
+  },
+  otpTimerText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  otpResendActionText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  otpChangePhoneBtn: {
+    marginTop: 14,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  otpChangePhoneText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
 
 });

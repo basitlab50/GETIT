@@ -8,6 +8,7 @@ import {
   INITIAL_CONFIG,
 } from '../data/mockData';
 import { calculateOrderTotals } from '../utils/feeCalculator';
+import { fetchActiveCommercialPolicy, subscribeToCommercialPolicyUpdates } from '../services/supabaseService';
 
 const PlatformContext = createContext(null);
 
@@ -61,8 +62,8 @@ function saveStored(key, data) {
 }
 
 export function PlatformProvider({ children }) {
-  // Global View/Role State
-  const [activeRole, setActiveRole] = useState('customer'); // 'customer' | 'vendor' | 'rider' | 'admin'
+  // Global View/Role State — Defaults directly to the GETIT Central Management Portal ('admin') on Laptop Web
+  const [activeRole, setActiveRole] = useState('admin'); // 'admin' | 'customer' | 'vendor' | 'rider'
   const [isMobileFrame, setIsMobileFrame] = useState(true); // For customer app realistic mobile frame toggle
   const [selectedLocation, setSelectedLocation] = useState(INITIAL_LOCATIONS[0]);
   
@@ -92,6 +93,61 @@ export function PlatformProvider({ children }) {
   useEffect(() => saveStored(STORAGE_KEYS.VENDORS, vendors), [vendors]);
   useEffect(() => saveStored(STORAGE_KEYS.RIDERS, riders), [riders]);
   useEffect(() => saveStored(STORAGE_KEYS.CONFIG, config), [config]);
+
+  // Live Supabase Commercial Policy Sync (10%/7% markups, 5% concierge, 20% bolt)
+  useEffect(() => {
+    let active = true;
+    fetchActiveCommercialPolicy().then((policy) => {
+      if (active && policy) {
+        setConfig((prev) => ({
+          ...prev,
+          ...policy,
+          conciergePackagingPct: policy.conciergePackagingPct,
+          boltDeliveryMarkupPct: policy.boltDeliveryMarkupPct,
+          markupBelowThresholdPct: policy.markupBelowThresholdPct,
+          markupAboveThresholdPct: policy.markupAboveThresholdPct,
+        }));
+      }
+    }).catch(() => {});
+
+    const unsubscribe = subscribeToCommercialPolicyUpdates((newPolicy) => {
+      if (newPolicy) {
+        setConfig((prev) => ({
+          ...prev,
+          ...newPolicy,
+          conciergePackagingPct: newPolicy.conciergePackagingPct,
+          boltDeliveryMarkupPct: newPolicy.boltDeliveryMarkupPct,
+          markupBelowThresholdPct: newPolicy.markupBelowThresholdPct,
+          markupAboveThresholdPct: newPolicy.markupAboveThresholdPct,
+        }));
+        notify(
+          'Live Policy Enforced',
+          `Commercial policy ${newPolicy.version || 'v4.x'} updated directly from Supabase!`,
+          'success'
+        );
+      }
+    });
+
+    const handleWindowPolicy = (e) => {
+      if (e?.detail) {
+        setConfig((prev) => ({
+          ...prev,
+          ...e.detail,
+        }));
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('getit_policy_updated', handleWindowPolicy);
+    }
+
+    return () => {
+      active = false;
+      unsubscribe();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('getit_policy_updated', handleWindowPolicy);
+      }
+    };
+  }, []);
 
   const notify = (title, message, type = 'info') => {
     const id = Date.now() + Math.random();

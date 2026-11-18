@@ -209,7 +209,7 @@ export default function CustomerHome({
                         lineHeight: 1.15,
                       }}
                     >
-                      {cat.name.split(' ')[0]}
+                      {(cat?.name || 'Category').split(' ')[0]}
                     </span>
                   </button>
                 );
@@ -221,7 +221,7 @@ export default function CustomerHome({
           <div style={{ marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
               <h3 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#0F172A' }}>
-                Nearby Stores in {selectedLocation.name.split(',')[0]}
+                Nearby Stores in {(selectedLocation?.name || 'Abuja').split(',')[0]}
               </h3>
               <span style={{ fontSize: '0.72rem', color: '#64748B' }}>Fast Delivery</span>
             </div>
@@ -344,7 +344,7 @@ export default function CustomerHome({
                           {product.imageUrl}
                         </div>
                         <span style={{ fontSize: '0.62rem', color: '#64748B', display: 'block' }}>
-                          {product.vendorName.split(' ')[0]}
+                          {(product?.vendorName || 'Vendor').split(' ')[0]}
                         </span>
                         <h5
                           style={{
