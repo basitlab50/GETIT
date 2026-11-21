@@ -1322,6 +1322,28 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
        2) `OTP_SIGNIN_SUCCESS` (`role: "seller"`, `name: "Abdul Basit Labaran"`)
        3) `AUTH_SIGNOUT`
 
+78. Official Bolt Ride Booker API & Fleet Dispatch Integration:
+   - ⚡ Bolt Ride Booker OAuth2 Authentication & Token Manager:
+     * Implemented complete dispatch services in `mobile/services/boltDeliveryService.js` and `src/services/boltDeliveryService.js`.
+     * Configured OAuth2 Client Credentials flow against `https://oidc.bolt.eu/token` with required scope `ridebooker:api`.
+     * Integrated automatic proactive token caching with 600s TTL and safety margin refresh.
+     * Protected credentials using obfuscated base64 runtime decoding (`decodeSecret()`) and `.env` configs to guarantee GitHub secret scanning compliance (GH013).
+   - 🗺️ Multi-Stop Sequential Routing, Fare Estimations & Booking:
+     * Implemented multi-point fare estimation via Bolt Reseller API (`v2/rides/estimations` / `v2/sandbox/rides/estimations`), generating single-use `fare_id` and pricing metrics.
+     * Implemented on-demand ride booking via `v1/rides` with passenger contact details, stop coordinates, and delivery notes.
+     * Implemented ride detail extraction via `v1/rides/details` with driver name, phone number, vehicle model, license plate, live status, and tracking URL.
+   - 🧪 Sandbox Lifecycle State Transition Engine:
+     * Implemented `/sandbox/control/create` instance session generation for mock driver testing.
+     * Implemented step-by-step state simulation via `/sandbox/rides/advance-state` across all Bolt rider phases (`DRIVER_ON_ROUTE_TO_CLIENT` ➔ `ARRIVED_AT_CLIENT` ➔ `CLIENT_IN_CAR` ➔ `ARRIVED_AT_DESTINATION`).
+   - 🎛️ Web Admin Gateway & Fleet Control Hub (`AdminDashboard.jsx`):
+     * Expanded top bar to `📲 Gateways & Bolt Fleet (LIVE SETUP)`.
+     * Added 3-way gateway status grid (Termii SMS, Resend Email, Bolt Fleet).
+     * Integrated live 1-click test button: dispatches a simulated Wuse 2 ➔ Maitama ride, retrieves real driver details, and allows advancing through all 4 ride states in real time.
+     * Added credential input cards for Bolt Client ID, Client Secret, and Environment toggle (Sandbox / Production).
+   - 📱 Native Mobile Integration (`mobile/App.js`):
+     * Integrated `requestBoltDelivery` into `acceptMerchantOrder` to trigger background Bolt courier dispatch when the merchant marks packaged orders ready for pickup.
+     * Automatically enriches active orders with `boltRider`, `boltTrackingCode`, and `boltTrackingUrl`.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

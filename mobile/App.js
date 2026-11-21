@@ -40,7 +40,7 @@ import {
   setAudioModeAsync,
   AudioModule,
 } from 'expo-audio';
-import { SAMPLE_BOLT_RIDERS } from './services/boltDeliveryService';
+import { SAMPLE_BOLT_RIDERS, requestBoltDelivery } from './services/boltDeliveryService';
 import { sendSmsOtp, sendEmailOtp } from './services/otpDispatchService';
 import { NIGERIAN_GROCERIES_CATALOG } from './data/nigerianGroceriesCatalog';
 import { REAL_ROAD_LEGS, REAL_ROAD_POINTS, REAL_ROAD_WAYPOINTS } from './realRoadRouteData';
@@ -10669,6 +10669,40 @@ Support: help@getit.ng | Abuja, Nigeria`;
         notifyCourierDispatched({ id: orderId, storeName: firstStopName }, assignedRider.name);
 
         updateDatabaseOrderStatus(orderId, dispatchPayload).catch(() => { });
+
+        // Asynchronously request Bolt Ride Booker fleet dispatch in background
+        requestBoltDelivery({
+          orderId: orderId,
+          stops: latestStopsForBroadcast,
+          storeLocation: firstStop,
+          deliveryLocation: targetOrder?.deliveryLocation,
+          customerName: targetOrder?.customerName || 'Valued Customer',
+          customerPhone: targetOrder?.customerPhone || '+2348032941194',
+        }).then((boltRes) => {
+          if (boltRes && boltRes.rider) {
+            console.log(`[Bolt Ride Booker] Dispatch confirmed for ${orderId} with rider:`, boltRes.rider.name);
+            updateAndPersistOrders((prev) =>
+              prev.map((o) =>
+                o.id === orderId
+                  ? {
+                      ...o,
+                      boltRider: boltRes.rider,
+                      boltTrackingCode: boltRes.trackingCode,
+                      boltTrackingUrl: boltRes.trackingUrl,
+                      boltRideId: boltRes.rideId,
+                    }
+                  : o
+              )
+            );
+            updateDatabaseOrderStatus(orderId, {
+              bolt_rider: boltRes.rider,
+              bolt_tracking_code: boltRes.trackingCode,
+              bolt_tracking_url: boltRes.trackingUrl,
+            }).catch(() => { });
+          }
+        }).catch((err) => {
+          console.warn('[Bolt Ride Booker] Background dispatch error:', err);
+        });
       }, 3500);
     }
   };

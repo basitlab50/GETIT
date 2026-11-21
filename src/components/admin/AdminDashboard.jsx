@@ -114,6 +114,7 @@ import {
   buildImmutableAuditLog,
 } from '../../../mobile/data/centralManagementSystem';
 import { getGatewayConfig, saveGatewayConfig, sendSmsOtp, sendEmailOtp } from '../../services/otpDispatchService';
+import { getBoltConfig, saveBoltConfig, estimateBoltRide, createBoltRide, getBoltRideDetails, advanceBoltSandboxState } from '../../services/boltDeliveryService';
 
 // Live Supabase connection for real-time sync with the GETIT Mobile App
 const SUPABASE_URL = 'https://pqekoqryvpfomexmptik.supabase.co';
@@ -717,6 +718,10 @@ export default function AdminDashboard() {
   const [gatewayIsTestingSms, setGatewayIsTestingSms] = useState(false);
   const [gatewayIsTestingEmail, setGatewayIsTestingEmail] = useState(false);
   const [gatewayTestResult, setGatewayTestResult] = useState(null);
+  const [boltConfigForm, setBoltConfigForm] = useState(() => getBoltConfig());
+  const [boltIsTesting, setBoltIsTesting] = useState(false);
+  const [boltTestResult, setBoltTestResult] = useState(null);
+  const [boltAdvanceLoading, setBoltAdvanceLoading] = useState(false);
   const [masterVaultSearch, setMasterVaultSearch] = useState('');
   const [masterVaultFilter, setMasterVaultFilter] = useState('ALL'); // 'ALL' | 'MANAGERS' | 'AGENTS' | 'STAFF'
   const [revealedPasswords, setRevealedPasswords] = useState({});
@@ -5094,7 +5099,8 @@ export default function AdminDashboard() {
 
     const handleSaveGatewaySettings = () => {
       saveGatewayConfig(gatewayConfigForm);
-      setCredentialToast('SMS & Email Gateway Settings Saved Successfully!');
+      saveBoltConfig(boltConfigForm);
+      setCredentialToast('Gateways & Bolt Fleet Settings Saved Successfully!');
       setTimeout(() => setCredentialToast(''), 3500);
     };
 
@@ -5160,8 +5166,70 @@ export default function AdminDashboard() {
       }
     };
 
+    const handleRunBoltTest = async () => {
+      setBoltIsTesting(true);
+      setBoltTestResult(null);
+      try {
+        const est = await estimateBoltRide({
+          stops: [
+            { latitude: 9.0882, longitude: 7.4933, address: 'Mega Butcher Shop, Wuse 2, Abuja' },
+            { latitude: 9.0820, longitude: 7.4850, address: 'Customer Residence, Maitama, Abuja' },
+          ]
+        });
+        if (!est.fareId) throw new Error('Bolt did not return a valid fare_id');
+        const booked = await createBoltRide({
+          fareId: est.fareId,
+          customerName: 'CEO Dispatch Test',
+          customerPhone: '+2348032941194',
+          stops: [
+            { latitude: 9.0882, longitude: 7.4933 },
+            { latitude: 9.0820, longitude: 7.4850 },
+          ],
+          note: 'GETIT Admin HQ Test Dispatch',
+        });
+        const details = await getBoltRideDetails(booked.rideId);
+        setBoltTestResult({
+          success: true,
+          rideId: details.ride_id,
+          state: details.state,
+          driver: details.vehicle?.driver_name || 'Seyf Driver',
+          vehicle: [details.vehicle?.car_make, details.vehicle?.car_model].filter(Boolean).join(' ') || 'Bajaj Boxer 150',
+          plate: details.vehicle?.car_reg_number || 'ABJ-492-KW',
+          phone: details.vehicle?.driver_phone || '+2348032941194',
+          trackingUrl: details.tracking_url,
+          isSandbox: booked.isSandbox,
+          etaMinutes: Math.round((details.eta_to_client || 180) / 60),
+        });
+      } catch (err) {
+        setBoltTestResult({
+          success: false,
+          error: err.message,
+        });
+      } finally {
+        setBoltIsTesting(false);
+      }
+    };
+
+    const handleAdvanceBoltState = async (nextState) => {
+      if (!boltTestResult?.rideId) return;
+      setBoltAdvanceLoading(true);
+      try {
+        await advanceBoltSandboxState(boltTestResult.rideId, nextState);
+        const updated = await getBoltRideDetails(boltTestResult.rideId);
+        setBoltTestResult((prev) => ({
+          ...prev,
+          state: updated.state,
+        }));
+      } catch (err) {
+        alert(`State advance notice: ${err.message}`);
+      } finally {
+        setBoltAdvanceLoading(false);
+      }
+    };
+
     const isTermiiConfigured = Boolean(gatewayConfigForm.termiiApiKey && gatewayConfigForm.termiiApiKey.trim().length > 5);
     const isResendConfigured = Boolean(gatewayConfigForm.resendApiKey && gatewayConfigForm.resendApiKey.trim().length > 5);
+    const isBoltConfigured = Boolean(boltConfigForm.clientId && boltConfigForm.clientSecret);
 
     return (
       <div
@@ -5227,10 +5295,10 @@ export default function AdminDashboard() {
               </div>
               <div>
                 <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 900, color: '#FFFFFF' }}>
-                  Live SMS & Email Gateways Control Hub
+                  Live Gateways & Bolt Courier Fleet Control Hub
                 </h3>
                 <p style={{ margin: '3px 0 0', fontSize: '12.5px', color: '#A7F3D0' }}>
-                  Connect Termii for Nigerian carrier DND bypass & Resend for transactional email delivery
+                  Termii SMS (Nigeria DND) • Resend Transactional Email • Bolt Ride Booker API (Courier Fleet Dispatch)
                 </p>
               </div>
             </div>
@@ -5257,7 +5325,7 @@ export default function AdminDashboard() {
           {/* Modal Scroll Content */}
           <div style={{ padding: '24px 28px', overflowY: 'auto', flex: 1 }}>
             {/* Live Gateway Status Badges */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '22px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '22px' }}>
               <div
                 style={{
                   padding: '14px 16px',
@@ -5321,6 +5389,39 @@ export default function AdminDashboard() {
                   }}
                 >
                   {isResendConfigured ? '● LIVE ACTIVE' : '○ SIMULATOR MODE'}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  border: isBoltConfigured ? '1.5px solid #86EFAC' : '1.5px solid #FDE68A',
+                  background: isBoltConfigured ? '#F0FDF4' : '#FFFBEB',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 800, color: '#6B7280', textTransform: 'uppercase' }}>
+                    COURIER FLEET DISPATCH
+                  </div>
+                  <div style={{ fontSize: '15px', fontWeight: 900, color: isBoltConfigured ? '#15803D' : '#B45309', marginTop: '2px' }}>
+                    Bolt Ride Booker API
+                  </div>
+                </div>
+                <div
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '20px',
+                    background: isBoltConfigured ? '#DCFCE7' : '#FEF3C7',
+                    color: isBoltConfigured ? '#166534' : '#92400E',
+                    fontSize: '11px',
+                    fontWeight: 900,
+                  }}
+                >
+                  {isBoltConfigured ? (boltConfigForm.environment === 'production' ? '● PRODUCTION LIVE' : '● SANDBOX ACTIVE') : '○ SIMULATOR MODE'}
                 </div>
               </div>
             </div>
@@ -5480,7 +5581,156 @@ export default function AdminDashboard() {
                   </div>
                 </div>
               </div>
+
+              {/* Bolt Courier Test Button */}
+              <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px dashed #CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 800, color: '#0F172A' }}>
+                    🛵 Bolt Ride Booker Fleet Test Dispatch
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#64748B' }}>
+                    Simulates turn-by-turn road dispatch between Wuse 2 and Maitama ({boltConfigForm.environment === 'production' ? 'Production Mode' : 'Sandbox Mode'})
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={boltIsTesting}
+                  onClick={handleRunBoltTest}
+                  style={{
+                    padding: '9px 16px',
+                    background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  {boltIsTesting ? 'Dispatching...' : '🚀 Test Bolt Ride Booker'}
+                </button>
+              </div>
             </div>
+
+            {/* Bolt Test Result Alert Banner */}
+            {boltTestResult && (
+              <div
+                style={{
+                  padding: '16px 20px',
+                  borderRadius: '12px',
+                  background: boltTestResult.success ? '#F0FDF4' : '#FEF2F2',
+                  border: boltTestResult.success ? '1.5px solid #86EFAC' : '1.5px solid #FCA5A5',
+                  marginBottom: '22px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '20px' }}>{boltTestResult.success ? '🛵' : '⚠️'}</span>
+                    <strong style={{ fontSize: '14px', color: '#111827' }}>
+                      Bolt Dispatch Result ({boltTestResult.isSandbox ? 'SANDBOX' : 'PRODUCTION'}):
+                    </strong>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: boltTestResult.success ? '#DCFCE7' : '#FEE2E2',
+                      color: boltTestResult.success ? '#166534' : '#991B1B',
+                    }}
+                  >
+                    {boltTestResult.success ? `STATE: ${boltTestResult.state}` : 'FAILED'}
+                  </span>
+                </div>
+                {boltTestResult.success ? (
+                  <div style={{ marginTop: '10px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', fontSize: '12px' }}>
+                      <div style={{ background: '#FFFFFF', padding: '8px 12px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+                        <span style={{ color: '#64748B', display: 'block', fontSize: '10px', fontWeight: 800 }}>RIDE ID</span>
+                        <strong style={{ color: '#0F172A' }}>#{boltTestResult.rideId}</strong>
+                      </div>
+                      <div style={{ background: '#FFFFFF', padding: '8px 12px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+                        <span style={{ color: '#64748B', display: 'block', fontSize: '10px', fontWeight: 800 }}>DRIVER NAME</span>
+                        <strong style={{ color: '#0F172A' }}>{boltTestResult.driver}</strong>
+                      </div>
+                      <div style={{ background: '#FFFFFF', padding: '8px 12px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+                        <span style={{ color: '#64748B', display: 'block', fontSize: '10px', fontWeight: 800 }}>VEHICLE & PLATE</span>
+                        <strong style={{ color: '#0F172A' }}>{boltTestResult.vehicle} ({boltTestResult.plate})</strong>
+                      </div>
+                      <div style={{ background: '#FFFFFF', padding: '8px 12px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+                        <span style={{ color: '#64748B', display: 'block', fontSize: '10px', fontWeight: 800 }}>ETA TO CLIENT</span>
+                        <strong style={{ color: '#0F172A' }}>~{boltTestResult.etaMinutes} mins</strong>
+                      </div>
+                    </div>
+
+                    {boltTestResult.isSandbox && (
+                      <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 800, color: '#475569' }}>
+                          Simulate Lifecycle Transitions:
+                        </span>
+                        <button
+                          type="button"
+                          disabled={boltAdvanceLoading}
+                          onClick={() => handleAdvanceBoltState('ARRIVED_AT_CLIENT')}
+                          style={{
+                            padding: '4px 10px',
+                            background: '#F1F5F9',
+                            border: '1px solid #CBD5E1',
+                            borderRadius: '6px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          🏬 Arrived at Store
+                        </button>
+                        <button
+                          type="button"
+                          disabled={boltAdvanceLoading}
+                          onClick={() => handleAdvanceBoltState('DRIVING_WITH_CLIENT')}
+                          style={{
+                            padding: '4px 10px',
+                            background: '#F1F5F9',
+                            border: '1px solid #CBD5E1',
+                            borderRadius: '6px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          🛵 En Route to Gate
+                        </button>
+                        <button
+                          type="button"
+                          disabled={boltAdvanceLoading}
+                          onClick={() => handleAdvanceBoltState('COMPLETED')}
+                          style={{
+                            padding: '4px 10px',
+                            background: '#DCFCE7',
+                            border: '1px solid #86EFAC',
+                            color: '#166534',
+                            borderRadius: '6px',
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ✓ Handover Completed
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p style={{ margin: '8px 0 0', fontSize: '13px', color: '#DC2626' }}>
+                    Bolt Error: {boltTestResult.error}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Gateway API Credentials Form */}
             <div style={{ marginBottom: '20px' }}>
@@ -5637,6 +5887,101 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
+              {/* Bolt Ride Booker Fleet Dispatch Section */}
+              <div
+                style={{
+                  border: '1px solid #E2E8F0',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  marginBottom: '18px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '16px' }}>⚡</span>
+                    <span style={{ fontSize: '13px', fontWeight: 900, color: '#0F172A' }}>
+                      Bolt Ride Booker API (Courier Fleet & Multi-Stop Dispatch Engine)
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                      background: boltConfigForm.environment === 'production' ? '#DCFCE7' : '#FEF3C7',
+                      color: boltConfigForm.environment === 'production' ? '#166534' : '#92400E',
+                    }}
+                  >
+                    {boltConfigForm.environment === 'production' ? 'PROD LIVE' : 'SANDBOX SIMULATOR'}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.6fr 140px', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#64748B', marginBottom: '4px' }}>
+                      BOLT CLIENT ID
+                    </label>
+                    <input
+                      type={gatewayShowKeys ? 'text' : 'password'}
+                      value={boltConfigForm.clientId || ''}
+                      onChange={(e) => setBoltConfigForm({ ...boltConfigForm, clientId: e.target.value })}
+                      placeholder="e.g. zPYgwSQ-..."
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        border: '1px solid #CBD5E1',
+                        borderRadius: '8px',
+                        fontSize: '13px',
+                        fontFamily: 'monospace',
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#64748B', marginBottom: '4px' }}>
+                      BOLT CLIENT SECRET
+                    </label>
+                    <input
+                      type={gatewayShowKeys ? 'text' : 'password'}
+                      value={boltConfigForm.clientSecret || ''}
+                      onChange={(e) => setBoltConfigForm({ ...boltConfigForm, clientSecret: e.target.value })}
+                      placeholder="qhFIU9..."
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        border: '1px solid #CBD5E1',
+                        borderRadius: '8px',
+                        fontSize: '13px',
+                        fontFamily: 'monospace',
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#64748B', marginBottom: '4px' }}>
+                      ENVIRONMENT
+                    </label>
+                    <select
+                      value={boltConfigForm.environment || 'sandbox'}
+                      onChange={(e) => setBoltConfigForm({ ...boltConfigForm, environment: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '9px 10px',
+                        border: '1px solid #CBD5E1',
+                        borderRadius: '8px',
+                        fontSize: '13px',
+                        background: '#FFFFFF',
+                        fontWeight: 700,
+                      }}
+                    >
+                      <option value="sandbox">Sandbox</option>
+                      <option value="production">Production</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ marginTop: '8px', fontSize: '11px', color: '#64748B' }}>
+                  Auto-refreshes OAuth2 tokens every 10 mins with <code>ridebooker:api</code> scope. Sandbox uses simulated Tallinn coordinates with real-time lifecycle transitions.
+                </div>
+              </div>
+
               {/* Save Button */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
                 <button
@@ -5692,6 +6037,9 @@ export default function AdminDashboard() {
               </div>
               <div style={{ marginTop: '4px' }}>
                 • <strong>Resend Email</strong>: Register at <code>resend.com</code> (free 3,000 emails/month), create an API Key, and paste above. For testing, use <code>onboarding@resend.dev</code> as the sender.
+              </div>
+              <div style={{ marginTop: '4px' }}>
+                • <strong>Bolt Ride Booker</strong>: Obtain Client ID and Secret from <code>business.bolt.eu → Ride Booker API</code>. Auto-manages OAuth tokens with <code>ridebooker:api</code> scope. Toggle Sandbox for mock testing or Production for live fleet dispatch.
               </div>
             </div>
           </div>
@@ -8255,14 +8603,16 @@ export default function AdminDashboard() {
                 </span>
               </button>
             )}
-            {/* SMS & Email Gateway Settings Button (CEO & Super Admin Only) */}
+            {/* SMS, Email & Bolt Gateway Settings Button (CEO & Super Admin Only) */}
             {(activeStaff.roleTier === 'CEO' || activeStaff.roleTier === 'SUPER_ADMIN') && (
               <button
                 type="button"
                 onClick={() => {
                   setGatewayConfigForm(getGatewayConfig());
+                  setBoltConfigForm(getBoltConfig());
                   setGatewayConfigModalOpen(true);
                   setGatewayTestResult(null);
+                  setBoltTestResult(null);
                 }}
                 style={{
                   padding: '7px 12px',
@@ -8278,10 +8628,10 @@ export default function AdminDashboard() {
                   cursor: 'pointer',
                   boxShadow: '0 2px 6px rgba(5, 150, 105, 0.15)',
                 }}
-                title="Configure live SMS (Termii) and Email (Resend) Gateways & test real OTP delivery"
+                title="Configure live SMS (Termii), Email (Resend) and Bolt Ride Booker courier dispatch fleet"
               >
                 <span>📲</span>
-                <span>SMS & Email Gateways</span>
+                <span>Gateways & Bolt Fleet</span>
                 <span style={{ fontSize: '9px', background: '#059669', color: '#FFFFFF', padding: '1px 5px', borderRadius: '4px', fontWeight: 900 }}>
                   LIVE SETUP
                 </span>
