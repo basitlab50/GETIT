@@ -1483,6 +1483,16 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Added purple `⏳ STANDBY` status badge on candidate cards.
      * Added `⏳ Standby` quick action button on Candidate Cards and `⏳ Put on Standby` button in the Full Dossier Modal footer.
 
+89. Fast Non-Blocking Staff Enrollment Sync, LocalStorage Quota Fix & On-Demand CV Lazy-Loading (`AdminDashboard.jsx`):
+   - 🐛 Root Causes Fixed (Why only 6 Pending showed after refresh instead of 24+):
+     1. `localStorage` 5MB QuotaExceededError: Saving giant base64 `cvDataUrl` PDFs inside `getit_management_applications_v1` exceeded browser `localStorage` limits once ~6+ applicants applied, silently failing to persist new records across refreshes.
+     2. Blocking `Promise.all([staff_enrollment.select('*'), audit_logs.select('*')])`: Fetching multi-MB `cv_data_url` + duplicate `payload` base64 blobs for all rows across both tables at once caused `audit_logs` to hang/time out, blocking `staff_enrollment` rows from ever updating the UI.
+   - ⚡ Fixes Implemented:
+     * Stripped `cvDataUrl` before writing to `localStorage` so hundreds of applicants persist reliably in <150 KB.
+     * Upgraded `fetchManagementApplicationsFromSupabase()` to query `staff_enrollment` FIRST using lightweight columns only (excluding `cv_data_url` and `payload`) up to 500 rows, merging immediately without waiting for `audit_logs`.
+     * Moved `audit_logs` legacy sync into a non-blocking background fetch that merges any older records without overwriting reviewed statuses or `interviewSchedule`.
+     * Added `ensureApplicantCvLoaded(app)` on-demand lazy CV fetcher triggered automatically when opening a candidate's Dossier (`View All 21 Answers & CV`), clicking `⬇ CV Only`, or clicking `Export Full PDF (Data + CV)`.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

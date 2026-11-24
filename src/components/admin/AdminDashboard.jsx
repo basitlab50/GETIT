@@ -1717,13 +1717,89 @@ export default function AdminDashboard() {
   const [isDispatchingInterview, setIsDispatchingInterview] = useState(false);
   const [interviewScheduleSuccess, setInterviewScheduleSuccess] = useState(null);
   const [exportingApplicantId, setExportingApplicantId] = useState(null);
+  const [loadingCvForId, setLoadingCvForId] = useState(null);
+
+  const ensureApplicantCvLoaded = async (app) => {
+    if (!app) return app;
+    if (app.cvDataUrl) return app;
+    if (!app.id) return app;
+    setLoadingCvForId(app.id);
+    try {
+      let cvDataUrl = null;
+      let extraPayload = {};
+      const { data: enrollRow } = await supabaseClient
+        .from('staff_enrollment')
+        .select('cv_data_url, cv_file_name, cv_file_size, cv_mime_type, payload')
+        .eq('id', app.id)
+        .maybeSingle();
+
+      if (enrollRow) {
+        const p = typeof enrollRow.payload === 'string' ? JSON.parse(enrollRow.payload) : enrollRow.payload || {};
+        extraPayload = p;
+        cvDataUrl = enrollRow.cv_data_url || p.cvDataUrl || null;
+      }
+
+      if (!cvDataUrl) {
+        const { data: logRow } = await supabaseClient
+          .from('audit_logs')
+          .select('payload')
+          .eq('id', app.id)
+          .maybeSingle();
+        if (logRow?.payload) {
+          const p = typeof logRow.payload === 'string' ? JSON.parse(logRow.payload) : logRow.payload || {};
+          extraPayload = { ...extraPayload, ...p };
+          cvDataUrl = p.cvDataUrl || null;
+        }
+      }
+
+      const enriched = {
+        ...extraPayload,
+        ...app,
+        cvDataUrl: cvDataUrl || app.cvDataUrl,
+        interviewSchedule: app.interviewSchedule || extraPayload.interviewSchedule,
+      };
+
+      setManagementApplications((prev) =>
+        prev.map((item) => (item.id === app.id ? { ...item, ...enriched } : item))
+      );
+      setSelectedMgmtAppDossier((prev) => (prev?.id === app.id ? { ...prev, ...enriched } : prev));
+      return enriched;
+    } catch (err) {
+      console.warn('Lazy CV fetch notice:', err);
+      return app;
+    } finally {
+      setLoadingCvForId(null);
+    }
+  };
+
+  const handleOpenApplicantDossier = (app) => {
+    setSelectedMgmtAppDossier(app);
+    if (app && !app.cvDataUrl) {
+      ensureApplicantCvLoaded(app);
+    }
+  };
+
+  const handleDownloadCvOnly = async (app) => {
+    const enriched = await ensureApplicantCvLoaded(app);
+    if (!enriched?.cvDataUrl) {
+      alert('No CV file is attached for this candidate.');
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = enriched.cvDataUrl;
+    a.download = enriched.cvFileName || `${(enriched.fullName || 'Applicant').replace(/\s+/g, '_')}_CV.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
   const handleExportFullApplicantPdf = async (app) => {
     if (!app) return;
     const key = app.id || app.applicationRef || app.fullName || 'export';
     setExportingApplicantId(key);
     try {
-      await exportApplicantFullPdf(app);
+      const enriched = await ensureApplicantCvLoaded(app);
+      await exportApplicantFullPdf(enriched || app);
     } catch (err) {
       console.error('Failed to export full applicant PDF:', err);
       alert(`Could not export applicant file: ${err?.message || err}`);
@@ -1733,93 +1809,155 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    saveLocalJson('getit_management_applications_v1', managementApplications);
+    // Strip heavy base64 cvDataUrl blobs before persisting to localStorage
+    // so the browser's 5MB storage quota is never exceeded when 25+ applicants apply.
+    const lightweightApps = managementApplications.map(({ cvDataUrl, ...rest }) => rest);
+    saveLocalJson('getit_management_applications_v1', lightweightApps);
   }, [managementApplications]);
+
+  const mergeManagementApplicationRows = (incomingRows) => {
+    if (!Array.isArray(incomingRows) || incomingRows.length === 0) return;
+    setManagementApplications((prev) => {
+      const byId = new Map();
+      (Array.isArray(prev) ? prev : []).forEach((item) => {
+        if (item?.id) byId.set(item.id, item);
+      });
+      incomingRows.forEach((item) => {
+        if (!item?.id) return;
+        const existing = byId.get(item.id);
+        if (!existing) {
+          byId.set(item.id, item);
+        } else {
+          const mergedStatus =
+            item.status && item.status !== 'PENDING_REVIEW'
+              ? item.status
+              : existing.status || item.status || 'PENDING_REVIEW';
+          byId.set(item.id, {
+            ...existing,
+            ...item,
+            status: mergedStatus,
+            cvDataUrl: item.cvDataUrl || existing.cvDataUrl,
+            interviewSchedule: item.interviewSchedule || existing.interviewSchedule,
+          });
+        }
+      });
+      return Array.from(byId.values()).sort(
+        (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
+      );
+    });
+  };
 
   const fetchManagementApplicationsFromSupabase = async () => {
     try {
       setFetchMgmtAppsLoading(true);
-      const [enrollRes, logsRes] = await Promise.all([
-        supabaseClient
-          .from('staff_enrollment')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(100),
-        supabaseClient
-          .from('audit_logs')
-          .select('*')
-          .eq('action', 'MANAGEMENT_JOB_APPLICATION')
-          .order('created_at', { ascending: false })
-          .limit(100),
-      ]);
 
-      const combinedRows = [];
+      // Step 1: Fast lightweight query on staff_enrollment (excludes multi-MB cv_data_url & payload blobs)
+      // This loads up to 500 applicants rapidly without hitting Supabase timeouts.
+      const lightweightColumns = [
+        'id',
+        'application_ref',
+        'status',
+        'assigned_staff_id',
+        'full_name',
+        'phone',
+        'email',
+        'state_and_city',
+        'highest_education',
+        'employment_status',
+        'resumption_availability',
+        'previously_managed_team',
+        'team_size_managed',
+        'leadership_experience_summary',
+        'recruited_team_from_scratch',
+        'plan_for_team_of_20',
+        'turnaround_underperforming_15',
+        'plan_for_200_business_relationships',
+        'daily_monitoring_accountability',
+        'difficult_situation_handled',
+        'comfortable_with_fieldwork',
+        'comfortable_with_targets_and_reports',
+        'why_suitable_for_management',
+        'cv_file_name',
+        'cv_file_size',
+        'cv_mime_type',
+        'professional_referee',
+        'declaration_confirmed',
+        'reviewed_by',
+        'reviewed_at',
+        'created_at',
+      ].join(',');
+
+      const enrollRes = await supabaseClient
+        .from('staff_enrollment')
+        .select(lightweightColumns)
+        .order('created_at', { ascending: false })
+        .limit(500);
 
       if (!enrollRes.error && Array.isArray(enrollRes.data)) {
-        enrollRes.data.forEach((row) => {
-          const p = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload || {};
-          combinedRows.push({
-            ...p,
-            id: row.id || p.id,
-            applicationRef: row.application_ref || p.applicationRef,
-            status: row.status || p.status || 'PENDING_REVIEW',
-            fullName: row.full_name || p.fullName,
-            phone: row.phone || p.phone,
-            email: row.email || p.email,
-            stateAndCity: row.state_and_city || p.stateAndCity,
-            highestEducation: row.highest_education || p.highestEducation,
-            employmentStatus: row.employment_status || p.employmentStatus,
-            resumptionAvailability: row.resumption_availability || p.resumptionAvailability,
-            previouslyManagedTeam: row.previously_managed_team || p.previouslyManagedTeam,
-            teamSizeManaged: row.team_size_managed || p.teamSizeManaged,
-            leadershipExperienceSummary: row.leadership_experience_summary || p.leadershipExperienceSummary,
-            recruitedTeamFromScratch: row.recruited_team_from_scratch || p.recruitedTeamFromScratch,
-            planForTeamOf20: row.plan_for_team_of_20 || p.planForTeamOf20,
-            turnaroundUnderperforming15: row.turnaround_underperforming_15 || p.turnaroundUnderperforming15,
-            planFor200BusinessRelationships: row.plan_for_200_business_relationships || p.planFor200BusinessRelationships,
-            dailyMonitoringAccountability: row.daily_monitoring_accountability || p.dailyMonitoringAccountability,
-            difficultSituationHandled: row.difficult_situation_handled || p.difficultSituationHandled,
-            comfortableWithFieldwork: row.comfortable_with_fieldwork || p.comfortableWithFieldwork,
-            comfortableWithTargetsAndReports: row.comfortable_with_targets_and_reports || p.comfortableWithTargetsAndReports,
-            whySuitableForManagement: row.why_suitable_for_management || p.whySuitableForManagement,
-            cvFileName: row.cv_file_name || p.cvFileName,
-            cvFileSize: row.cv_file_size || p.cvFileSize,
-            cvMimeType: row.cv_mime_type || p.cvMimeType,
-            cvDataUrl: row.cv_data_url || p.cvDataUrl,
-            professionalReferee: row.professional_referee || p.professionalReferee,
-            submittedAt: p.submittedAt || row.created_at,
-          });
-        });
+        const mappedEnroll = enrollRes.data.map((row) => ({
+          id: row.id,
+          applicationRef: row.application_ref,
+          status: row.status || 'PENDING_REVIEW',
+          assignedStaffId: row.assigned_staff_id,
+          fullName: row.full_name,
+          phone: row.phone,
+          email: row.email,
+          stateAndCity: row.state_and_city,
+          highestEducation: row.highest_education,
+          employmentStatus: row.employment_status,
+          resumptionAvailability: row.resumption_availability,
+          previouslyManagedTeam: row.previously_managed_team,
+          teamSizeManaged: row.team_size_managed,
+          leadershipExperienceSummary: row.leadership_experience_summary,
+          recruitedTeamFromScratch: row.recruited_team_from_scratch,
+          planForTeamOf20: row.plan_for_team_of_20,
+          turnaroundUnderperforming15: row.turnaround_underperforming_15,
+          planFor200BusinessRelationships: row.plan_for_200_business_relationships,
+          dailyMonitoringAccountability: row.daily_monitoring_accountability,
+          difficultSituationHandled: row.difficult_situation_handled,
+          comfortableWithFieldwork: row.comfortable_with_fieldwork,
+          comfortableWithTargetsAndReports: row.comfortable_with_targets_and_reports,
+          whySuitableForManagement: row.why_suitable_for_management,
+          cvFileName: row.cv_file_name,
+          cvFileSize: row.cv_file_size,
+          cvMimeType: row.cv_mime_type,
+          professionalReferee: row.professional_referee,
+          declarationConfirmed: row.declaration_confirmed,
+          reviewedBy: row.reviewed_by,
+          reviewedAt: row.reviewed_at,
+          submittedAt: row.created_at,
+        }));
+        mergeManagementApplicationRows(mappedEnroll);
       }
 
-      if (!logsRes.error && Array.isArray(logsRes.data)) {
-        logsRes.data.forEach((row) => {
-          try {
-            const p = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload || {};
-            if (p && p.fullName) {
-              combinedRows.push({
-                ...p,
-                id: row.id || p.id,
-                submittedAt: p.submittedAt || row.created_at,
-                status: p.status || 'PENDING_REVIEW',
-              });
-            }
-          } catch (err) {}
-        });
-      }
-
-      if (!logsRes.error || !enrollRes.error) {
-        const byId = new Map();
-        combinedRows.forEach((item) => {
-          if (!item?.id) return;
-          const existing = byId.get(item.id);
-          byId.set(item.id, existing ? { ...existing, ...item, status: item.status || existing.status } : item);
-        });
-        const sorted = Array.from(byId.values()).sort(
-          (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
-        );
-        setManagementApplications(sorted);
-      }
+      // Step 2: Non-blocking background sync from audit_logs (for any legacy rows only in audit_logs)
+      // Never blocks Step 1 so slow audit_logs scans never hide staff_enrollment applicants.
+      supabaseClient
+        .from('audit_logs')
+        .select('id, created_at, payload')
+        .eq('action', 'MANAGEMENT_JOB_APPLICATION')
+        .order('created_at', { ascending: false })
+        .limit(200)
+        .then((logsRes) => {
+          if (!logsRes.error && Array.isArray(logsRes.data)) {
+            const mappedLogs = [];
+            logsRes.data.forEach((row) => {
+              try {
+                const p = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload || {};
+                if (p && p.fullName) {
+                  mappedLogs.push({
+                    ...p,
+                    id: row.id || p.id,
+                    submittedAt: p.submittedAt || row.created_at,
+                    status: p.status || 'PENDING_REVIEW',
+                  });
+                }
+              } catch {}
+            });
+            mergeManagementApplicationRows(mappedLogs);
+          }
+        })
+        .catch(() => {});
     } catch (err) {
       console.warn('Management applications fetch notice:', err);
     } finally {
@@ -5744,22 +5882,24 @@ export default function AdminDashboard() {
                               : 'Export Full PDF (Data + CV)'}
                           </span>
                         </button>
-                        {app.cvDataUrl && (
-                          <a
-                            href={app.cvDataUrl}
-                            download={app.cvFileName || `${app.fullName.replace(/\s+/g, '_')}_CV.pdf`}
+                        {(app.cvDataUrl || app.cvFileName) && (
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadCvOnly(app)}
+                            disabled={loadingCvForId === app.id}
                             style={{
                               fontSize: '11px',
                               fontWeight: 800,
                               color: '#0284C7',
-                              textDecoration: 'none',
+                              border: 'none',
                               padding: '4px 10px',
                               borderRadius: '6px',
                               background: '#E0F2FE',
+                              cursor: 'pointer',
                             }}
                           >
-                            ⬇ CV Only
-                          </a>
+                            {loadingCvForId === app.id ? 'Loading CV...' : '⬇ CV Only'}
+                          </button>
                         )}
                       </div>
                     </div>
@@ -5830,7 +5970,7 @@ export default function AdminDashboard() {
                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                       <button
                         type="button"
-                        onClick={() => setSelectedMgmtAppDossier(app)}
+                        onClick={() => handleOpenApplicantDossier(app)}
                         style={{
                           flex: 1,
                           padding: '8px 12px',
@@ -6456,6 +6596,32 @@ export default function AdminDashboard() {
                   </div>
                   <div><strong>20. Uploaded CV File:</strong> {selectedMgmtAppDossier.cvFileName || 'Attached'}</div>
                   <div><strong>21. Professional Referee:</strong> {selectedMgmtAppDossier.professionalReferee || 'Not provided'}</div>
+
+                  {loadingCvForId === selectedMgmtAppDossier.id && !selectedMgmtAppDossier.cvDataUrl && (
+                    <div style={{ padding: '20px', textAlign: 'center', borderRadius: '10px', background: '#FFFFFF', border: '1px dashed #0D9488', color: '#0F766E', fontWeight: 700, fontSize: '12.5px' }}>
+                      ⏳ Loading attached CV from Supabase...
+                    </div>
+                  )}
+
+                  {!selectedMgmtAppDossier.cvDataUrl && loadingCvForId !== selectedMgmtAppDossier.id && selectedMgmtAppDossier.cvFileName && (
+                    <button
+                      type="button"
+                      onClick={() => ensureApplicantCvLoaded(selectedMgmtAppDossier)}
+                      style={{
+                        padding: '10px 16px',
+                        borderRadius: '8px',
+                        background: '#FFFFFF',
+                        color: '#0F766E',
+                        border: '1.5px solid #0D9488',
+                        fontWeight: 800,
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        alignSelf: 'flex-start',
+                      }}
+                    >
+                      📄 Load Attached CV Preview ({selectedMgmtAppDossier.cvFileName})
+                    </button>
+                  )}
 
                   {selectedMgmtAppDossier.cvDataUrl && selectedMgmtAppDossier.cvDataUrl.startsWith('data:application/pdf') && (
                     <iframe
