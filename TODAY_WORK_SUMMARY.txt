@@ -1417,6 +1417,23 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - 🌟 Visual Appointment Banners on Candidate Cards & Dossier:
      * Added high-visibility emerald appointment banners on candidate cards and dossier modal displaying scheduled interview time, meeting room access button, and 1-click Google Calendar & .ICS alert buttons.
 
+84. Automated 10-Minute Slot-Sequencer Engine (12:00 PM – 4:00 PM Batch Scheduler):
+   - 📅 Master Available Date Selector (`activeInterviewBatchDate` in `AdminDashboard.jsx`):
+     * Prominent Master Interview Bar embedded above applications inbox with 1-click batch date buttons (`[ 📅 1st of December 2026 ]`, `[ Tomorrow ]`, and custom date picker).
+     * Automatically syncs across the Staff Enrollment workspace and persists in local storage (`getit_active_interview_batch_date`).
+   - ⚡ Zero-Manual-Effort 10-Minute Auto-Sequencing (`generateDailyInterviewSlots` & `getNextAvailableInterviewSlot`):
+     * Slices the 12:00 PM – 4:00 PM window into 24 distinct 10-minute slots (12:00–12:10, 12:10–12:20, 12:20–12:30, 12:30–12:40, ... up to 03:50–04:00 PM).
+     * When shortlisting candidate #1, the system automatically assigns Slot 1 (12:00 PM – 12:10 PM) with zero manual time input required.
+     * When candidate #1 is booked, shortlisting candidate #2 automatically detects Slot 1 is taken and pre-selects Slot 2 (12:10 PM – 12:20 PM).
+     * Subsequent candidates automatically cascade to 12:20–12:30, 12:30–12:40, and so on.
+   - 🗓️ Full 24-Slot Live Schedule Grid:
+     * Interactive visual schedule grid inside both the Staff Enrollment master bar and the Shortlist Modal.
+     * Displays real-time status of each slot: `🔴 [Booked: Candidate Name]` (disabled/occupied), `⭐ [Auto-Assigned]` (emerald glowing pill), and `🟢 [Available]` (clickable for manual override if desired).
+   - 📨 Multi-Channel Dispatch with Exact 10-Minute Window (`otpDispatchService.js`):
+     * Resend HTML email displays exact time window: `12:10 PM – 12:20 PM (10-Minute Executive Screening)`.
+     * Termii SMS sends exact time window: `...from 12:10 PM to 12:20 PM (10 mins) via Google Meet`.
+     * Google Calendar & .ICS file generation isolates start time from ranges (`12:10`) and locks exact 10-minute duration with 10-minute alarm notification.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

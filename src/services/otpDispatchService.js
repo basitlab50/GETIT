@@ -429,33 +429,7 @@ export async function sendManagementRecruitmentNotification({
     }
   }
 
-  // 2. Send Real SMS via Termii API (if Termii API key is configured)
-  if (normalizedPhone && config.termiiApiKey) {
-    try {
-      const res = await fetch('https://api.ng.termii.com/api/sms/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-          to: normalizedPhone,
-          from: config.termiiSenderId || 'GETIT',
-          sms: smsText,
-          type: 'plain',
-          channel: config.termiiChannel || 'generic',
-          api_key: config.termiiApiKey,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && (data.message === 'Successfully Sent' || data.message_id || data.code === 'ok')) {
-        smsResult = { success: true, provider: 'termii', id: data.message_id, simulated: false };
-      }
-    } catch (e) {
-      console.warn('[Recruitment SMS] Termii notice:', e.message);
-    }
-  }
-
+  // Email-Only Mode: SMS is skipped as requested
   return {
     emailResult,
     smsResult,
