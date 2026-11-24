@@ -1852,7 +1852,7 @@ export default function AdminDashboard() {
   };
 
   const fetchManagementApplicationsFromSupabase = async (options = {}) => {
-    const { silent = false } = options || {};
+    const { silent = false, includeAuditLogs = !silent } = options || {};
     if (mgmtSyncInFlightRef.current) return;
     mgmtSyncInFlightRef.current = true;
     try {
@@ -1938,35 +1938,37 @@ export default function AdminDashboard() {
         setLastEnrollmentSyncAt(new Date());
       }
 
-      // Step 2: Non-blocking background sync from audit_logs (for any legacy rows only in audit_logs)
-      // Never blocks Step 1 so slow audit_logs scans never hide staff_enrollment applicants.
-      supabaseClient
-        .from('audit_logs')
-        .select('id, created_at, payload')
-        .eq('action', 'MANAGEMENT_JOB_APPLICATION')
-        .order('created_at', { ascending: false })
-        .limit(200)
-        .then((logsRes) => {
-          if (!logsRes.error && Array.isArray(logsRes.data)) {
-            const mappedLogs = [];
-            logsRes.data.forEach((row) => {
-              try {
-                const p = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload || {};
-                if (p && p.fullName) {
-                  mappedLogs.push({
-                    ...p,
-                    id: row.id || p.id,
-                    submittedAt: p.submittedAt || row.created_at,
-                    status: p.status || 'PENDING_REVIEW',
-                  });
-                }
-              } catch {}
-            });
-            mergeManagementApplicationRows(mappedLogs);
-            setLastEnrollmentSyncAt(new Date());
-          }
-        })
-        .catch(() => {});
+      // Step 2: Non-blocking background sync from audit_logs (ONLY on initial load or manual Update Now,
+      // never on background timer polls, so multi-MB audit_logs.payload blobs don't burn Disk I/O or egress).
+      if (includeAuditLogs) {
+        supabaseClient
+          .from('audit_logs')
+          .select('id, created_at, payload')
+          .eq('action', 'MANAGEMENT_JOB_APPLICATION')
+          .order('created_at', { ascending: false })
+          .limit(200)
+          .then((logsRes) => {
+            if (!logsRes.error && Array.isArray(logsRes.data)) {
+              const mappedLogs = [];
+              logsRes.data.forEach((row) => {
+                try {
+                  const p = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload || {};
+                  if (p && p.fullName) {
+                    mappedLogs.push({
+                      ...p,
+                      id: row.id || p.id,
+                      submittedAt: p.submittedAt || row.created_at,
+                      status: p.status || 'PENDING_REVIEW',
+                    });
+                  }
+                } catch {}
+              });
+              mergeManagementApplicationRows(mappedLogs);
+              setLastEnrollmentSyncAt(new Date());
+            }
+          })
+          .catch(() => {});
+      }
     } catch (err) {
       console.warn('Management applications fetch notice:', err);
     } finally {
@@ -2051,17 +2053,17 @@ export default function AdminDashboard() {
       console.warn('Realtime agent fallback to polling:', err);
     }
 
-    // 2) Continuous 10-second silent background polling watcher
+    // 2) Lightweight 30-second fallback watcher (Realtime handles instant push; skips audit_logs blobs)
     const pollInterval = setInterval(() => {
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-        fetchManagementApplicationsFromSupabase({ silent: true });
+        fetchManagementApplicationsFromSupabase({ silent: true, includeAuditLogs: false });
       }
-    }, 10000);
+    }, 30000);
 
-    // 3) Instant sync whenever user returns to this browser tab
+    // 3) Instant lightweight sync whenever user returns to this browser tab
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        fetchManagementApplicationsFromSupabase({ silent: true });
+        fetchManagementApplicationsFromSupabase({ silent: true, includeAuditLogs: false });
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
@@ -2187,10 +2189,10 @@ export default function AdminDashboard() {
       }
     });
 
-    // 2. Continuous 4-second auto-poller guarantees instant sync across all tabs without manual reload
+    // 2. Low-overhead 30-second orders fallback poller (Realtime handles instant updates; pauses when tab hidden)
     const poller = setInterval(async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       try {
-        fetchManagementApplicationsFromSupabase();
         const { data } = await supabaseClient
           .from('orders')
           .select('*')
@@ -2208,7 +2210,7 @@ export default function AdminDashboard() {
           });
         }
       } catch (pollErr) {}
-    }, 4000);
+    }, 30000);
 
     return () => {
       unsub();
@@ -5455,7 +5457,7 @@ export default function AdminDashboard() {
                 {autoSyncAgentEnabled
                   ? realtimeAgentConnected
                     ? '🤖 Auto-Sync Agent: LIVE'
-                    : '🤖 Auto-Sync Agent: ON (10s)'
+                    : '🤖 Auto-Sync Agent: ON (30s)'
                   : '🤖 Auto-Sync Agent: PAUSED'}
               </span>
               {lastEnrollmentSyncAt && (
