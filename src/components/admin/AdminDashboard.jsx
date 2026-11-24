@@ -4613,26 +4613,48 @@ export default function AdminDashboard() {
     return slots;
   };
 
+  const parseTimeToMinutes = (timeStr) => {
+    if (!timeStr) return null;
+    const firstPart = String(timeStr).split(/[-–—]/)[0].trim().toLowerCase();
+    const isPm = firstPart.includes('pm') || (!firstPart.includes('am') && parseInt(firstPart, 10) >= 12 && parseInt(firstPart, 10) < 24);
+    const isAm = firstPart.includes('am');
+    const clean = firstPart.replace(/am|pm/g, '').trim();
+    const parts = clean.split(':');
+    let h = parseInt(parts[0], 10);
+    let m = parseInt(parts[1] || '0', 10);
+    if (isNaN(h)) return null;
+    if (isPm && h < 12) h += 12;
+    if (isAm && h === 12) h = 0;
+    return h * 60 + m;
+  };
+
+  const normalizeDateStr = (d) => {
+    if (!d) return '';
+    const str = String(d).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+    return str;
+  };
+
   const isSlotBooked = (slot, date, applications, ignoreCandidateId = null) => {
     if (!date || !applications || !Array.isArray(applications)) return null;
-    const cleanSlotStart = slot.startTime; // "12:00"
-    const cleanSlotLabel = slot.startLabel.toLowerCase().replace(/\s+/g, ''); // "12:00pm"
+    const targetDateNorm = normalizeDateStr(date);
+    const slotMinutes = parseTimeToMinutes(slot.startTime);
 
     for (const app of applications) {
       if (ignoreCandidateId && (app.id === ignoreCandidateId || app.applicationRef === ignoreCandidateId)) {
         continue;
       }
-      if (app.status === 'SHORTLISTED' && app.interviewSchedule?.date === date) {
-        const appTime = String(app.interviewSchedule.time || '').toLowerCase().replace(/\s+/g, '');
-        const appStartTime = String(app.interviewSchedule.startTime || '').trim();
-        if (
-          appStartTime === cleanSlotStart ||
-          appTime.startsWith(cleanSlotStart) ||
-          appTime.startsWith(cleanSlotLabel) ||
-          appTime.includes(cleanSlotStart) ||
-          appTime.includes(cleanSlotLabel)
-        ) {
-          return app;
+      if (app.status === 'SHORTLISTED' && app.interviewSchedule?.date) {
+        const appDateNorm = normalizeDateStr(app.interviewSchedule.date);
+        if (appDateNorm === targetDateNorm) {
+          const appMinutes = parseTimeToMinutes(app.interviewSchedule.startTime || app.interviewSchedule.time);
+          if (appMinutes !== null && appMinutes === slotMinutes) {
+            return app;
+          }
         }
       }
     }
@@ -4661,16 +4683,18 @@ export default function AdminDashboard() {
     setInterviewFormPlatform(app.interviewSchedule?.platform || 'Google Meet');
     setInterviewFormDuration('10 Minutes');
 
-    // Target Date: Candidate's date, or batch date, or 2026-12-01
-    const targetDate = overrideDate || app.interviewSchedule?.date || activeInterviewBatchDate || '2026-12-01';
+    // Use active batch date, or candidate's saved date, or 2026-12-01
+    const targetDate = overrideDate || activeInterviewBatchDate || app.interviewSchedule?.date || '2026-12-01';
     setInterviewFormDate(targetDate);
+    setActiveInterviewBatchDate(targetDate);
 
     // Auto-Sequence 10-Minute Slot
     const dailySlots = generateDailyInterviewSlots(12, 16, 10);
     let chosenSlot = null;
 
-    if (app.interviewSchedule?.date === targetDate && app.interviewSchedule?.startTime) {
-      chosenSlot = dailySlots.find((s) => s.startTime === app.interviewSchedule.startTime);
+    if (app.interviewSchedule?.date === targetDate && (app.interviewSchedule?.startTime || app.interviewSchedule?.time)) {
+      const appMins = parseTimeToMinutes(app.interviewSchedule.startTime || app.interviewSchedule.time);
+      chosenSlot = dailySlots.find((s) => parseTimeToMinutes(s.startTime) === appMins);
     }
     if (!chosenSlot) {
       chosenSlot = getNextAvailableInterviewSlot(targetDate, managementApplications, app.id);
@@ -4683,16 +4707,16 @@ export default function AdminDashboard() {
       setSelectedInterviewSlot(chosenSlot);
       setInterviewFormTime(chosenSlot.rangeLabel);
     } else {
-      setSelectedInterviewSlot(null);
-      setInterviewFormTime('12:00 PM – 12:10 PM');
+      setSelectedInterviewSlot(dailySlots[0] || null);
+      setInterviewFormTime(dailySlots[0]?.rangeLabel || '12:00 PM – 12:10 PM');
     }
 
     setInterviewFormNotes(app.interviewSchedule?.notes || '1-on-1 Leadership Screening & Regional Management Review (10-Minute Appointment)');
   };
 
   const handleSwitchInterviewDate = (newDate) => {
+    setInterviewFormDate(newDate || '');
     if (!newDate) return;
-    setInterviewFormDate(newDate);
     setActiveInterviewBatchDate(newDate);
     try {
       localStorage.setItem('getit_active_interview_batch_date', newDate);
@@ -5116,8 +5140,29 @@ export default function AdminDashboard() {
                   gap: '4px',
                 }}
               >
-                <span>📅 1st of December 2026</span>
+                <span>📅 1st of Dec 2026</span>
                 {activeInterviewBatchDate === '2026-12-01' && <span>✓</span>}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSwitchInterviewDate('2026-12-02')}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '8px',
+                  border: activeInterviewBatchDate === '2026-12-02' ? '2px solid #0F766E' : '1px solid #CBD5E1',
+                  background: activeInterviewBatchDate === '2026-12-02' ? '#0F766E' : '#FFFFFF',
+                  color: activeInterviewBatchDate === '2026-12-02' ? '#FFFFFF' : '#334155',
+                  fontSize: '11.5px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                <span>📅 2nd of Dec 2026</span>
+                {activeInterviewBatchDate === '2026-12-02' && <span>✓</span>}
               </button>
 
               <button
@@ -5130,7 +5175,7 @@ export default function AdminDashboard() {
                 style={{
                   padding: '7px 14px',
                   borderRadius: '8px',
-                  border: activeInterviewBatchDate !== '2026-12-01' && activeInterviewBatchDate.startsWith('2026') ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                  border: activeInterviewBatchDate !== '2026-12-01' && activeInterviewBatchDate !== '2026-12-02' ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
                   background: '#FFFFFF',
                   color: '#334155',
                   fontSize: '11.5px',
@@ -5141,21 +5186,24 @@ export default function AdminDashboard() {
                 Tomorrow
               </button>
 
-              <input
-                type="date"
-                value={activeInterviewBatchDate}
-                min={new Date().toISOString().slice(0, 10)}
-                onChange={(e) => handleSwitchInterviewDate(e.target.value)}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '8px',
-                  border: '1px solid #CBD5E1',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  color: '#0F172A',
-                }}
-                title="Select any custom interview date"
-              />
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#FFFFFF', padding: '2px 8px', borderRadius: '8px', border: '1.5px solid #0D9488' }}>
+                <span style={{ fontSize: '11px', fontWeight: 800, color: '#0F766E' }}>Pick Date:</span>
+                <input
+                  type="date"
+                  value={activeInterviewBatchDate || ''}
+                  onChange={(e) => handleSwitchInterviewDate(e.target.value)}
+                  style={{
+                    border: 'none',
+                    outline: 'none',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    color: '#0F172A',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                  }}
+                  title="Select any custom interview date"
+                />
+              </div>
 
               <button
                 type="button"
@@ -6520,9 +6568,15 @@ export default function AdminDashboard() {
                   <div style={{ padding: '22px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     {/* Batch Date Selector Bar */}
                     <div>
-                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 800, color: '#334155', marginBottom: '6px' }}>
-                        📅 Available Interview Batch Date *
-                      </label>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155' }}>
+                          📅 Available Interview Batch Date *
+                        </label>
+                        <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#0F766E' }}>
+                          Selected: {interviewFormDate}
+                        </span>
+                      </div>
+
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                         <button
                           type="button"
@@ -6541,8 +6595,29 @@ export default function AdminDashboard() {
                             gap: '5px',
                           }}
                         >
-                          <span>📅 1st of December 2026</span>
+                          <span>📅 1st of Dec 2026</span>
                           {interviewFormDate === '2026-12-01' && <span>✓</span>}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleSwitchInterviewDate('2026-12-02')}
+                          style={{
+                            padding: '8px 14px',
+                            borderRadius: '8px',
+                            border: interviewFormDate === '2026-12-02' ? '2px solid #0F766E' : '1px solid #CBD5E1',
+                            background: interviewFormDate === '2026-12-02' ? '#0F766E' : '#FFFFFF',
+                            color: interviewFormDate === '2026-12-02' ? '#FFFFFF' : '#334155',
+                            fontSize: '12px',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                          }}
+                        >
+                          <span>📅 2nd of Dec 2026</span>
+                          {interviewFormDate === '2026-12-02' && <span>✓</span>}
                         </button>
 
                         <button
@@ -6555,7 +6630,7 @@ export default function AdminDashboard() {
                           style={{
                             padding: '8px 14px',
                             borderRadius: '8px',
-                            border: interviewFormDate !== '2026-12-01' && interviewFormDate.startsWith('2026') ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                            border: interviewFormDate !== '2026-12-01' && interviewFormDate !== '2026-12-02' ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
                             background: '#FFFFFF',
                             color: '#334155',
                             fontSize: '12px',
@@ -6566,21 +6641,24 @@ export default function AdminDashboard() {
                           Tomorrow
                         </button>
 
-                        <input
-                          type="date"
-                          value={interviewFormDate}
-                          min={new Date().toISOString().slice(0, 10)}
-                          onChange={(e) => handleSwitchInterviewDate(e.target.value)}
-                          style={{
-                            padding: '7px 12px',
-                            borderRadius: '8px',
-                            border: '1.5px solid #CBD5E1',
-                            fontSize: '12.5px',
-                            fontWeight: 700,
-                            color: '#0F172A',
-                          }}
-                          title="Pick custom date"
-                        />
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#FFFFFF', padding: '4px 10px', borderRadius: '8px', border: '1.5px solid #0D9488' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 800, color: '#0F766E' }}>Calendar:</span>
+                          <input
+                            type="date"
+                            value={interviewFormDate || ''}
+                            onChange={(e) => handleSwitchInterviewDate(e.target.value)}
+                            style={{
+                              border: 'none',
+                              outline: 'none',
+                              fontSize: '12.5px',
+                              fontWeight: 700,
+                              color: '#0F172A',
+                              background: 'transparent',
+                              cursor: 'pointer',
+                            }}
+                            title="Click to pick any custom date"
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -6601,13 +6679,13 @@ export default function AdminDashboard() {
                     >
                       <div>
                         <div style={{ fontSize: '11px', fontWeight: 900, color: '#047857', letterSpacing: '0.6px', textTransform: 'uppercase' }}>
-                          ⚡ Auto-Sequenced 10-Minute Slot (12:00 PM – 4:00 PM)
+                          ⚡ Scheduled 10-Minute Slot (12:00 PM – 4:00 PM)
                         </div>
-                        <div style={{ fontSize: '19px', fontWeight: 900, color: '#064E3B', margin: '3px 0' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 900, color: '#064E3B', margin: '3px 0' }}>
                           ⏰ {selectedInterviewSlot ? selectedInterviewSlot.rangeLabel : interviewFormTime}
                         </div>
                         <div style={{ fontSize: '12px', color: '#047857' }}>
-                          Auto-assigned next available slot on {interviewFormDate}. (10-Minute Executive Interview)
+                          Assigned for {interviewFormDate}. (10-Minute Leadership Screening Interview)
                         </div>
                       </div>
 
@@ -6622,30 +6700,76 @@ export default function AdminDashboard() {
                           boxShadow: '0 2px 6px rgba(5, 150, 105, 0.3)',
                         }}
                       >
-                        Auto-Allocated ✓
+                        Slot Confirmed ✓
                       </span>
+                    </div>
+
+                    {/* Direct Time Dropdown Selector */}
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 800, color: '#0F172A', marginBottom: '6px' }}>
+                        ⏰ Select 10-Minute Time Slot from Dropdown *
+                      </label>
+                      <select
+                        value={
+                          selectedInterviewSlot
+                            ? selectedInterviewSlot.startTime
+                            : (parseTimeToMinutes(interviewFormTime) !== null
+                                ? `${String(Math.floor(parseTimeToMinutes(interviewFormTime) / 60)).padStart(2, '0')}:${String(parseTimeToMinutes(interviewFormTime) % 60).padStart(2, '0')}`
+                                : '12:00')
+                        }
+                        onChange={(e) => {
+                          const dailySlots = generateDailyInterviewSlots(12, 16, 10);
+                          const found = dailySlots.find((s) => s.startTime === e.target.value);
+                          if (found) handleSelectInterviewSlot(found);
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '11px 14px',
+                          borderRadius: '10px',
+                          border: '2px solid #0D9488',
+                          fontSize: '13.5px',
+                          fontWeight: 800,
+                          color: '#042F2E',
+                          background: '#FFFFFF',
+                          cursor: 'pointer',
+                          boxSizing: 'border-box',
+                        }}
+                      >
+                        {generateDailyInterviewSlots(12, 16, 10).map((slot) => {
+                          const bookedApp = isSlotBooked(slot, interviewFormDate, managementApplications, interviewCandidateToSchedule?.id);
+                          return (
+                            <option key={slot.id} value={slot.startTime}>
+                              {slot.rangeLabel} {bookedApp ? `(🔴 Booked: ${bookedApp.fullName})` : '🟢 Available'}
+                            </option>
+                          );
+                        })}
+                      </select>
                     </div>
 
                     {/* Visual 24-Slot Schedule Timeline for selected date */}
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                         <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155' }}>
-                          🗓️ 24-Slot Timeline (12:00 PM – 4:00 PM • 10 Mins Each)
+                          🗓️ Or Click Any Slot in the 24-Slot Timeline:
                         </label>
                         <span style={{ fontSize: '11px', color: '#64748B' }}>
-                          Click any free slot to change time, or keep the auto-assigned slot
+                          Click any slot below to assign it immediately
                         </span>
                       </div>
 
                       {(() => {
                         const dailySlots = generateDailyInterviewSlots(12, 16, 10);
+                        const currentMins = selectedInterviewSlot
+                          ? parseTimeToMinutes(selectedInterviewSlot.startTime)
+                          : parseTimeToMinutes(interviewFormTime);
+
                         return (
                           <div
                             style={{
                               display: 'grid',
                               gridTemplateColumns: 'repeat(auto-fill, minmax(135px, 1fr))',
                               gap: '6px',
-                              maxHeight: '165px',
+                              maxHeight: '170px',
                               overflowY: 'auto',
                               padding: '10px',
                               borderRadius: '10px',
@@ -6655,12 +6779,14 @@ export default function AdminDashboard() {
                           >
                             {dailySlots.map((slot) => {
                               const bookedApp = isSlotBooked(slot, interviewFormDate, managementApplications, interviewCandidateToSchedule?.id);
-                              const isSelected = selectedInterviewSlot?.startTime === slot.startTime || interviewFormTime.startsWith(slot.startTime) || interviewFormTime.includes(slot.startLabel);
+                              const isSelected = parseTimeToMinutes(slot.startTime) === currentMins;
 
-                              if (bookedApp) {
+                              if (bookedApp && !isSelected) {
                                 return (
-                                  <div
+                                  <button
                                     key={slot.id}
+                                    type="button"
+                                    onClick={() => handleSelectInterviewSlot(slot)}
                                     style={{
                                       padding: '6px 8px',
                                       borderRadius: '6px',
@@ -6668,16 +6794,16 @@ export default function AdminDashboard() {
                                       background: '#FEF2F2',
                                       fontSize: '10.5px',
                                       color: '#991B1B',
-                                      cursor: 'not-allowed',
-                                      opacity: 0.85,
+                                      cursor: 'pointer',
+                                      textAlign: 'left',
                                     }}
-                                    title={`Booked by ${bookedApp.fullName} (${bookedApp.applicationRef || bookedApp.id})`}
+                                    title={`Currently booked by ${bookedApp.fullName}. Click to reassign to ${interviewCandidateToSchedule?.fullName}`}
                                   >
                                     <div style={{ fontWeight: 800 }}>{slot.startLabel}</div>
-                                    <div style={{ fontSize: '9.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <div style={{ fontSize: '9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                       🔴 {bookedApp.fullName}
                                     </div>
-                                  </div>
+                                  </button>
                                 );
                               }
 
@@ -6689,21 +6815,21 @@ export default function AdminDashboard() {
                                   style={{
                                     padding: '6px 8px',
                                     borderRadius: '6px',
-                                    border: isSelected ? '2px solid #059669' : '1px solid #CBD5E1',
+                                    border: isSelected ? '2.5px solid #059669' : '1px solid #CBD5E1',
                                     background: isSelected ? '#059669' : '#FFFFFF',
                                     color: isSelected ? '#FFFFFF' : '#334155',
                                     fontSize: '10.5px',
                                     fontWeight: isSelected ? 900 : 700,
                                     cursor: 'pointer',
                                     textAlign: 'left',
-                                    boxShadow: isSelected ? '0 2px 6px rgba(5, 150, 105, 0.3)' : 'none',
+                                    boxShadow: isSelected ? '0 2px 8px rgba(5, 150, 105, 0.4)' : 'none',
                                     transition: 'all 0.15s ease',
                                   }}
                                   title={`Select ${slot.rangeLabel}`}
                                 >
                                   <div>{slot.startLabel}</div>
                                   <div style={{ fontSize: '9.5px', color: isSelected ? '#E6FFFA' : '#059669' }}>
-                                    {isSelected ? '⭐ Selected' : '🟢 Free'}
+                                    {isSelected ? '⭐ Selected ✓' : '🟢 Free'}
                                   </div>
                                 </button>
                               );

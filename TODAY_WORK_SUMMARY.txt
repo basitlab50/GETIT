@@ -1434,6 +1434,17 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Termii SMS sends exact time window: `...from 12:10 PM to 12:20 PM (10 mins) via Google Meet`.
      * Google Calendar & .ICS file generation isolates start time from ranges (`12:10`) and locks exact 10-minute duration with 10-minute alarm notification.
 
+85. Robust Date Switching and Multi-Mode Time Selection Fix:
+   - 📅 Unrestricted Date Switching (Main Bar & Shortlist Modal):
+     * Removed restrictive min validation constraints that prevented user interaction with the native HTML date picker.
+     * Fixed React state persistence bug where empty keystrokes during date editing forced values back to previous dates.
+     * Added 1-click batch date buttons for 1st of Dec, 2nd of Dec, Tomorrow, and an unrestricted calendar picker across both the Staff Enrollment header bar and the Shortlist Modal.
+     * Guaranteed that clicking batch date buttons in the header bar immediately updates `interviewFormDate` and `activeInterviewBatchDate`.
+   - ⏰ Multi-Mode Time Selection (Dropdown + 24-Slot Grid + Custom Overrides):
+     * Added a direct 10-Minute Time Dropdown `<select>` inside the modal listing all 24 slots with their live availability status (`12:00 PM – 12:10 PM`, `12:10 PM – 12:20 PM`, etc.).
+     * Fixed `isSlotBooked` collision bug where range strings (`12:00 PM – 12:10 PM`) caused `12:10` to falsely match the end time of previous slots. Replaced string matching with strict `parseTimeToMinutes` calculation and `normalizeDateStr`.
+     * Upgraded the interactive 24-Slot Timeline grid: each pill clearly reflects selection state, and clicking any slot immediately updates the time, selected slot, and dropdown in sync.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
