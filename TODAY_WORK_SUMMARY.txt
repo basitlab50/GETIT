@@ -1493,6 +1493,14 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Moved `audit_logs` legacy sync into a non-blocking background fetch that merges any older records without overwriting reviewed statuses or `interviewSchedule`.
      * Added `ensureApplicantCvLoaded(app)` on-demand lazy CV fetcher triggered automatically when opening a candidate's Dossier (`View All 21 Answers & CV`), clicking `⬇ CV Only`, or clicking `Export Full PDF (Data + CV)`.
 
+90. Live Auto-Sync Agent & 1-Click "Update Now" Button for Staff Enrollment (`AdminDashboard.jsx`):
+   - 🤖 Dual-Engine Live Auto-Sync Agent (`autoSyncAgentEnabled`, ON by default):
+     * **Supabase Realtime Listener**: Subscribes to `postgres_changes` on `public.staff_enrollment` and `public.audit_logs` (`action=eq.MANAGEMENT_JOB_APPLICATION`) so newly submitted applications and CVs appear automatically the moment candidates submit.
+     * **10-Second Silent Background Watcher**: Continuously polls lightweight application columns every 10 seconds (with an in-flight guard to prevent overlapping requests and automatic pause/resume on browser tab visibility changes).
+   - 🔄 Prominent `Update Now` Button & Live Status Pill:
+     * Added a primary emerald `Update Now` button in the Staff Enrollment header for instant manual refresh.
+     * Added a clickable `🤖 Auto-Sync Agent: LIVE / ON (10s)` status pill showing the exact last-synced timestamp, allowing pause/resume anytime.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

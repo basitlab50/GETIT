@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { exportApplicantFullPdf, exportApplicantTextSummary } from '../../utils/applicantExport';
 import {
@@ -1718,6 +1718,10 @@ export default function AdminDashboard() {
   const [interviewScheduleSuccess, setInterviewScheduleSuccess] = useState(null);
   const [exportingApplicantId, setExportingApplicantId] = useState(null);
   const [loadingCvForId, setLoadingCvForId] = useState(null);
+  const [autoSyncAgentEnabled, setAutoSyncAgentEnabled] = useState(true);
+  const [lastEnrollmentSyncAt, setLastEnrollmentSyncAt] = useState(null);
+  const [realtimeAgentConnected, setRealtimeAgentConnected] = useState(false);
+  const mgmtSyncInFlightRef = useRef(false);
 
   const ensureApplicantCvLoaded = async (app) => {
     if (!app) return app;
@@ -1847,9 +1851,12 @@ export default function AdminDashboard() {
     });
   };
 
-  const fetchManagementApplicationsFromSupabase = async () => {
+  const fetchManagementApplicationsFromSupabase = async (options = {}) => {
+    const { silent = false } = options || {};
+    if (mgmtSyncInFlightRef.current) return;
+    mgmtSyncInFlightRef.current = true;
     try {
-      setFetchMgmtAppsLoading(true);
+      if (!silent) setFetchMgmtAppsLoading(true);
 
       // Step 1: Fast lightweight query on staff_enrollment (excludes multi-MB cv_data_url & payload blobs)
       // This loads up to 500 applicants rapidly without hitting Supabase timeouts.
@@ -1928,6 +1935,7 @@ export default function AdminDashboard() {
           submittedAt: row.created_at,
         }));
         mergeManagementApplicationRows(mappedEnroll);
+        setLastEnrollmentSyncAt(new Date());
       }
 
       // Step 2: Non-blocking background sync from audit_logs (for any legacy rows only in audit_logs)
@@ -1955,15 +1963,119 @@ export default function AdminDashboard() {
               } catch {}
             });
             mergeManagementApplicationRows(mappedLogs);
+            setLastEnrollmentSyncAt(new Date());
           }
         })
         .catch(() => {});
     } catch (err) {
       console.warn('Management applications fetch notice:', err);
     } finally {
-      setFetchMgmtAppsLoading(false);
+      mgmtSyncInFlightRef.current = false;
+      if (!silent) setFetchMgmtAppsLoading(false);
     }
   };
+
+  // =========================================================================
+  // LIVE AUTO-SYNC AGENT: Continuously watches Supabase (Realtime + 10s Poll)
+  // so every newly submitted application & CV shows up automatically!
+  // =========================================================================
+  useEffect(() => {
+    if (!autoSyncAgentEnabled) {
+      setRealtimeAgentConnected(false);
+      return;
+    }
+
+    // 1) Supabase Realtime instant push listener for new/updated applications
+    let channel = null;
+    try {
+      channel = supabaseClient
+        .channel('getit-staff-enrollment-live-agent')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'staff_enrollment' },
+          (change) => {
+            const row = change?.new;
+            if (row && row.id) {
+              const p = typeof row.payload === 'string' ? (() => { try { return JSON.parse(row.payload); } catch { return {}; } })() : row.payload || {};
+              mergeManagementApplicationRows([
+                {
+                  ...p,
+                  id: row.id,
+                  applicationRef: row.application_ref || p.applicationRef,
+                  status: row.status || p.status || 'PENDING_REVIEW',
+                  assignedStaffId: row.assigned_staff_id || p.assignedStaffId,
+                  fullName: row.full_name || p.fullName,
+                  phone: row.phone || p.phone,
+                  email: row.email || p.email,
+                  stateAndCity: row.state_and_city || p.stateAndCity,
+                  highestEducation: row.highest_education || p.highestEducation,
+                  employmentStatus: row.employment_status || p.employmentStatus,
+                  resumptionAvailability: row.resumption_availability || p.resumptionAvailability,
+                  previouslyManagedTeam: row.previously_managed_team || p.previouslyManagedTeam,
+                  teamSizeManaged: row.team_size_managed || p.teamSizeManaged,
+                  leadershipExperienceSummary: row.leadership_experience_summary || p.leadershipExperienceSummary,
+                  recruitedTeamFromScratch: row.recruited_team_from_scratch || p.recruitedTeamFromScratch,
+                  planForTeamOf20: row.plan_for_team_of_20 || p.planForTeamOf20,
+                  turnaroundUnderperforming15: row.turnaround_underperforming_15 || p.turnaroundUnderperforming15,
+                  planFor200BusinessRelationships: row.plan_for_200_business_relationships || p.planFor200BusinessRelationships,
+                  dailyMonitoringAccountability: row.daily_monitoring_accountability || p.dailyMonitoringAccountability,
+                  difficultSituationHandled: row.difficult_situation_handled || p.difficultSituationHandled,
+                  comfortableWithFieldwork: row.comfortable_with_fieldwork || p.comfortableWithFieldwork,
+                  comfortableWithTargetsAndReports: row.comfortable_with_targets_and_reports || p.comfortableWithTargetsAndReports,
+                  whySuitableForManagement: row.why_suitable_for_management || p.whySuitableForManagement,
+                  cvFileName: row.cv_file_name || p.cvFileName,
+                  cvFileSize: row.cv_file_size || p.cvFileSize,
+                  cvMimeType: row.cv_mime_type || p.cvMimeType,
+                  cvDataUrl: row.cv_data_url || p.cvDataUrl,
+                  professionalReferee: row.professional_referee || p.professionalReferee,
+                  submittedAt: p.submittedAt || row.created_at,
+                },
+              ]);
+              setLastEnrollmentSyncAt(new Date());
+            } else {
+              fetchManagementApplicationsFromSupabase({ silent: true });
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'audit_logs', filter: 'action=eq.MANAGEMENT_JOB_APPLICATION' },
+          () => {
+            fetchManagementApplicationsFromSupabase({ silent: true });
+          }
+        )
+        .subscribe((status) => {
+          setRealtimeAgentConnected(status === 'SUBSCRIBED');
+        });
+    } catch (err) {
+      console.warn('Realtime agent fallback to polling:', err);
+    }
+
+    // 2) Continuous 10-second silent background polling watcher
+    const pollInterval = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        fetchManagementApplicationsFromSupabase({ silent: true });
+      }
+    }, 10000);
+
+    // 3) Instant sync whenever user returns to this browser tab
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchManagementApplicationsFromSupabase({ silent: true });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (channel) {
+        try {
+          supabaseClient.removeChannel(channel);
+        } catch {}
+      }
+    };
+  }, [autoSyncAgentEnabled]);
 
   const fetchSupabaseData = async () => {
     setIsSyncing(true);
@@ -5314,23 +5426,66 @@ export default function AdminDashboard() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <button
               type="button"
-              onClick={() => fetchManagementApplicationsFromSupabase()}
+              onClick={() => setAutoSyncAgentEnabled((prev) => !prev)}
               style={{
-                padding: '8px 14px',
+                padding: '7px 12px',
                 borderRadius: '10px',
-                background: '#FFFFFF',
-                border: '1px solid #0D9488',
-                color: '#0F766E',
-                fontSize: '12px',
+                background: autoSyncAgentEnabled ? '#ECFDF5' : '#F1F5F9',
+                border: autoSyncAgentEnabled ? '1.5px solid #10B981' : '1px solid #CBD5E1',
+                color: autoSyncAgentEnabled ? '#065F46' : '#475569',
+                fontSize: '11.5px',
                 fontWeight: 800,
                 cursor: 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
               }}
+              title="Toggle the background Auto-Sync Agent (Realtime push + automatic 10-second check)"
+            >
+              <span
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: autoSyncAgentEnabled ? '#10B981' : '#94A3B8',
+                  boxShadow: autoSyncAgentEnabled ? '0 0 0 3px rgba(16, 185, 129, 0.25)' : 'none',
+                }}
+              />
+              <span>
+                {autoSyncAgentEnabled
+                  ? realtimeAgentConnected
+                    ? '🤖 Auto-Sync Agent: LIVE'
+                    : '🤖 Auto-Sync Agent: ON (10s)'
+                  : '🤖 Auto-Sync Agent: PAUSED'}
+              </span>
+              {lastEnrollmentSyncAt && (
+                <span style={{ fontSize: '10px', fontWeight: 700, opacity: 0.8 }}>
+                  • {lastEnrollmentSyncAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => fetchManagementApplicationsFromSupabase({ silent: false })}
+              disabled={fetchMgmtAppsLoading}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '10px',
+                background: '#0F766E',
+                border: '1px solid #0F766E',
+                color: '#FFFFFF',
+                fontSize: '12px',
+                fontWeight: 800,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 2px 8px rgba(15, 118, 110, 0.25)',
+                opacity: fetchMgmtAppsLoading ? 0.75 : 1,
+              }}
             >
               <RefreshCw size={14} />
-              <span>{fetchMgmtAppsLoading ? 'Syncing...' : 'Sync from Supabase'}</span>
+              <span>{fetchMgmtAppsLoading ? 'Updating...' : 'Update Now'}</span>
             </button>
           </div>
         </div>
