@@ -1396,6 +1396,27 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      3. Section 1 (Q2 Phone & Q3 Email): Direct WhatsApp, Call, Gmail, and Mailto action chips alongside contact fields.
      4. Dossier Action Footer: WhatsApp Chat and Open Gmail buttons placed beside Shortlist and Approve buttons.
 
+83. Management Candidate Shortlisting with 1-on-1 Interview Booking, Termii SMS & Resend Email Dispatch, and Calendar Alarm Alerts:
+   - 📅 Interactive 1-on-1 Interview Booking Modal (`InterviewSchedulingModal` in `AdminDashboard.jsx`):
+     * Seamlessly launches upon clicking "⭐ Shortlist for 1-on-1 Interview" from either the Candidate Cards or the Candidate Dossier modal.
+     * Comprehensive booking form with:
+       - Interview Date picker with automated minimum date enforcement (`today+`).
+       - Interview Time picker.
+       - Quick Appointment Duration selector: 10 Minutes, 15 Minutes (Standard), 30 Minutes, 45 Minutes.
+       - Platform selector pills: Google Meet, Zoom, WhatsApp Video Call, Phone Call.
+       - One-click auto-generation of unique Google Meet meeting rooms (`https://meet.google.com/getit-mgr-<ref>`) or custom URL input.
+       - Executive notes & interview agenda textarea (customized per candidate).
+   - 🚀 Automated Multi-Channel Dispatch via Resend & Termii (`sendManagementRecruitmentNotification` in `otpDispatchService.js`):
+     * Takes candidate's email and phone automatically.
+     * Dispatches an executive HTML invitation email via Resend API featuring a dedicated appointment card with Date, Time, Duration, Platform, interviewer notes, preparation checklist, and a direct clickable "👉 Join Interview Meeting" room button.
+     * Dispatches a direct SMS notification via Termii API to the candidate's phone with date, time, platform, and notice.
+     * Persists interview appointment details seamlessly into Supabase `staff_enrollment` and `audit_logs` payload.
+   - 🔔 Executive Appointment Alert System (10-Minute Reminder Notification):
+     * 1-Click Google Calendar Event Generator (`generateGoogleCalendarUrl`): creates pre-filled calendar appointment locking the 10–15 minute interview, adding candidate as attendee, embedding meeting URL, and configuring a 10-minute alert reminder so the interviewer never misses the session.
+     * Downloadable `.ICS` Calendar Invite File (`downloadIcsCalendarFile`): generates and triggers browser download of standard RFC 5545 iCalendar file with VALARM 10-minute sound/display notification for Apple Calendar, Outlook, and Windows Calendar.
+   - 🌟 Visual Appointment Banners on Candidate Cards & Dossier:
+     * Added high-visibility emerald appointment banners on candidate cards and dossier modal displaying scheduled interview time, meeting room access button, and 1-click Google Calendar & .ICS alert buttons.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

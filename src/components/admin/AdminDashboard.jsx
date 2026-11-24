@@ -113,7 +113,15 @@ import {
   getAuthorizedDashboardsForStaff,
   buildImmutableAuditLog,
 } from '../../../mobile/data/centralManagementSystem';
-import { getGatewayConfig, saveGatewayConfig, sendSmsOtp, sendEmailOtp } from '../../services/otpDispatchService';
+import {
+  getGatewayConfig,
+  saveGatewayConfig,
+  sendSmsOtp,
+  sendEmailOtp,
+  sendManagementRecruitmentNotification,
+  generateGoogleCalendarUrl,
+  downloadIcsCalendarFile,
+} from '../../services/otpDispatchService';
 import { getBoltConfig, saveBoltConfig, estimateBoltRide, createBoltRide, getBoltRideDetails, advanceBoltSandboxState } from '../../services/boltDeliveryService';
 
 // Live Supabase connection for real-time sync with the GETIT Mobile App
@@ -1669,6 +1677,19 @@ export default function AdminDashboard() {
   );
   const [selectedMgmtAppDossier, setSelectedMgmtAppDossier] = useState(null);
   const [mgmtAppsFilter, setMgmtAppsFilter] = useState('ALL'); // 'ALL' | 'PENDING_REVIEW' | 'SHORTLISTED' | 'APPROVED_ONBOARDED' | 'REJECTED'
+  const [interviewCandidateToSchedule, setInterviewCandidateToSchedule] = useState(null);
+  const [interviewFormDate, setInterviewFormDate] = useState(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().slice(0, 10);
+  });
+  const [interviewFormTime, setInterviewFormTime] = useState('10:00');
+  const [interviewFormDuration, setInterviewFormDuration] = useState('15 Minutes');
+  const [interviewFormPlatform, setInterviewFormPlatform] = useState('Google Meet');
+  const [interviewFormMeetingLink, setInterviewFormMeetingLink] = useState('');
+  const [interviewFormNotes, setInterviewFormNotes] = useState('1-on-1 Leadership Screening & Regional Management Review');
+  const [isDispatchingInterview, setIsDispatchingInterview] = useState(false);
+  const [interviewScheduleSuccess, setInterviewScheduleSuccess] = useState(null);
 
   useEffect(() => {
     saveLocalJson('getit_management_applications_v1', managementApplications);
@@ -4540,8 +4561,135 @@ export default function AdminDashboard() {
     return cleanFirst + sym1 + "Staff" + numDigits + sym2 + "26";
   };
 
+  const handleInitiateShortlist = (app) => {
+    if (!app) return;
+    setInterviewCandidateToSchedule(app);
+    setInterviewScheduleSuccess(null);
+    const cleanRef = (app.applicationRef || app.id || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(-8) || 'mgr';
+    const defaultMeetRoom = `https://meet.google.com/getit-mgr-${cleanRef}`;
+    setInterviewFormMeetingLink(app.interviewSchedule?.meetingLink || defaultMeetRoom);
+    setInterviewFormPlatform(app.interviewSchedule?.platform || 'Google Meet');
+    setInterviewFormDuration(app.interviewSchedule?.duration || '15 Minutes');
+    setInterviewFormTime(app.interviewSchedule?.time || '10:00');
+    if (app.interviewSchedule?.date) {
+      setInterviewFormDate(app.interviewSchedule.date);
+    } else {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      setInterviewFormDate(tomorrow.toISOString().slice(0, 10));
+    }
+    setInterviewFormNotes(app.interviewSchedule?.notes || '1-on-1 Leadership Screening & Regional Management Strategy Review');
+  };
+
+  const handleConfirmInterviewAndShortlist = async () => {
+    if (!interviewCandidateToSchedule) return;
+    setIsDispatchingInterview(true);
+    const app = interviewCandidateToSchedule;
+
+    const durationMins = interviewFormDuration.includes('10') ? 10 : interviewFormDuration.includes('30') ? 30 : interviewFormDuration.includes('45') ? 45 : 15;
+
+    const interviewDetails = {
+      date: interviewFormDate,
+      time: interviewFormTime,
+      duration: interviewFormDuration,
+      durationMinutes: durationMins,
+      platform: interviewFormPlatform,
+      meetingLink: interviewFormMeetingLink,
+      notes: interviewFormNotes,
+      scheduledAt: new Date().toISOString(),
+      scheduledBy: activeStaff?.fullName || 'CEO / Executive',
+    };
+
+    const googleCalUrl = generateGoogleCalendarUrl({
+      candidateName: app.fullName,
+      candidateEmail: app.email,
+      date: interviewFormDate,
+      time: interviewFormTime,
+      durationMinutes: durationMins,
+      meetingLink: interviewFormMeetingLink,
+      appRef: app.applicationRef || app.id,
+    });
+
+    const updatedApp = {
+      ...app,
+      status: 'SHORTLISTED',
+      interviewSchedule: interviewDetails,
+      reviewedBy: activeStaff?.fullName || 'CEO / Executive',
+      reviewedAt: new Date().toISOString(),
+    };
+
+    setManagementApplications((prev) =>
+      prev.map((item) => (item.id === app.id ? updatedApp : item))
+    );
+    if (selectedMgmtAppDossier?.id === app.id) {
+      setSelectedMgmtAppDossier(updatedApp);
+    }
+
+    // Save to Supabase staff_enrollment & audit_logs
+    try {
+      await Promise.all([
+        supabaseClient
+          .from('staff_enrollment')
+          .update({
+            status: 'SHORTLISTED',
+            reviewed_by: updatedApp.reviewedBy,
+            reviewed_at: updatedApp.reviewedAt,
+            payload: updatedApp,
+          })
+          .eq('id', app.id),
+        supabaseClient
+          .from('audit_logs')
+          .update({ payload: JSON.stringify(updatedApp) })
+          .eq('id', app.id),
+      ]);
+    } catch (err) {
+      console.warn('Supabase shortlist status update notice:', err);
+    }
+
+    // Dispatch official email (via Resend) and SMS (via Termii)
+    let dispatchRes = null;
+    try {
+      dispatchRes = await sendManagementRecruitmentNotification({
+        type: 'SHORTLISTED',
+        application: updatedApp,
+        interviewDetails,
+      });
+    } catch (err) {
+      console.warn('Recruitment dispatch notice:', err);
+    }
+
+    setIsDispatchingInterview(false);
+    setInterviewScheduleSuccess({
+      candidate: updatedApp,
+      details: interviewDetails,
+      googleCalUrl,
+      dispatchRes,
+    });
+
+    recordAudit({
+      category: 'RECRUITMENT',
+      action: 'SHORTLIST_INTERVIEW',
+      targetEntity: `${app.fullName} (${app.applicationRef || app.id})`,
+      previousValue: app.status || 'PENDING_REVIEW',
+      newValue: 'SHORTLISTED',
+      reason: `Interview scheduled on ${interviewFormDate} at ${interviewFormTime} (${interviewFormPlatform}) by ${activeStaff?.fullName || 'Executive'}`,
+    });
+
+    if (notify) {
+      notify(
+        '1-on-1 Interview Scheduled & Dispatched',
+        `Official invitation sent to ${app.email}. Scheduled for ${interviewFormDate} at ${interviewFormTime}.`,
+        'success'
+      );
+    }
+  };
+
   const handleUpdateMgmtApplicationStatus = async (app, nextStatus) => {
     if (!app?.id) return;
+    if (nextStatus === 'SHORTLISTED') {
+      handleInitiateShortlist(app);
+      return;
+    }
     const updatedApp = {
       ...app,
       status: nextStatus,
@@ -4643,12 +4791,23 @@ export default function AdminDashboard() {
 
       if (notify) {
         notify(
-          'Manager Approved & Onboarded',
-          `${newMgr.fullName} appointed as ${newMgr.title} with Staff ID ${newMgr.staffId}!`,
+          'Manager Approved & Onboarded + Email Sent',
+          `${newMgr.fullName} appointed as ${newMgr.title} (${newMgr.staffId}). Official appointment email dispatched!`,
           'success'
         );
       }
+      sendManagementRecruitmentNotification({
+        type: 'APPROVED_ONBOARDED',
+        application: updatedApp,
+        assignedStaffId: newMgr.staffId,
+      }).catch(() => {});
     } else {
+      if (nextStatus === 'SHORTLISTED') {
+        sendManagementRecruitmentNotification({
+          type: 'SHORTLISTED',
+          application: updatedApp,
+        }).catch(() => {});
+      }
       recordAudit({
         module: 'Regional Governance & Recruitment',
         actionType: 'UPDATE_MANAGEMENT_APPLICATION_STATUS',
@@ -4658,7 +4817,13 @@ export default function AdminDashboard() {
         reason: `Updated by ${activeStaff?.fullName}`,
       });
       if (notify) {
-        notify('Application Status Updated', `${app.fullName} marked as ${nextStatus.replace(/_/g, ' ')}.`, 'info');
+        notify(
+          nextStatus === 'SHORTLISTED' ? 'Shortlisted + Interview Email Sent!' : 'Application Status Updated',
+          nextStatus === 'SHORTLISTED'
+            ? `${app.fullName} has been shortlisted and automatically sent a 1-on-1 interview invitation email!`
+            : `${app.fullName} marked as ${nextStatus.replace(/_/g, ' ')}.`,
+          nextStatus === 'SHORTLISTED' ? 'success' : 'info'
+        );
       }
     }
   };
@@ -5011,6 +5176,69 @@ export default function AdminDashboard() {
                       )}
                     </div>
 
+                    {/* Interview Appointment Scheduled Banner (if scheduled) */}
+                    {app.interviewSchedule && (
+                      <div style={{ padding: '8px 10px', borderRadius: '8px', background: '#ECFDF5', border: '1.5px solid #10B981', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 800, color: '#065F46' }}>
+                            📅 {app.interviewSchedule.date} at {app.interviewSchedule.time} ({app.interviewSchedule.duration || '15 Min'})
+                          </span>
+                          <span style={{ fontSize: '9.5px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px', background: '#D1FAE5', color: '#047857' }}>
+                            {app.interviewSchedule.platform || 'Google Meet'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                          {app.interviewSchedule.meetingLink && (
+                            <a
+                              href={app.interviewSchedule.meetingLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{
+                                fontSize: '10.5px',
+                                fontWeight: 800,
+                                color: '#FFFFFF',
+                                background: '#059669',
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                textDecoration: 'none',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                              }}
+                            >
+                              <span>Join Room</span>
+                              <ExternalLink size={9} />
+                            </a>
+                          )}
+                          <a
+                            href={generateGoogleCalendarUrl({
+                              candidateName: app.fullName,
+                              candidateEmail: app.email,
+                              date: app.interviewSchedule.date,
+                              time: app.interviewSchedule.time,
+                              durationMinutes: app.interviewSchedule.duration?.includes('10') ? 10 : app.interviewSchedule.duration?.includes('30') ? 30 : 15,
+                              meetingLink: app.interviewSchedule.meetingLink,
+                              appRef: app.applicationRef || app.id,
+                            })}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                              fontSize: '10.5px',
+                              fontWeight: 700,
+                              color: '#1D4ED8',
+                              background: '#EFF6FF',
+                              padding: '3px 8px',
+                              borderRadius: '4px',
+                              textDecoration: 'none',
+                              border: '1px solid #BFDBFE',
+                            }}
+                          >
+                            📅 Add Alert to Google Cal
+                          </a>
+                        </div>
+                      </div>
+                    )}
+
                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                       <button
                         type="button"
@@ -5032,7 +5260,7 @@ export default function AdminDashboard() {
                       {st !== 'SHORTLISTED' && st !== 'APPROVED_ONBOARDED' && (
                         <button
                           type="button"
-                          onClick={() => handleUpdateMgmtApplicationStatus(app, 'SHORTLISTED')}
+                          onClick={() => handleInitiateShortlist(app)}
                           style={{
                             padding: '8px 10px',
                             borderRadius: '8px',
@@ -5044,7 +5272,25 @@ export default function AdminDashboard() {
                             cursor: 'pointer',
                           }}
                         >
-                          ⭐ Shortlist
+                          ⭐ Shortlist & Book Interview
+                        </button>
+                      )}
+                      {st === 'SHORTLISTED' && (
+                        <button
+                          type="button"
+                          onClick={() => handleInitiateShortlist(app)}
+                          style={{
+                            padding: '8px 10px',
+                            borderRadius: '8px',
+                            background: '#ECFDF5',
+                            color: '#065F46',
+                            border: '1px solid #10B981',
+                            fontSize: '11.5px',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          📅 Edit / Reschedule Interview
                         </button>
                       )}
                       {st !== 'APPROVED_ONBOARDED' && (
@@ -5216,6 +5462,137 @@ export default function AdminDashboard() {
               </div>
 
               <div style={{ padding: '24px 26px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                {selectedMgmtAppDossier.interviewSchedule && (
+                  <div
+                    style={{
+                      padding: '18px 22px',
+                      borderRadius: '14px',
+                      background: '#ECFDF5',
+                      border: '1.5px solid #10B981',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      boxShadow: '0 4px 14px rgba(16, 185, 129, 0.12)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '20px' }}>📅</span>
+                        <div>
+                          <div style={{ fontSize: '11px', fontWeight: 900, color: '#047857', letterSpacing: '0.6px', textTransform: 'uppercase' }}>
+                            Confirmed 1-on-1 Executive Interview
+                          </div>
+                          <div style={{ fontSize: '15px', fontWeight: 800, color: '#065F46' }}>
+                            {selectedMgmtAppDossier.interviewSchedule.date} at {selectedMgmtAppDossier.interviewSchedule.time} ({selectedMgmtAppDossier.interviewSchedule.duration || '15 Minutes'})
+                          </div>
+                        </div>
+                      </div>
+                      <span
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: '999px',
+                          background: '#D1FAE5',
+                          color: '#065F46',
+                          fontSize: '11px',
+                          fontWeight: 800,
+                        }}
+                      >
+                        Platform: {selectedMgmtAppDossier.interviewSchedule.platform || 'Google Meet'}
+                      </span>
+                    </div>
+
+                    {selectedMgmtAppDossier.interviewSchedule.meetingLink && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#047857' }}>Meeting Room:</span>
+                        <a
+                          href={selectedMgmtAppDossier.interviewSchedule.meetingLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            padding: '4px 12px',
+                            borderRadius: '6px',
+                            background: '#059669',
+                            color: '#FFFFFF',
+                            fontSize: '11.5px',
+                            fontWeight: 800,
+                            textDecoration: 'none',
+                          }}
+                        >
+                          <span>👉 Enter Meeting Room</span>
+                          <ExternalLink size={11} />
+                        </a>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', paddingTop: '4px' }}>
+                      <a
+                        href={generateGoogleCalendarUrl({
+                          candidateName: selectedMgmtAppDossier.fullName,
+                          candidateEmail: selectedMgmtAppDossier.email,
+                          date: selectedMgmtAppDossier.interviewSchedule.date,
+                          time: selectedMgmtAppDossier.interviewSchedule.time,
+                          durationMinutes: selectedMgmtAppDossier.interviewSchedule.durationMinutes || 15,
+                          meetingLink: selectedMgmtAppDossier.interviewSchedule.meetingLink,
+                          appRef: selectedMgmtAppDossier.applicationRef || selectedMgmtAppDossier.id,
+                        })}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          background: '#1E293B',
+                          color: '#FFFFFF',
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          textDecoration: 'none',
+                        }}
+                        title="Add interview appointment with 10-minute alert to your Google Calendar"
+                      >
+                        <Calendar size={13} />
+                        <span>Add Alert to Google Calendar</span>
+                        <ExternalLink size={10} />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          downloadIcsCalendarFile({
+                            candidateName: selectedMgmtAppDossier.fullName,
+                            candidateEmail: selectedMgmtAppDossier.email,
+                            date: selectedMgmtAppDossier.interviewSchedule.date,
+                            time: selectedMgmtAppDossier.interviewSchedule.time,
+                            durationMinutes: selectedMgmtAppDossier.interviewSchedule.durationMinutes || 15,
+                            meetingLink: selectedMgmtAppDossier.interviewSchedule.meetingLink,
+                            appRef: selectedMgmtAppDossier.applicationRef || selectedMgmtAppDossier.id,
+                          })
+                        }
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          background: '#FFFFFF',
+                          color: '#0F766E',
+                          border: '1px solid #10B981',
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                        title="Download .ICS invite file for Outlook / Apple / Windows Calendar with alarm reminder"
+                      >
+                        <Download size={13} />
+                        <span>Download .ICS Calendar Invite</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ padding: '18px', borderRadius: '14px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
                   <h4 style={{ fontSize: '14px', fontWeight: 900, color: '#0F766E', margin: '0 0 12px 0', textTransform: 'uppercase' }}>
                     Section 1: Personal and Professional Information (Q1 – Q7)
@@ -5498,7 +5875,7 @@ export default function AdminDashboard() {
                   )}
                   <button
                     type="button"
-                    onClick={() => handleUpdateMgmtApplicationStatus(selectedMgmtAppDossier, 'SHORTLISTED')}
+                    onClick={() => handleInitiateShortlist(selectedMgmtAppDossier)}
                     style={{
                       padding: '10px 16px',
                       borderRadius: '10px',
@@ -5510,7 +5887,9 @@ export default function AdminDashboard() {
                       cursor: 'pointer',
                     }}
                   >
-                    ⭐ Shortlist for 1-on-1 Interview
+                    {selectedMgmtAppDossier.status === 'SHORTLISTED' || selectedMgmtAppDossier.interviewSchedule
+                      ? '📅 Reschedule / Re-dispatch Interview'
+                      : '⭐ Shortlist & Book 1-on-1 Interview'}
                   </button>
                   <button
                     type="button"
@@ -5548,6 +5927,557 @@ export default function AdminDashboard() {
                   ✓ Approve & Appoint as Regional Manager (Generate GET-XXX ID)
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* INTERVIEW SCHEDULING & SHORTLIST DISPATCH MODAL */}
+        {/* ========================================================================= */}
+        {interviewCandidateToSchedule && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 10000,
+              background: 'rgba(15, 23, 42, 0.78)',
+              backdropFilter: 'blur(6px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px',
+            }}
+          >
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '20px',
+                maxWidth: '680px',
+                width: '100%',
+                maxHeight: '92vh',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                boxShadow: '0 30px 80px rgba(0,0,0,0.45)',
+              }}
+            >
+              {interviewScheduleSuccess ? (
+                // SUCCESS SCREEN WITH APPOINTMENT ALERTS & DISPATCH RECEIPT
+                <div style={{ padding: '32px 30px', display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div
+                      style={{
+                        width: '64px',
+                        height: '64px',
+                        borderRadius: '50%',
+                        background: '#DCFCE7',
+                        color: '#16A34A',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        margin: '0 auto 14px',
+                        fontSize: '32px',
+                        fontWeight: 900,
+                      }}
+                    >
+                      ✓
+                    </div>
+                    <div style={{ fontSize: '11px', fontWeight: 900, color: '#059669', letterSpacing: '0.8px', textTransform: 'uppercase' }}>
+                      Status Updated to Shortlisted
+                    </div>
+                    <h3 style={{ fontSize: '22px', fontWeight: 900, color: '#0F172A', margin: '4px 0 6px' }}>
+                      1-on-1 Interview Confirmed & Dispatched!
+                    </h3>
+                    <p style={{ fontSize: '13px', color: '#64748B', margin: 0 }}>
+                      An official interview invitation with full meeting room credentials has been dispatched directly to the candidate.
+                    </p>
+                  </div>
+
+                  {/* Summary Card */}
+                  <div
+                    style={{
+                      background: '#F8FAFC',
+                      borderRadius: '14px',
+                      border: '1px solid #E2E8F0',
+                      padding: '18px 20px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      fontSize: '13px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #E2E8F0', paddingBottom: '8px' }}>
+                      <span style={{ color: '#64748B', fontWeight: 600 }}>Candidate:</span>
+                      <strong style={{ color: '#0F172A' }}>{interviewScheduleSuccess.candidate.fullName}</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #E2E8F0', paddingBottom: '8px' }}>
+                      <span style={{ color: '#64748B', fontWeight: 600 }}>Date & Time:</span>
+                      <strong style={{ color: '#047857' }}>
+                        📅 {interviewScheduleSuccess.details.date} at {interviewScheduleSuccess.details.time} ({interviewScheduleSuccess.details.duration})
+                      </strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #E2E8F0', paddingBottom: '8px' }}>
+                      <span style={{ color: '#64748B', fontWeight: 600 }}>Platform:</span>
+                      <strong style={{ color: '#0F172A' }}>{interviewScheduleSuccess.details.platform}</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #E2E8F0', paddingBottom: '8px' }}>
+                      <span style={{ color: '#64748B', fontWeight: 600 }}>Meeting Link:</span>
+                      <a
+                        href={interviewScheduleSuccess.details.meetingLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          color: '#0F766E',
+                          fontWeight: 700,
+                          textDecoration: 'underline',
+                          fontSize: '12px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          maxWidth: '300px',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {interviewScheduleSuccess.details.meetingLink}
+                        <ExternalLink size={11} />
+                      </a>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '2px', flexWrap: 'wrap', gap: '6px' }}>
+                      <span style={{ color: '#64748B', fontWeight: 600 }}>Dispatched Channels:</span>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <span style={{ padding: '3px 8px', borderRadius: '4px', background: '#DCFCE7', color: '#166534', fontSize: '11px', fontWeight: 700 }}>
+                          Resend Email: {interviewScheduleSuccess.candidate.email}
+                        </span>
+                        {interviewScheduleSuccess.candidate.phone && (
+                          <span style={{ padding: '3px 8px', borderRadius: '4px', background: '#FEF3C7', color: '#92400E', fontSize: '11px', fontWeight: 700 }}>
+                            Termii SMS: {interviewScheduleSuccess.candidate.phone}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Interviewer Alert Section (Google Calendar + .ICS) */}
+                  <div
+                    style={{
+                      background: 'linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%)',
+                      borderRadius: '14px',
+                      border: '1.5px solid #86EFAC',
+                      padding: '18px 20px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '11px', fontWeight: 900, color: '#15803D', letterSpacing: '0.6px', textTransform: 'uppercase' }}>
+                        🔔 Executive Appointment Alert (Don't Miss This Interview)
+                      </div>
+                      <div style={{ fontSize: '13px', color: '#166534', marginTop: '2px' }}>
+                        Save this 10–15 minute interview appointment to your calendar now. Includes a pre-set 10-minute alarm notification.
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
+                      <a
+                        href={interviewScheduleSuccess.googleCalUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          padding: '12px 16px',
+                          borderRadius: '10px',
+                          background: '#1E293B',
+                          color: '#FFFFFF',
+                          fontSize: '13px',
+                          fontWeight: 800,
+                          textDecoration: 'none',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          boxShadow: '0 4px 12px rgba(30, 41, 59, 0.25)',
+                        }}
+                      >
+                        <Calendar size={16} />
+                        <span>Add to Google Calendar</span>
+                        <ExternalLink size={12} />
+                      </a>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          downloadIcsCalendarFile({
+                            candidateName: interviewScheduleSuccess.candidate.fullName,
+                            candidateEmail: interviewScheduleSuccess.candidate.email,
+                            date: interviewScheduleSuccess.details.date,
+                            time: interviewScheduleSuccess.details.time,
+                            durationMinutes: interviewScheduleSuccess.details.durationMinutes || 15,
+                            meetingLink: interviewScheduleSuccess.details.meetingLink,
+                            appRef: interviewScheduleSuccess.candidate.applicationRef || interviewScheduleSuccess.candidate.id,
+                          })
+                        }
+                        style={{
+                          padding: '12px 16px',
+                          borderRadius: '10px',
+                          background: '#FFFFFF',
+                          color: '#0F766E',
+                          border: '1.5px solid #0F766E',
+                          fontSize: '13px',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        <Download size={16} />
+                        <span>Download .ICS Calendar Invite</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInterviewCandidateToSchedule(null);
+                        setInterviewScheduleSuccess(null);
+                      }}
+                      style={{
+                        padding: '12px 28px',
+                        borderRadius: '10px',
+                        background: '#0F766E',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        fontSize: '13.5px',
+                        fontWeight: 900,
+                        cursor: 'pointer',
+                        boxShadow: '0 4px 14px rgba(15, 118, 110, 0.3)',
+                      }}
+                    >
+                      Done & Return to Applications
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                // BOOKING & SCHEDULING FORM
+                <>
+                  <div
+                    style={{
+                      background: 'linear-gradient(135deg, #042F2E 0%, #0F766E 100%)',
+                      color: '#FFFFFF',
+                      padding: '20px 24px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '11px', fontWeight: 800, color: '#5EEAD4', letterSpacing: '0.8px', textTransform: 'uppercase' }}>
+                        1-on-1 Executive Interview Setup
+                      </div>
+                      <h3 style={{ fontSize: '19px', fontWeight: 900, margin: '2px 0 0' }}>
+                        Shortlist {interviewCandidateToSchedule.fullName}
+                      </h3>
+                      <div style={{ fontSize: '12px', color: '#CCFBF1', marginTop: '3px' }}>
+                        Ref: {interviewCandidateToSchedule.applicationRef || interviewCandidateToSchedule.id} • {interviewCandidateToSchedule.email} • {interviewCandidateToSchedule.phone}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setInterviewCandidateToSchedule(null)}
+                      style={{
+                        width: '34px',
+                        height: '34px',
+                        borderRadius: '50%',
+                        border: 'none',
+                        background: 'rgba(255,255,255,0.15)',
+                        color: '#FFFFFF',
+                        fontSize: '16px',
+                        fontWeight: 900,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div style={{ padding: '22px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {/* Date and Time Pickers */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 800, color: '#334155', marginBottom: '6px' }}>
+                          📅 Interview Date *
+                        </label>
+                        <input
+                          type="date"
+                          value={interviewFormDate}
+                          min={new Date().toISOString().slice(0, 10)}
+                          onChange={(e) => setInterviewFormDate(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '10px 12px',
+                            borderRadius: '8px',
+                            border: '1.5px solid #CBD5E1',
+                            fontSize: '13px',
+                            fontWeight: 700,
+                            color: '#0F172A',
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 800, color: '#334155', marginBottom: '6px' }}>
+                          ⏰ Interview Time *
+                        </label>
+                        <input
+                          type="time"
+                          value={interviewFormTime}
+                          onChange={(e) => setInterviewFormTime(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '10px 12px',
+                            borderRadius: '8px',
+                            border: '1.5px solid #CBD5E1',
+                            fontSize: '13px',
+                            fontWeight: 700,
+                            color: '#0F172A',
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Duration Picker */}
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 800, color: '#334155', marginBottom: '6px' }}>
+                        ⏱ Duration (Quick 10–15 Minute Appointment)
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {['10 Minutes', '15 Minutes (Standard)', '30 Minutes', '45 Minutes'].map((dur) => (
+                          <button
+                            key={dur}
+                            type="button"
+                            onClick={() => setInterviewFormDuration(dur)}
+                            style={{
+                              padding: '8px 14px',
+                              borderRadius: '8px',
+                              border: interviewFormDuration === dur ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                              background: interviewFormDuration === dur ? '#F0FDFA' : '#FFFFFF',
+                              color: interviewFormDuration === dur ? '#0F766E' : '#475569',
+                              fontSize: '12px',
+                              fontWeight: 800,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {dur}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Platform Selector */}
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 800, color: '#334155', marginBottom: '6px' }}>
+                        🌐 Meeting Platform
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {['Google Meet', 'Zoom', 'WhatsApp Video Call', 'Phone Call'].map((plat) => (
+                          <button
+                            key={plat}
+                            type="button"
+                            onClick={() => {
+                              setInterviewFormPlatform(plat);
+                              if (plat === 'Google Meet') {
+                                const cleanRef = (interviewCandidateToSchedule.applicationRef || interviewCandidateToSchedule.id || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(-8) || 'mgr';
+                                setInterviewFormMeetingLink(`https://meet.google.com/getit-mgr-${cleanRef}`);
+                              } else if (plat === 'WhatsApp Video Call') {
+                                setInterviewFormMeetingLink(formatWhatsAppUrl(interviewCandidateToSchedule.phone, interviewCandidateToSchedule.fullName));
+                              } else if (plat === 'Phone Call') {
+                                setInterviewFormMeetingLink(`tel:${String(interviewCandidateToSchedule.phone).replace(/\s+/g, '')}`);
+                              }
+                            }}
+                            style={{
+                              padding: '8px 14px',
+                              borderRadius: '8px',
+                              border: interviewFormPlatform === plat ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                              background: interviewFormPlatform === plat ? '#F0FDFA' : '#FFFFFF',
+                              color: interviewFormPlatform === plat ? '#0F766E' : '#475569',
+                              fontSize: '12px',
+                              fontWeight: 800,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {plat}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Meeting Link input + quick actions */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155' }}>
+                          🔗 Meeting Link / Room Access *
+                        </label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cleanRef = (interviewCandidateToSchedule.applicationRef || interviewCandidateToSchedule.id || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(-8) || 'mgr';
+                              setInterviewFormMeetingLink(`https://meet.google.com/getit-mgr-${cleanRef}`);
+                              setInterviewFormPlatform('Google Meet');
+                            }}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#0F766E',
+                              fontSize: '11px',
+                              fontWeight: 800,
+                              cursor: 'pointer',
+                              textDecoration: 'underline',
+                            }}
+                          >
+                            Auto-Generate Google Meet Link
+                          </button>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        value={interviewFormMeetingLink}
+                        onChange={(e) => setInterviewFormMeetingLink(e.target.value)}
+                        placeholder="https://meet.google.com/... or https://zoom.us/j/..."
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #CBD5E1',
+                          fontSize: '12.5px',
+                          color: '#0F172A',
+                          boxSizing: 'border-box',
+                          fontFamily: 'monospace',
+                        }}
+                      />
+                    </div>
+
+                    {/* Interview Notes / Agenda */}
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 800, color: '#334155', marginBottom: '6px' }}>
+                        📝 Notes / Interview Agenda (Included in Candidate's Invitation)
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={interviewFormNotes}
+                        onChange={(e) => setInterviewFormNotes(e.target.value)}
+                        placeholder="e.g. 1-on-1 Leadership Screening & Regional Management Strategy Review"
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #CBD5E1',
+                          fontSize: '12.5px',
+                          color: '#0F172A',
+                          boxSizing: 'border-box',
+                          resize: 'vertical',
+                        }}
+                      />
+                    </div>
+
+                    {/* Automated Dispatch Checklist Banner */}
+                    <div
+                      style={{
+                        padding: '14px 16px',
+                        borderRadius: '10px',
+                        background: '#F0FDF4',
+                        border: '1px solid #BBF7D0',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                        fontSize: '12px',
+                      }}
+                    >
+                      <div style={{ fontWeight: 800, color: '#166534' }}>
+                        ⚡ Automated Dispatch When You Confirm:
+                      </div>
+                      <div style={{ color: '#15803D' }}>
+                        ✓ <strong>Direct Email:</strong> Sends branded appointment card with join button to <strong>{interviewCandidateToSchedule.email}</strong> via Resend API
+                      </div>
+                      {interviewCandidateToSchedule.phone && (
+                        <div style={{ color: '#15803D' }}>
+                          ✓ <strong>SMS Notification:</strong> Sends appointment SMS alert to <strong>{interviewCandidateToSchedule.phone}</strong> via Termii API
+                        </div>
+                      )}
+                      <div style={{ color: '#15803D' }}>
+                        ✓ <strong>Interviewer Calendar Alert:</strong> Instant 1-click Google Calendar & .ICS alarm for your phone/laptop
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      padding: '16px 24px',
+                      background: '#F8FAFC',
+                      borderTop: '1px solid #E2E8F0',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setInterviewCandidateToSchedule(null)}
+                      style={{
+                        padding: '10px 18px',
+                        borderRadius: '8px',
+                        background: 'transparent',
+                        border: '1px solid #CBD5E1',
+                        color: '#64748B',
+                        fontSize: '12.5px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isDispatchingInterview || !interviewFormDate || !interviewFormTime}
+                      onClick={handleConfirmInterviewAndShortlist}
+                      style={{
+                        padding: '11px 24px',
+                        borderRadius: '10px',
+                        background: isDispatchingInterview ? '#94A3B8' : '#0F766E',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        fontSize: '13px',
+                        fontWeight: 900,
+                        cursor: isDispatchingInterview ? 'not-allowed' : 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        boxShadow: '0 4px 14px rgba(15, 118, 110, 0.35)',
+                      }}
+                    >
+                      {isDispatchingInterview ? (
+                        <>
+                          <RefreshCw size={15} className="animate-spin" />
+                          <span>Dispatching Invites via Resend & Termii...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>⭐ Confirm Shortlist & Dispatch Interview Invites</span>
+                          <ArrowRight size={14} />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
