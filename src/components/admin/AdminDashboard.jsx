@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { exportApplicantFullPdf, exportApplicantTextSummary } from '../../utils/applicantExport';
 import {
   LayoutGrid,
   Database,
@@ -1715,6 +1716,21 @@ export default function AdminDashboard() {
   const [interviewFormNotes, setInterviewFormNotes] = useState('1-on-1 Leadership Screening & Regional Management Review (10-Minute Appointment)');
   const [isDispatchingInterview, setIsDispatchingInterview] = useState(false);
   const [interviewScheduleSuccess, setInterviewScheduleSuccess] = useState(null);
+  const [exportingApplicantId, setExportingApplicantId] = useState(null);
+
+  const handleExportFullApplicantPdf = async (app) => {
+    if (!app) return;
+    const key = app.id || app.applicationRef || app.fullName || 'export';
+    setExportingApplicantId(key);
+    try {
+      await exportApplicantFullPdf(app);
+    } catch (err) {
+      console.error('Failed to export full applicant PDF:', err);
+      alert(`Could not export applicant file: ${err?.message || err}`);
+    } finally {
+      setExportingApplicantId(null);
+    }
+  };
 
   useEffect(() => {
     saveLocalJson('getit_management_applications_v1', managementApplications);
@@ -1792,21 +1808,17 @@ export default function AdminDashboard() {
         });
       }
 
-      if (combinedRows.length > 0) {
-        setManagementApplications((prev) => {
-          const byId = new Map();
-          prev.forEach((item) => {
-            if (item?.id) byId.set(item.id, item);
-          });
-          combinedRows.forEach((item) => {
-            if (!item?.id) return;
-            const existing = byId.get(item.id);
-            byId.set(item.id, existing ? { ...existing, ...item, status: item.status || existing.status } : item);
-          });
-          return Array.from(byId.values()).sort(
-            (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
-          );
+      if (!logsRes.error || !enrollRes.error) {
+        const byId = new Map();
+        combinedRows.forEach((item) => {
+          if (!item?.id) return;
+          const existing = byId.get(item.id);
+          byId.set(item.id, existing ? { ...existing, ...item, status: item.status || existing.status } : item);
         });
+        const sorted = Array.from(byId.values()).sort(
+          (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
+        );
+        setManagementApplications(sorted);
       }
     } catch (err) {
       console.warn('Management applications fetch notice:', err);
@@ -5684,23 +5696,52 @@ export default function AdminDashboard() {
                       <span style={{ fontSize: '11px', fontWeight: 700, color: '#0F766E' }}>
                         📄 {app.cvFileName || 'CV.pdf'}
                       </span>
-                      {app.cvDataUrl && (
-                        <a
-                          href={app.cvDataUrl}
-                          download={app.cvFileName || `${app.fullName.replace(/\s+/g, '_')}_CV.pdf`}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleExportFullApplicantPdf(app)}
+                          disabled={exportingApplicantId === (app.id || app.applicationRef || app.fullName || 'export')}
                           style={{
                             fontSize: '11px',
                             fontWeight: 800,
-                            color: '#0284C7',
-                            textDecoration: 'none',
+                            color: '#FFFFFF',
+                            background: '#0F766E',
+                            border: 'none',
                             padding: '4px 10px',
                             borderRadius: '6px',
-                            background: '#E0F2FE',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            opacity: exportingApplicantId === (app.id || app.applicationRef || app.fullName || 'export') ? 0.7 : 1,
                           }}
+                          title="Export all 21 application answers + attached CV merged into a single PDF file"
                         >
-                          ⬇ Download CV
-                        </a>
-                      )}
+                          <Download size={11} />
+                          <span>
+                            {exportingApplicantId === (app.id || app.applicationRef || app.fullName || 'export')
+                              ? 'Exporting...'
+                              : 'Export Full PDF (Data + CV)'}
+                          </span>
+                        </button>
+                        {app.cvDataUrl && (
+                          <a
+                            href={app.cvDataUrl}
+                            download={app.cvFileName || `${app.fullName.replace(/\s+/g, '_')}_CV.pdf`}
+                            style={{
+                              fontSize: '11px',
+                              fontWeight: 800,
+                              color: '#0284C7',
+                              textDecoration: 'none',
+                              padding: '4px 10px',
+                              borderRadius: '6px',
+                              background: '#E0F2FE',
+                            }}
+                          >
+                            ⬇ CV Only
+                          </a>
+                        )}
+                      </div>
                     </div>
 
                     {/* Interview Appointment Scheduled Banner (if scheduled) */}
@@ -5967,6 +6008,54 @@ export default function AdminDashboard() {
                         <ExternalLink size={10} />
                       </a>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => handleExportFullApplicantPdf(selectedMgmtAppDossier)}
+                      disabled={exportingApplicantId === (selectedMgmtAppDossier.id || selectedMgmtAppDossier.applicationRef || selectedMgmtAppDossier.fullName || 'export')}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        background: '#10B981',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        fontSize: '12px',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      }}
+                      title="Export all application details + attached CV merged into one PDF file"
+                    >
+                      <Download size={13} />
+                      <span>
+                        {exportingApplicantId === (selectedMgmtAppDossier.id || selectedMgmtAppDossier.applicationRef || selectedMgmtAppDossier.fullName || 'export')
+                          ? 'Exporting PDF...'
+                          : 'Export Full PDF (Data + CV)'}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => exportApplicantTextSummary(selectedMgmtAppDossier)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        padding: '6px 11px',
+                        borderRadius: '8px',
+                        background: 'rgba(255,255,255,0.16)',
+                        color: '#FFFFFF',
+                        border: '1px solid rgba(255,255,255,0.35)',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                      title="Export all 21 application answers as a plain text (.txt) file"
+                    >
+                      <Download size={12} />
+                      <span>Export .TXT</span>
+                    </button>
                   </div>
                 </div>
                 <button

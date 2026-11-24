@@ -1460,6 +1460,20 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * `handleSwitchInterviewWindow(newStart, newEnd)` immediately updates available slots, calculates candidate bookings, and automatically selects the next free slot.
      * The Shortlist Modal's slot dropdown `<select>` and visual timeline grid dynamically re-render based on the chosen window, displaying live slot counts (e.g., 6 slots, 24 slots, etc.) and availability status.
 
+87. 1-Click Full Candidate Dossier + Attached CV Export (`src/utils/applicantExport.js` & `AdminDashboard.jsx`):
+   - 📦 Combined PDF Export (`exportApplicantFullPdf` via `pdf-lib`):
+     * Generates a single executive-styled A4 PDF (`GETIT_Full_Dossier_and_CV_<Name>_<Ref>.pdf`) containing:
+       - Branded GETIT Executive Staff Recruitment header (Name, Application Ref, Status, Submitted Date).
+       - Scheduled 1-on-1 Interview box (Date, Time Slot, Duration, Platform, Meeting Link, Notes) if scheduled.
+       - All 21 Management Questionnaire questions & full answers across Sections 1–5 (Personal Info, Leadership Experience, Practical Leadership Scenarios, Availability & Commitment, Supporting Documents & Referee).
+       - Automatic CV merging: appends EVERY page of the candidate's uploaded PDF CV directly into the same PDF file (also supports PNG/JPG image CVs embedded cleanly on full pages, and plain-text CVs).
+     * Built-in WinAnsi text sanitizer (`sanitizePdfText`) and automatic multi-page word wrapping so special characters or long answers never break export.
+   - 📝 Plain Text Summary Export (`exportApplicantTextSummary`):
+     * Downloads all candidate details and 21 answers cleanly formatted as a `.txt` file.
+   - 📍 UI Placement:
+     * Added `Export Full PDF (Data + CV)` button directly on every Candidate Card in Staff Enrollment.
+     * Added `Export Full PDF (Data + CV)` and `Export .TXT` buttons in the Full Candidate Dossier Modal header.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
