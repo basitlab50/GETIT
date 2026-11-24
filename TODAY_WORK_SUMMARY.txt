@@ -1445,6 +1445,21 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Fixed `isSlotBooked` collision bug where range strings (`12:00 PM – 12:10 PM`) caused `12:10` to falsely match the end time of previous slots. Replaced string matching with strict `parseTimeToMinutes` calculation and `normalizeDateStr`.
      * Upgraded the interactive 24-Slot Timeline grid: each pill clearly reflects selection state, and clicking any slot immediately updates the time, selected slot, and dropdown in sync.
 
+86. Fully Flexible Daily Interview Working Hours Window (Presets & Custom Time Range):
+   - 🕒 Dynamic Interview Hours Configuration:
+     * Added `interviewWindowStartTime` and `interviewWindowEndTime` with localStorage persistence across browser sessions.
+     * Admin can easily set any working window for interviews (e.g. 1 PM to 2 PM, 8 AM to 12 PM, 12 PM to 4 PM, 9 AM to 5 PM, or custom hours).
+     * Instant Window Presets available on both the Staff Enrollment master bar and inside the 1-on-1 Interview Scheduling Modal:
+       - `[ 1 PM – 2 PM (1 Hr) ]` -> Generates 6 ten-minute slots.
+       - `[ 8 AM – 12 PM (Morning) ]` -> Generates 24 ten-minute slots.
+       - `[ 12 PM – 4 PM (Afternoon) ]` -> Generates 24 ten-minute slots.
+       - `[ 9 AM – 5 PM (Full Day) ]` -> Generates 48 ten-minute slots.
+     * Custom Window: `From: [ time picker ]` `To: [ time picker ]` enables setting any arbitrary time window with zero restrictions.
+   - ⚡ Dynamic Auto-Sequenced 10-Minute Slicing:
+     * `generateDailyInterviewSlots(start, end, 10)` dynamically calculates and slices the chosen window into clean 10-minute slots.
+     * `handleSwitchInterviewWindow(newStart, newEnd)` immediately updates available slots, calculates candidate bookings, and automatically selects the next free slot.
+     * The Shortlist Modal's slot dropdown `<select>` and visual timeline grid dynamically re-render based on the chosen window, displaying live slot counts (e.g., 6 slots, 24 slots, etc.) and availability status.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

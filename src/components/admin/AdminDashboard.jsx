@@ -1685,6 +1685,20 @@ export default function AdminDashboard() {
       return '2026-12-01';
     }
   });
+  const [interviewWindowStartTime, setInterviewWindowStartTime] = useState(() => {
+    try {
+      return localStorage.getItem('getit_interview_window_start') || '12:00';
+    } catch {
+      return '12:00';
+    }
+  });
+  const [interviewWindowEndTime, setInterviewWindowEndTime] = useState(() => {
+    try {
+      return localStorage.getItem('getit_interview_window_end') || '16:00';
+    } catch {
+      return '16:00';
+    }
+  });
   const [selectedInterviewSlot, setSelectedInterviewSlot] = useState(null);
   const [showBatchSlotGridDrawer, setShowBatchSlotGridDrawer] = useState(false);
   const [interviewFormDate, setInterviewFormDate] = useState(() => {
@@ -4573,15 +4587,24 @@ export default function AdminDashboard() {
   };
 
   // =========================================================================
-  // 10-MINUTE INTERVIEW AUTO-SCHEDULER & SLOT ALLOCATION ENGINE
-  // 12:00 PM – 04:00 PM (10-minute slots = 24 candidate interviews per day)
+  // 10-MINUTE INTERVIEW AUTO-SCHEDULER & FLEXIBLE WINDOW ALLOCATION ENGINE
+  // Dynamic window (e.g. 1 PM - 2 PM, 8 AM - 12 PM, 12 PM - 4 PM, etc.)
   // =========================================================================
-  const generateDailyInterviewSlots = (startHour = 12, endHour = 16, durationMinutes = 10) => {
+  const generateDailyInterviewSlots = (
+    windowStart = interviewWindowStartTime || '12:00',
+    windowEnd = interviewWindowEndTime || '16:00',
+    durationMinutes = 10
+  ) => {
     const slots = [];
-    let current = startHour * 60;
-    const end = endHour * 60;
+    const startMins = parseTimeToMinutes(windowStart) ?? 720;
+    let endMins = parseTimeToMinutes(windowEnd) ?? 960;
+    if (endMins <= startMins) {
+      endMins = startMins + 60; // minimum 1 hour window safety
+    }
 
-    while (current + durationMinutes <= end) {
+    let current = startMins;
+
+    while (current + durationMinutes <= endMins) {
       const startH = Math.floor(current / 60);
       const startM = current % 60;
       const endH = Math.floor((current + durationMinutes) / 60);
@@ -4628,6 +4651,16 @@ export default function AdminDashboard() {
     return h * 60 + m;
   };
 
+  const formatMilitaryTo12H = (timeStr) => {
+    const mins = parseTimeToMinutes(timeStr);
+    if (mins === null) return timeStr || '';
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    const period = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return m === 0 ? `${h12} ${period}` : `${h12}:${String(m).padStart(2, '0')} ${period}`;
+  };
+
   const normalizeDateStr = (d) => {
     if (!d) return '';
     const str = String(d).trim();
@@ -4661,8 +4694,14 @@ export default function AdminDashboard() {
     return null;
   };
 
-  const getNextAvailableInterviewSlot = (date, applications, ignoreCandidateId = null) => {
-    const allSlots = generateDailyInterviewSlots(12, 16, 10);
+  const getNextAvailableInterviewSlot = (
+    date,
+    applications,
+    ignoreCandidateId = null,
+    windowStart = interviewWindowStartTime || '12:00',
+    windowEnd = interviewWindowEndTime || '16:00'
+  ) => {
+    const allSlots = generateDailyInterviewSlots(windowStart, windowEnd, 10);
     for (const slot of allSlots) {
       const bookedBy = isSlotBooked(slot, date, applications, ignoreCandidateId);
       if (!bookedBy) {
@@ -4670,6 +4709,33 @@ export default function AdminDashboard() {
       }
     }
     return null;
+  };
+
+  const handleSwitchInterviewWindow = (newStart, newEnd) => {
+    const s = newStart || '12:00';
+    const e = newEnd || '16:00';
+    setInterviewWindowStartTime(s);
+    setInterviewWindowEndTime(e);
+    try {
+      localStorage.setItem('getit_interview_window_start', s);
+      localStorage.setItem('getit_interview_window_end', e);
+    } catch {}
+
+    const dailySlots = generateDailyInterviewSlots(s, e, 10);
+    const nextSlot = getNextAvailableInterviewSlot(
+      interviewFormDate,
+      managementApplications,
+      interviewCandidateToSchedule?.id,
+      s,
+      e
+    );
+    if (nextSlot) {
+      setSelectedInterviewSlot(nextSlot);
+      setInterviewFormTime(nextSlot.rangeLabel);
+    } else if (dailySlots.length > 0) {
+      setSelectedInterviewSlot(dailySlots[0]);
+      setInterviewFormTime(dailySlots[0].rangeLabel);
+    }
   };
 
   const handleInitiateShortlist = (app, overrideDate = null) => {
@@ -4688,8 +4754,8 @@ export default function AdminDashboard() {
     setInterviewFormDate(targetDate);
     setActiveInterviewBatchDate(targetDate);
 
-    // Auto-Sequence 10-Minute Slot
-    const dailySlots = generateDailyInterviewSlots(12, 16, 10);
+    // Auto-Sequence 10-Minute Slot in active window
+    const dailySlots = generateDailyInterviewSlots(interviewWindowStartTime, interviewWindowEndTime, 10);
     let chosenSlot = null;
 
     if (app.interviewSchedule?.date === targetDate && (app.interviewSchedule?.startTime || app.interviewSchedule?.time)) {
@@ -4697,7 +4763,13 @@ export default function AdminDashboard() {
       chosenSlot = dailySlots.find((s) => parseTimeToMinutes(s.startTime) === appMins);
     }
     if (!chosenSlot) {
-      chosenSlot = getNextAvailableInterviewSlot(targetDate, managementApplications, app.id);
+      chosenSlot = getNextAvailableInterviewSlot(
+        targetDate,
+        managementApplications,
+        app.id,
+        interviewWindowStartTime,
+        interviewWindowEndTime
+      );
     }
     if (!chosenSlot && dailySlots.length > 0) {
       chosenSlot = dailySlots[0];
@@ -4722,8 +4794,14 @@ export default function AdminDashboard() {
       localStorage.setItem('getit_active_interview_batch_date', newDate);
     } catch {}
 
-    const dailySlots = generateDailyInterviewSlots(12, 16, 10);
-    const nextSlot = getNextAvailableInterviewSlot(newDate, managementApplications, interviewCandidateToSchedule?.id);
+    const dailySlots = generateDailyInterviewSlots(interviewWindowStartTime, interviewWindowEndTime, 10);
+    const nextSlot = getNextAvailableInterviewSlot(
+      newDate,
+      managementApplications,
+      interviewCandidateToSchedule?.id,
+      interviewWindowStartTime,
+      interviewWindowEndTime
+    );
     if (nextSlot) {
       setSelectedInterviewSlot(nextSlot);
       setInterviewFormTime(nextSlot.rangeLabel);
@@ -5109,15 +5187,16 @@ export default function AdminDashboard() {
             boxShadow: '0 2px 8px rgba(13, 148, 136, 0.08)',
           }}
         >
+          {/* Row 1: Flexible Date Selector */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '22px' }}>📅</span>
               <div>
                 <div style={{ fontSize: '11px', fontWeight: 900, color: '#0F766E', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
-                  1-on-1 Interview Schedule &amp; Auto-Sequencer (12:00 PM – 4:00 PM • 10 Mins Each)
+                  Interview Batch Date &amp; Auto-Sequencer
                 </div>
                 <div style={{ fontSize: '15px', fontWeight: 900, color: '#042F2E' }}>
-                  Active Batch Date: {activeInterviewBatchDate === '2026-12-01' ? 'Tuesday, 1st of December 2026' : activeInterviewBatchDate}
+                  Selected Date: {activeInterviewBatchDate === '2026-12-01' ? 'Tuesday, 1st of December 2026' : activeInterviewBatchDate}
                 </div>
               </div>
             </div>
@@ -5186,8 +5265,28 @@ export default function AdminDashboard() {
                 Tomorrow
               </button>
 
+              <button
+                type="button"
+                onClick={() => {
+                  const today = new Date();
+                  handleSwitchInterviewDate(today.toISOString().slice(0, 10));
+                }}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid #CBD5E1',
+                  background: '#FFFFFF',
+                  color: '#334155',
+                  fontSize: '11.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Today
+              </button>
+
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#FFFFFF', padding: '2px 8px', borderRadius: '8px', border: '1.5px solid #0D9488' }}>
-                <span style={{ fontSize: '11px', fontWeight: 800, color: '#0F766E' }}>Pick Date:</span>
+                <span style={{ fontSize: '11px', fontWeight: 800, color: '#0F766E' }}>Calendar:</span>
                 <input
                   type="date"
                   value={activeInterviewBatchDate || ''}
@@ -5201,7 +5300,7 @@ export default function AdminDashboard() {
                     background: 'transparent',
                     cursor: 'pointer',
                   }}
-                  title="Select any custom interview date"
+                  title="Select any custom interview date freely"
                 />
               </div>
 
@@ -5219,41 +5318,109 @@ export default function AdminDashboard() {
                   cursor: 'pointer',
                 }}
               >
-                {showBatchSlotGridDrawer ? '▲ Hide 24-Slot Schedule' : '▼ View Today\'s 24-Slot Schedule'}
+                {showBatchSlotGridDrawer ? '▲ Hide Schedule Grid' : '▼ View Schedule Grid'}
               </button>
+            </div>
+          </div>
+
+          {/* Row 2: Flexible Interview Time Window (1 PM - 2 PM, 8 AM - 12 PM, etc.) */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', paddingTop: '6px', borderTop: '1px dashed #99F6E4' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '11.5px', fontWeight: 900, color: '#0F766E', textTransform: 'uppercase' }}>
+                🕒 Daily Interview Window:
+              </span>
+              {[
+                { label: '1 PM – 2 PM (1 Hr)', start: '13:00', end: '14:00' },
+                { label: '8 AM – 12 PM (Morning)', start: '08:00', end: '12:00' },
+                { label: '12 PM – 4 PM (Afternoon)', start: '12:00', end: '16:00' },
+                { label: '9 AM – 5 PM (Full Day)', start: '09:00', end: '17:00' },
+              ].map((win) => {
+                const isActive = interviewWindowStartTime === win.start && interviewWindowEndTime === win.end;
+                return (
+                  <button
+                    key={win.label}
+                    type="button"
+                    onClick={() => handleSwitchInterviewWindow(win.start, win.end)}
+                    style={{
+                      padding: '5px 12px',
+                      borderRadius: '6px',
+                      border: isActive ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                      background: isActive ? '#0F766E' : '#FFFFFF',
+                      color: isActive ? '#FFFFFF' : '#334155',
+                      fontSize: '11px',
+                      fontWeight: isActive ? 800 : 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {win.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', fontWeight: 700, color: '#042F2E' }}>
+              <span>Custom Window:</span>
+              <span style={{ color: '#64748B' }}>From:</span>
+              <input
+                type="time"
+                value={interviewWindowStartTime}
+                onChange={(e) => handleSwitchInterviewWindow(e.target.value, interviewWindowEndTime)}
+                style={{
+                  padding: '3px 6px',
+                  borderRadius: '6px',
+                  border: '1px solid #CBD5E1',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: '#0F172A',
+                }}
+              />
+              <span style={{ color: '#64748B' }}>To:</span>
+              <input
+                type="time"
+                value={interviewWindowEndTime}
+                onChange={(e) => handleSwitchInterviewWindow(interviewWindowStartTime, e.target.value)}
+                style={{
+                  padding: '3px 6px',
+                  borderRadius: '6px',
+                  border: '1px solid #CBD5E1',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: '#0F172A',
+                }}
+              />
             </div>
           </div>
 
           {/* Slot Availability Counter & Next Slot Notice */}
           {(() => {
-            const dailySlots = generateDailyInterviewSlots(12, 16, 10);
+            const dailySlots = generateDailyInterviewSlots(interviewWindowStartTime, interviewWindowEndTime, 10);
             const bookedCount = dailySlots.filter((s) => isSlotBooked(s, activeInterviewBatchDate, managementApplications)).length;
             const availableCount = dailySlots.length - bookedCount;
-            const nextSlot = getNextAvailableInterviewSlot(activeInterviewBatchDate, managementApplications);
+            const nextSlot = getNextAvailableInterviewSlot(activeInterviewBatchDate, managementApplications, null, interviewWindowStartTime, interviewWindowEndTime);
 
             return (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', fontSize: '12px', color: '#042F2E', fontWeight: 700 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <span style={{ color: '#059669', background: '#DCFCE7', padding: '2px 8px', borderRadius: '6px' }}>
-                      🟢 {availableCount} of 24 Slots Available
+                      🟢 {availableCount} of {dailySlots.length} Slots Available ({dailySlots[0]?.startLabel || ''} – {dailySlots[dailySlots.length - 1]?.endLabel || ''})
                     </span>
                     <span style={{ color: '#B45309', background: '#FEF3C7', padding: '2px 8px', borderRadius: '6px' }}>
                       🔴 {bookedCount} Scheduled
                     </span>
                     <span style={{ color: '#0F766E', background: '#CCFBF1', padding: '2px 8px', borderRadius: '6px' }}>
-                      ⚡ Next Auto-Slot: <strong>{nextSlot ? nextSlot.rangeLabel : 'All 24 Booked on this date'}</strong>
+                      ⚡ Next Auto-Slot: <strong>{nextSlot ? nextSlot.rangeLabel : 'All Booked in Window'}</strong>
                     </span>
                   </div>
                   <span style={{ fontSize: '11px', color: '#0F766E', fontWeight: 800 }}>
-                    Shortlisting a candidate auto-assigns the next 10-minute slot automatically
+                    10-Minute Slots auto-sliced inside your chosen window
                   </span>
                 </div>
 
                 {showBatchSlotGridDrawer && (
                   <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #99F6E4' }}>
                     <div style={{ fontSize: '11px', fontWeight: 800, color: '#0F766E', marginBottom: '8px', textTransform: 'uppercase' }}>
-                      Full 24-Slot Schedule for {activeInterviewBatchDate} (12:00 PM – 4:00 PM):
+                      Schedule for {activeInterviewBatchDate} ({dailySlots[0]?.startLabel || ''} – {dailySlots[dailySlots.length - 1]?.endLabel || ''} • {dailySlots.length} Slots Total):
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: '8px' }}>
                       {dailySlots.map((slot) => {
@@ -6662,6 +6829,83 @@ export default function AdminDashboard() {
                       </div>
                     </div>
 
+                    {/* Flexible Daily Interview Time Window Selector */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155' }}>
+                          🕒 Interview Working Hours Window *
+                        </label>
+                        <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#0F766E' }}>
+                          Active: {formatMilitaryTo12H(interviewWindowStartTime)} – {formatMilitaryTo12H(interviewWindowEndTime)}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '8px' }}>
+                        {[
+                          { label: '1 PM – 2 PM (1 Hr)', start: '13:00', end: '14:00' },
+                          { label: '8 AM – 12 PM (Morning)', start: '08:00', end: '12:00' },
+                          { label: '12 PM – 4 PM (Afternoon)', start: '12:00', end: '16:00' },
+                          { label: '9 AM – 5 PM (Full Day)', start: '09:00', end: '17:00' },
+                        ].map((win) => {
+                          const isActive = interviewWindowStartTime === win.start && interviewWindowEndTime === win.end;
+                          return (
+                            <button
+                              key={win.label}
+                              type="button"
+                              onClick={() => handleSwitchInterviewWindow(win.start, win.end)}
+                              style={{
+                                padding: '6px 12px',
+                                borderRadius: '7px',
+                                border: isActive ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                                background: isActive ? '#0F766E' : '#FFFFFF',
+                                color: isActive ? '#FFFFFF' : '#334155',
+                                fontSize: '11.5px',
+                                fontWeight: isActive ? 800 : 600,
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              {win.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 700, color: '#042F2E', background: '#F0FDFA', padding: '6px 12px', borderRadius: '8px', border: '1px solid #99F6E4' }}>
+                        <span>Custom Window:</span>
+                        <span style={{ color: '#0F766E', fontWeight: 800 }}>From:</span>
+                        <input
+                          type="time"
+                          value={interviewWindowStartTime}
+                          onChange={(e) => handleSwitchInterviewWindow(e.target.value, interviewWindowEndTime)}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: '1.5px solid #0D9488',
+                            fontSize: '12px',
+                            fontWeight: 800,
+                            color: '#0F172A',
+                            background: '#FFFFFF',
+                          }}
+                        />
+                        <span style={{ color: '#0F766E', fontWeight: 800 }}>To:</span>
+                        <input
+                          type="time"
+                          value={interviewWindowEndTime}
+                          onChange={(e) => handleSwitchInterviewWindow(interviewWindowStartTime, e.target.value)}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: '1.5px solid #0D9488',
+                            fontSize: '12px',
+                            fontWeight: 800,
+                            color: '#0F172A',
+                            background: '#FFFFFF',
+                          }}
+                        />
+                      </div>
+                    </div>
+
                     {/* Auto-Sequenced 10-Minute Slot Notification Card */}
                     <div
                       style={{
@@ -6679,7 +6923,7 @@ export default function AdminDashboard() {
                     >
                       <div>
                         <div style={{ fontSize: '11px', fontWeight: 900, color: '#047857', letterSpacing: '0.6px', textTransform: 'uppercase' }}>
-                          ⚡ Scheduled 10-Minute Slot (12:00 PM – 4:00 PM)
+                          ⚡ Scheduled 10-Minute Slot ({formatMilitaryTo12H(interviewWindowStartTime)} – {formatMilitaryTo12H(interviewWindowEndTime)})
                         </div>
                         <div style={{ fontSize: '20px', fontWeight: 900, color: '#064E3B', margin: '3px 0' }}>
                           ⏰ {selectedInterviewSlot ? selectedInterviewSlot.rangeLabel : interviewFormTime}
@@ -6706,19 +6950,24 @@ export default function AdminDashboard() {
 
                     {/* Direct Time Dropdown Selector */}
                     <div>
-                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 800, color: '#0F172A', marginBottom: '6px' }}>
-                        ⏰ Select 10-Minute Time Slot from Dropdown *
-                      </label>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <label style={{ fontSize: '12.5px', fontWeight: 800, color: '#0F172A' }}>
+                          ⏰ Select 10-Minute Time Slot from Dropdown *
+                        </label>
+                        <span style={{ fontSize: '11px', color: '#64748B' }}>
+                          {generateDailyInterviewSlots(interviewWindowStartTime, interviewWindowEndTime, 10).length} slots available in {formatMilitaryTo12H(interviewWindowStartTime)} – {formatMilitaryTo12H(interviewWindowEndTime)}
+                        </span>
+                      </div>
                       <select
                         value={
                           selectedInterviewSlot
                             ? selectedInterviewSlot.startTime
                             : (parseTimeToMinutes(interviewFormTime) !== null
                                 ? `${String(Math.floor(parseTimeToMinutes(interviewFormTime) / 60)).padStart(2, '0')}:${String(parseTimeToMinutes(interviewFormTime) % 60).padStart(2, '0')}`
-                                : '12:00')
+                                : (interviewWindowStartTime || '12:00'))
                         }
                         onChange={(e) => {
-                          const dailySlots = generateDailyInterviewSlots(12, 16, 10);
+                          const dailySlots = generateDailyInterviewSlots(interviewWindowStartTime, interviewWindowEndTime, 10);
                           const found = dailySlots.find((s) => s.startTime === e.target.value);
                           if (found) handleSelectInterviewSlot(found);
                         }}
@@ -6735,7 +6984,7 @@ export default function AdminDashboard() {
                           boxSizing: 'border-box',
                         }}
                       >
-                        {generateDailyInterviewSlots(12, 16, 10).map((slot) => {
+                        {generateDailyInterviewSlots(interviewWindowStartTime, interviewWindowEndTime, 10).map((slot) => {
                           const bookedApp = isSlotBooked(slot, interviewFormDate, managementApplications, interviewCandidateToSchedule?.id);
                           return (
                             <option key={slot.id} value={slot.startTime}>
@@ -6746,24 +6995,24 @@ export default function AdminDashboard() {
                       </select>
                     </div>
 
-                    {/* Visual 24-Slot Schedule Timeline for selected date */}
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155' }}>
-                          🗓️ Or Click Any Slot in the 24-Slot Timeline:
-                        </label>
-                        <span style={{ fontSize: '11px', color: '#64748B' }}>
-                          Click any slot below to assign it immediately
-                        </span>
-                      </div>
+                    {/* Visual Schedule Timeline for selected date & window */}
+                    {(() => {
+                      const dailySlots = generateDailyInterviewSlots(interviewWindowStartTime, interviewWindowEndTime, 10);
+                      const currentMins = selectedInterviewSlot
+                        ? parseTimeToMinutes(selectedInterviewSlot.startTime)
+                        : parseTimeToMinutes(interviewFormTime);
 
-                      {(() => {
-                        const dailySlots = generateDailyInterviewSlots(12, 16, 10);
-                        const currentMins = selectedInterviewSlot
-                          ? parseTimeToMinutes(selectedInterviewSlot.startTime)
-                          : parseTimeToMinutes(interviewFormTime);
+                      return (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155' }}>
+                              🗓️ Or Click Any Slot in the {dailySlots.length}-Slot Timeline:
+                            </label>
+                            <span style={{ fontSize: '11px', color: '#64748B' }}>
+                              Click any slot below to assign it immediately
+                            </span>
+                          </div>
 
-                        return (
                           <div
                             style={{
                               display: 'grid',
@@ -6835,9 +7084,9 @@ export default function AdminDashboard() {
                               );
                             })}
                           </div>
-                        );
-                      })()}
-                    </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Platform Selector */}
                     <div>
