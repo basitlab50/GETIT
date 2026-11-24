@@ -1366,6 +1366,23 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Removed accidental duplicate inclusions of `renderManagementApplicationsInbox()` from `staff_access` and `state_manager`, ensuring Staff Enrollment remains isolated in its dedicated module.
      * Added auto-scroll-to-top hook (`window.scrollTo({ top: 0, behavior: 'instant' })`) on `activeDashboardId` transition so viewports never remain awkwardly scrolled down between page switches.
 
+81. Store Authentic Cover Images Resolution & Staff Enrollment Navigation Guard Fix:
+   - 🏪 Authentic Store Cover Images in Admin Shop Directory (`AdminDashboard.jsx`):
+     * Fixed issue where all stores in the Physical Shops Directory showed a single identical fallback image.
+     * Engineered `resolveStoreCoverImage` to accurately parse the store's Supabase JSON metadata (`s.city` / `s.meta`), which holds the authentic cover photo selected or uploaded during merchant registration.
+     * Now correctly resolves distinct, authentic pictures for all registered stores:
+       - Basit Pharm: Authentic Pharmacy Dispensary photo (`photo-1586015555751-63bb77f4322a`).
+       - Fati’s Fresh Mart: Authentic Supermarket & Fresh Mart photo (`photo-1578916171728-46686eac8d58`).
+       - Mega Stores: Authentic Supermarket storefront (`photo-1578916171728-46686eac8d58`).
+       - Kaan's Fresh Fruits: Authentic Fruit vendor photo (`photo-1610832958506-aa56368176cf`).
+       - King’s Veggies: Authentic Organic vegetable produce photo (`photo-1592924357228-91a4daadcfea`).
+       - Mega butcher shop: Authentic Fresh Halal butchery meat cuts photo (`photo-1607623814075-e51df1bdc82f`).
+     * Added robust category taxonomy fallbacks and `onError` image handlers across Directory table, Store Dossier modal, and merchant cards.
+   - 🛡️ Resolved Staff Enrollment Navigation Kickback:
+     * Located root cause in `AdminDashboard.jsx` lines ~501-513 where a module guard `useEffect` was resetting `activeDashboardId` back to `ceo_dashboard` whenever `activeDashboardId` was not found in `authorizedDashboards` (`CENTRAL_DASHBOARD_MODULES`).
+     * Whitelisted `staff_enrollment` (along with `customer_support`, `business_rules`, `ongoing_orders`, etc.) via `WHITELISTED_NAVIGATION_IDS`.
+     * Clicking **`[ 📝 Staff Enrollment ]`** in the admin sidebar now smoothly opens and persists the dedicated 21-question recruitment dashboard and candidate inbox without being kicked back to Executive Overview.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

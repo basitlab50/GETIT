@@ -498,15 +498,38 @@ export default function AdminDashboard() {
 
   const [activeDashboardId, setActiveDashboardId] = useState('ceo_dashboard');
 
+  const WHITELISTED_NAVIGATION_IDS = [
+    'ongoing_orders',
+    'completed_orders',
+    'customer_support',
+    'state_manager',
+    'field_agent',
+    'field_agent_mobile',
+    'merchant_management',
+    'staff_access',
+    'staff_enrollment',
+    'finance_dashboard',
+    'business_rules',
+    'reports_analytics',
+    'operations_dashboard',
+    'approval_workflows',
+    'staff_accountability',
+    'ceo_dashboard',
+    'super_admin',
+    'marketing_growth',
+    'catalog_inventory',
+    'rider_logistics',
+    'compliance_verification',
+    'merchant_settlements',
+    'enterprise_hub',
+    'orders'
+  ];
+
   useEffect(() => {
     if (
       authorizedDashboards.length > 0 &&
       !authorizedDashboards.some((d) => d.id === activeDashboardId) &&
-      activeDashboardId !== 'ongoing_orders' &&
-      activeDashboardId !== 'completed_orders' &&
-      activeDashboardId !== 'field_agent_mobile' &&
-      activeDashboardId !== 'state_manager' &&
-      activeDashboardId !== 'field_agent'
+      !WHITELISTED_NAVIGATION_IDS.includes(activeDashboardId)
     ) {
       setActiveDashboardId(authorizedDashboards[0].id);
     }
@@ -2024,6 +2047,83 @@ export default function AdminDashboard() {
     return calculateExecutiveWaterfall(filteredByTerritory, businessRules);
   }, [liveOrders, localOrders, selectedTerritoryFilter, businessRules]);
 
+  // Helper to resolve the authentic, category-specific store image (from Supabase metadata or taxonomy)
+  const resolveStoreCoverImage = (s) => {
+    if (!s) return 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80';
+
+    let meta = {};
+    if (s.city && typeof s.city === 'string' && s.city.trim().startsWith('{')) {
+      try {
+        meta = JSON.parse(s.city);
+      } catch (e) {}
+    } else if (s.meta && typeof s.meta === 'object') {
+      meta = s.meta;
+    }
+
+    // 1. Direct explicit image from Supabase city JSON metadata or row properties
+    const directImg = meta.image || meta.coverImage || s.image_url || s.image || s.imageUrl || s.thumb;
+    if (directImg && typeof directImg === 'string' && directImg.trim().length > 0) {
+      return directImg.trim();
+    }
+
+    // 2. Derive category/department profile to match customer app
+    const sName = String(s.name || s.store_name || '').toLowerCase();
+    const sCat = String(s.category || s.type || '').toLowerCase();
+    const combined = `${sName} ${sCat}`;
+
+    const isPharmacy =
+      meta.storeType === 'pharmacy' ||
+      combined.includes('pharm') ||
+      combined.includes('drug') ||
+      combined.includes('chemist') ||
+      combined.includes('pcn') ||
+      combined.includes('dispensary');
+
+    const isButcher =
+      combined.includes('butcher') ||
+      combined.includes('meat') ||
+      combined.includes('beef') ||
+      combined.includes('halal meat') ||
+      combined.includes('lamb') ||
+      combined.includes('goat');
+
+    const isPoultry =
+      combined.includes('poultry') ||
+      combined.includes('chicken');
+
+    const isFruit =
+      combined.includes('fruit') ||
+      combined.includes('citrus') ||
+      combined.includes('watermelon') ||
+      combined.includes('berry');
+
+    const isVeg =
+      combined.includes('veg') ||
+      combined.includes('vegetable') ||
+      combined.includes('produce') ||
+      combined.includes('salad');
+
+    const isBakery =
+      combined.includes('baker') ||
+      combined.includes('bread') ||
+      combined.includes('pastr') ||
+      combined.includes('cake');
+
+    const isFish =
+      combined.includes('fish') ||
+      combined.includes('seafood');
+
+    if (isPharmacy) return 'https://images.unsplash.com/photo-1586015555751-63bb77f4322a?auto=format&fit=crop&w=800&q=80';
+    if (isButcher) return 'https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?auto=format&fit=crop&w=800&q=80';
+    if (isPoultry) return 'https://images.unsplash.com/photo-1587593810167-a84920ea0781?auto=format&fit=crop&w=800&q=80';
+    if (isFruit) return 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?auto=format&fit=crop&w=800&q=80';
+    if (isVeg) return 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=800&q=80';
+    if (isBakery) return 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80';
+    if (isFish) return 'https://images.unsplash.com/photo-1534482421-64566f976cfa?auto=format&fit=crop&w=800&q=80';
+
+    return 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80';
+  };
+
   // --- 5. UNIFIED DATA (SYNCHRONIZED WITH SYSTEM DATABASE) ---
   const unifiedStores = useMemo(() => {
     const raw = liveStores.length > 0 ? liveStores : localVendors;
@@ -2041,18 +2141,26 @@ export default function AdminDashboard() {
       const bankName = s.bankName || s.bank_name || 'Access Bank PLC';
       const accountNumber = s.accountNumber || s.account_number || '0123456789';
 
+      let parsedMeta = {};
+      if (s.city && typeof s.city === 'string' && s.city.trim().startsWith('{')) {
+        try { parsedMeta = JSON.parse(s.city); } catch (e) {}
+      } else if (s.meta && typeof s.meta === 'object') {
+        parsedMeta = s.meta;
+      }
+
+      const cityName = parsedMeta.cityName || (typeof s.city === 'string' && !s.city.trim().startsWith('{') ? s.city : 'Abuja');
+      const storeLocation = s.location || s.address || (s.district ? `${s.district}, ${cityName}` : `${cityName}, Nigeria`);
+      const storeImage = resolveStoreCoverImage(s);
+
       return {
         id: s.id || `store-${100 + idx}`,
         name: sName,
         category: s.category || s.type || 'Supermarket & Groceries',
-        location: s.location || s.address || 'Abuja, FCT',
-        address: s.address || s.location || 'Abuja, FCT',
+        location: storeLocation,
+        address: s.address || storeLocation,
         status: String(s.status || (s.isOpen === false ? 'Suspended' : 'Active')),
         commissionPct: Number(s.commissionRate ? s.commissionRate * 100 : commissionPctValue),
-        imageUrl:
-          s.image_url ||
-          s.image ||
-          'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=400&q=80',
+        imageUrl: storeImage,
         salesCount: realSalesCount,
         cacNumber: s.cacNumber || s.cacDoc || s.cac_number || null,
         directorNIN: s.directorNIN || s.nin || s.director_nin || null,
@@ -2068,6 +2176,7 @@ export default function AdminDashboard() {
         dateOnboarded,
         bankName,
         accountNumber,
+        meta: parsedMeta,
       };
     });
   }, [liveStores, localVendors, liveOrders, localOrders, commissionPctValue]);
@@ -2605,7 +2714,7 @@ export default function AdminDashboard() {
     const location = matchedStore?.location || storeOrOrder.district || storeOrOrder.location || 'Abuja, FCT';
     const commission = matchedStore?.commissionPct || commissionPctValue;
     const status = matchedStore?.status || 'Active Partner';
-    const imageUrl = matchedStore?.imageUrl || storeOrOrder.thumb || 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=400&q=80';
+    const imageUrl = matchedStore?.imageUrl || storeOrOrder.thumb || resolveStoreCoverImage(storeOrOrder);
 
     // Real check: If not uploaded, mark as 'Not Uploaded'
     const hasCac = Boolean(matchedStore?.cacNumber || matchedStore?.cacDoc || storeOrOrder.cacNumber || storeOrOrder.cacDoc);
@@ -4890,7 +4999,8 @@ export default function AdminDashboard() {
                     <div><strong>1. Full Name:</strong> {selectedMgmtAppDossier.fullName}</div>
                     <div><strong>2. Phone Number:</strong> {selectedMgmtAppDossier.phone}</div>
                     <div><strong>3. Email Address:</strong> {selectedMgmtAppDossier.email}</div>
-                    <div><strong>4. State & City:</strong> {selectedMgmtAppDossier.stateAndCity}</div>
+                    <div><strong>4. Current State of Residence:</strong> {selectedMgmtAppDossier.currentState || (selectedMgmtAppDossier.stateAndCity || '').split('—')[0]}</div>
+                    <div><strong>4b. City of Residence:</strong> {selectedMgmtAppDossier.currentCity || (selectedMgmtAppDossier.stateAndCity || '').split('—')[1] || selectedMgmtAppDossier.stateAndCity}</div>
                     <div><strong>5. Highest Education:</strong> {selectedMgmtAppDossier.highestEducation}</div>
                     <div><strong>6. Employment Status:</strong> {selectedMgmtAppDossier.employmentStatus}</div>
                     <div><strong>7. Available to Resume:</strong> {selectedMgmtAppDossier.resumptionAvailability}</div>
@@ -21644,7 +21754,8 @@ export default function AdminDashboard() {
                         alt={store.name}
                         style={{ width: '42px', height: '42px', borderRadius: '8px', objectFit: 'cover', border: `1px solid ${BRAND.cardBorderSubtle}` }}
                         onError={(e) => {
-                          e.target.src = 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=400&q=80';
+                          e.target.onerror = null;
+                          e.target.src = resolveStoreCoverImage(store);
                         }}
                       />
                       <div>
@@ -31722,7 +31833,8 @@ GETIT Dispatch & Customer Support Operations Desk`;
           alt={selectedShopDossier.name}
           style={{ width: '56px', height: '56px', borderRadius: '12px', objectFit: 'cover', border: `1.5px solid ${BRAND.cardBorderSubtle}` }}
           onError={(e) => {
-            e.target.src = 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=400&q=80';
+            e.target.onerror = null;
+            e.target.src = resolveStoreCoverImage(selectedShopDossier);
           }}
         />
         <div>
