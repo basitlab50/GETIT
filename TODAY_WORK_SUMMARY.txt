@@ -1357,6 +1357,15 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Synchronizes directly with the dedicated `public.staff_enrollment` table (schema in `supabase/create_staff_enrollment_table.sql`).
      * Automatically falls back to reading/writing `public.audit_logs` (`action = 'MANAGEMENT_JOB_APPLICATION'`) so applications submitted from `apply.html` appear immediately even if the dedicated SQL table hasn't been executed yet.
 
+80. Workspace Module View Isolation & Scroll Reset Fix:
+   - 🛡️ Scoped Executive Overview Strip to CEO Dashboard Only (`AdminDashboard.jsx`):
+     * Resolved issue where the dark "Executive Overview & Commercial Control Center" table (displaying GMV and high-level amounts) was pinned globally across all workspace views.
+     * Wrapped the Executive Overview strip and quick jump controls strictly inside `activeDashboardId === 'ceo_dashboard'`.
+     * Navigating to any other dashboard (Staff Enrollment, Ongoing Orders, Completed Orders, Customer Care, Regional Managers, Field Agents, Verified Shops, Staff Team) now immediately displays that module's focused interface at the top of the viewport without clutter.
+   - 🧹 Cleaned Duplicate Recruitment Calls & Added Instant Scroll Reset:
+     * Removed accidental duplicate inclusions of `renderManagementApplicationsInbox()` from `staff_access` and `state_manager`, ensuring Staff Enrollment remains isolated in its dedicated module.
+     * Added auto-scroll-to-top hook (`window.scrollTo({ top: 0, behavior: 'instant' })`) on `activeDashboardId` transition so viewports never remain awkwardly scrolled down between page switches.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

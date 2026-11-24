@@ -709,6 +709,12 @@ export default function AdminDashboard() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  }, [activeDashboardId]);
   const [activeRoleMode, setActiveRoleMode] = useState('CEO'); // 'CEO' | 'MANAGER' | 'STAFF' | 'AGENT' | 'FINANCE'
   const [masterVaultModalOpen, setMasterVaultModalOpen] = useState(false);
   const [gatewayConfigModalOpen, setGatewayConfigModalOpen] = useState(false);
@@ -10046,8 +10052,9 @@ export default function AdminDashboard() {
             </div>
           )}
           {/* ================================================================= */}
-          {/* EXECUTIVE OVERVIEW GLOBAL STRIP — PINNED AT TOP OF WORKSPACE     */}
+          {/* EXECUTIVE OVERVIEW GLOBAL STRIP — ONLY ON CEO EXECUTIVE DASHBOARD */}
           {/* ================================================================= */}
+          {activeDashboardId === 'ceo_dashboard' && (
           <div
             style={{
               background: 'linear-gradient(135deg, #14171A 0%, #1E242B 100%)',
@@ -10237,6 +10244,7 @@ export default function AdminDashboard() {
               </div>
             </div>
           </div>
+          )}
 
           {(!isPhoneScreen || activeDashboardId !== 'field_agent_mobile') && (
             <>
@@ -10546,6 +10554,7 @@ export default function AdminDashboard() {
           </div>
 
           {/* Quick Module Jump Strip - Synchronized with 9 Executive Command Pillars */}
+          {activeDashboardId === 'ceo_dashboard' && (
           <div
             style={{
               display: 'flex',
@@ -10611,6 +10620,7 @@ export default function AdminDashboard() {
               );
             })}
           </div>
+          )}
             </>
           )}
 
@@ -16673,9 +16683,6 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* Website Management Position Applications & CV Inbox */}
-              {renderManagementApplicationsInbox()}
-
               {/* Onboard New Staff Collapsible Panel */}
               {showNewStaffModal && (
                 <div style={{ ...whiteCardStyle, background: '#F8FAF9', border: `1.5px solid ${BRAND.cardBorder}` }}>
@@ -19272,9 +19279,6 @@ export default function AdminDashboard() {
             </div>
           </div>
         </div>
-
-        {/* Website Management Position Applications & CV Inbox */}
-        {renderManagementApplicationsInbox()}
 
         {/* Regional Managers Directory Grid */}
         <div style={whiteCardStyle}>
