@@ -1383,6 +1383,19 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Whitelisted `staff_enrollment` (along with `customer_support`, `business_rules`, `ongoing_orders`, etc.) via `WHITELISTED_NAVIGATION_IDS`.
      * Clicking **`[ 📝 Staff Enrollment ]`** in the admin sidebar now smoothly opens and persists the dedicated 21-question recruitment dashboard and candidate inbox without being kicked back to Executive Overview.
 
+82. Staff Enrollment 1-Click WhatsApp Direct Chat & Gmail Compose Action Buttons:
+   - 💬 Automated WhatsApp Deep Linking (`formatWhatsAppUrl` in `AdminDashboard.jsx`):
+     * Intelligently parses Nigerian & international phone numbers (handling `080...` -> `+23480...`, `+234`, spaces, and dashes).
+     * Opens direct WhatsApp Web / Desktop / Mobile chat (`https://wa.me/234XXXXXXXXXX?text=...`) with pre-filled greeting and management recruitment context.
+   - ✉️ Direct Gmail Web Compose Integration (`formatGmailComposeUrl` in `AdminDashboard.jsx`):
+     * Generates 1-click Gmail Web compose URL (`https://mail.google.com/mail/?view=cm&fs=1&to=...`) pre-populating recipient email, professional subject, and tailored candidate evaluation body.
+     * Eliminates copying and pasting email addresses or manually switching windows.
+   - 🎯 Seamless 4-Point UI Placement:
+     1. Candidate Card Action Bar: Added prominent green WhatsApp button, red Gmail button, direct Phone Call link, and Mailto link directly on each applicant's card in the recruitment inbox.
+     2. Dossier Modal Header: Direct WhatsApp & Gmail buttons next to candidate name and location.
+     3. Section 1 (Q2 Phone & Q3 Email): Direct WhatsApp, Call, Gmail, and Mailto action chips alongside contact fields.
+     4. Dossier Action Footer: WhatsApp Chat and Open Gmail buttons placed beside Shortlist and Approve buttons.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

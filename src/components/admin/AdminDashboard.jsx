@@ -4663,6 +4663,45 @@ export default function AdminDashboard() {
     }
   };
 
+  // Helper to format Nigerian & international phone numbers for WhatsApp direct chat
+  const formatWhatsAppUrl = (rawPhone, applicantName = '') => {
+    if (!rawPhone) return '';
+    const cleaned = String(rawPhone).trim();
+    const digitsOnly = cleaned.replace(/\D/g, '');
+    if (!digitsOnly) return '';
+
+    let intlDigits = digitsOnly;
+    if (digitsOnly.startsWith('0') && digitsOnly.length === 11) {
+      intlDigits = '234' + digitsOnly.slice(1);
+    } else if (digitsOnly.startsWith('234')) {
+      intlDigits = digitsOnly;
+    } else if (digitsOnly.length === 10) {
+      intlDigits = '234' + digitsOnly;
+    }
+
+    const greetingName = applicantName ? ` ${applicantName}` : '';
+    const defaultMsg = encodeURIComponent(
+      `Hello${greetingName}, this is GETIT Management Recruitment regarding your application for the Regional Manager role.`
+    );
+
+    return `https://wa.me/${intlDigits}?text=${defaultMsg}`;
+  };
+
+  // Helper to format Gmail Web compose URL with pre-filled candidate details
+  const formatGmailComposeUrl = (email, applicantName = '', applicationRef = '') => {
+    if (!email) return '';
+    const cleanEmail = String(email).trim();
+    const refText = applicationRef ? ` (${applicationRef})` : '';
+    const subject = encodeURIComponent(
+      `GETIT Management Position Application${applicantName ? ` - ${applicantName}` : ''}${refText}`
+    );
+    const greetingName = applicantName ? `Dear ${applicantName}` : 'Dear Candidate';
+    const body = encodeURIComponent(
+      `${greetingName},\n\nThank you for submitting your application and credentials for the Regional Manager position at GETIT.\n\nWe have reviewed your screening submission and would like to proceed with the next steps of your evaluation.\n\nPlease let us know your availability for a 1-on-1 interview.\n\nBest regards,\nGETIT Executive Management & Operations Desk\nhttps://getit.ng`
+    );
+    return `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(cleanEmail)}&su=${subject}&body=${body}`;
+  };
+
   const renderManagementApplicationsInbox = () => {
     const filteredApps = managementApplications.filter((a) => {
       if (mgmtAppsFilter === 'ALL') return true;
@@ -4822,7 +4861,119 @@ export default function AdminDashboard() {
 
                     <div style={{ fontSize: '12px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '10px' }}>
                       <div>📍 <strong>Location:</strong> {app.stateAndCity || 'N/A'}</div>
-                      <div>📞 <strong>Contact:</strong> {app.phone} • {app.email}</div>
+
+                      {/* 1-Click WhatsApp & Gmail Direct Contact Bar */}
+                      <div style={{ padding: '8px 10px', borderRadius: '8px', background: '#F8FAFC', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '6px', margin: '4px 0' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+                          <span style={{ fontWeight: 800, color: '#0F172A', fontSize: '12px' }}>
+                            📞 {app.phone || 'No phone'}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            {app.phone && (
+                              <a
+                                href={formatWhatsAppUrl(app.phone, app.fullName)}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '4px 9px',
+                                  borderRadius: '6px',
+                                  background: '#25D366',
+                                  color: '#FFFFFF',
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  textDecoration: 'none',
+                                  boxShadow: '0 1px 3px rgba(37, 211, 102, 0.35)',
+                                }}
+                                title={`Direct WhatsApp chat with ${app.fullName} (${app.phone})`}
+                              >
+                                <MessageSquare size={12} />
+                                <span>WhatsApp</span>
+                                <ExternalLink size={10} />
+                              </a>
+                            )}
+                            {app.phone && (
+                              <a
+                                href={`tel:${String(app.phone).replace(/\s+/g, '')}`}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  padding: '4px 7px',
+                                  borderRadius: '6px',
+                                  background: '#FFFFFF',
+                                  color: '#0F766E',
+                                  fontSize: '10.5px',
+                                  fontWeight: 700,
+                                  textDecoration: 'none',
+                                  border: '1px solid #99F6E4',
+                                }}
+                                title={`Call ${app.phone}`}
+                              >
+                                <Phone size={11} />
+                                <span>Call</span>
+                              </a>
+                            )}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', borderTop: '1px dashed #E2E8F0', paddingTop: '5px' }}>
+                          <span style={{ fontSize: '11.5px', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }} title={app.email}>
+                            ✉️ {app.email || 'No email'}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            {app.email && (
+                              <a
+                                href={formatGmailComposeUrl(app.email, app.fullName, app.applicationRef || app.id)}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '4px 9px',
+                                  borderRadius: '6px',
+                                  background: '#EA4335',
+                                  color: '#FFFFFF',
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  textDecoration: 'none',
+                                  boxShadow: '0 1px 3px rgba(234, 67, 53, 0.35)',
+                                }}
+                                title={`Direct Compose in Gmail for ${app.email}`}
+                              >
+                                <Mail size={12} />
+                                <span>Gmail</span>
+                                <ExternalLink size={10} />
+                              </a>
+                            )}
+                            {app.email && (
+                              <a
+                                href={`mailto:${app.email}?subject=${encodeURIComponent(`GETIT Management Application - ${app.fullName}`)}`}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  padding: '4px 7px',
+                                  borderRadius: '6px',
+                                  background: '#FFFFFF',
+                                  color: '#64748B',
+                                  fontSize: '10.5px',
+                                  fontWeight: 700,
+                                  textDecoration: 'none',
+                                  border: '1px solid #CBD5E1',
+                                }}
+                                title={`Open default mail client for ${app.email}`}
+                              >
+                                <span>Mailto</span>
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
                       <div>🎓 <strong>Education:</strong> {app.highestEducation} ({app.employmentStatus})</div>
                       <div>⏱️ <strong>Resumption:</strong> {app.resumptionAvailability} • <strong>Max Team Managed:</strong> {app.teamSizeManaged}</div>
                       <div>🥾 <strong>Fieldwork:</strong> {app.comfortableWithFieldwork} • <strong>Targets/Reports:</strong> {app.comfortableWithTargetsAndReports}</div>
@@ -4967,8 +5118,82 @@ export default function AdminDashboard() {
                   <h3 style={{ fontSize: '22px', fontWeight: 900, margin: '4px 0' }}>
                     {selectedMgmtAppDossier.fullName}
                   </h3>
-                  <div style={{ fontSize: '12.5px', color: '#CCFBF1' }}>
-                    📍 {selectedMgmtAppDossier.stateAndCity} • 📞 {selectedMgmtAppDossier.phone} • ✉️ {selectedMgmtAppDossier.email}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+                    <span style={{ fontSize: '12.5px', color: '#CCFBF1' }}>
+                      📍 {selectedMgmtAppDossier.stateAndCity}
+                    </span>
+                    {selectedMgmtAppDossier.phone && (
+                      <a
+                        href={formatWhatsAppUrl(selectedMgmtAppDossier.phone, selectedMgmtAppDossier.fullName)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          background: '#25D366',
+                          color: '#FFFFFF',
+                          fontSize: '11.5px',
+                          fontWeight: 800,
+                          textDecoration: 'none',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                        }}
+                        title={`Open WhatsApp directly with ${selectedMgmtAppDossier.phone}`}
+                      >
+                        <MessageSquare size={13} />
+                        <span>WhatsApp ({selectedMgmtAppDossier.phone})</span>
+                        <ExternalLink size={10} />
+                      </a>
+                    )}
+                    {selectedMgmtAppDossier.phone && (
+                      <a
+                        href={`tel:${String(selectedMgmtAppDossier.phone).replace(/\s+/g, '')}`}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          padding: '4px 9px',
+                          borderRadius: '6px',
+                          background: 'rgba(255,255,255,0.15)',
+                          color: '#FFFFFF',
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          textDecoration: 'none',
+                          border: '1px solid rgba(255,255,255,0.3)',
+                        }}
+                        title={`Call ${selectedMgmtAppDossier.phone}`}
+                      >
+                        <Phone size={11} />
+                        <span>Call</span>
+                      </a>
+                    )}
+                    {selectedMgmtAppDossier.email && (
+                      <a
+                        href={formatGmailComposeUrl(selectedMgmtAppDossier.email, selectedMgmtAppDossier.fullName, selectedMgmtAppDossier.applicationRef || selectedMgmtAppDossier.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          background: '#EA4335',
+                          color: '#FFFFFF',
+                          fontSize: '11.5px',
+                          fontWeight: 800,
+                          textDecoration: 'none',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                        }}
+                        title={`Compose email to ${selectedMgmtAppDossier.email} in Gmail`}
+                      >
+                        <Mail size={13} />
+                        <span>Gmail ({selectedMgmtAppDossier.email})</span>
+                        <ExternalLink size={10} />
+                      </a>
+                    )}
                   </div>
                 </div>
                 <button
@@ -4997,8 +5222,103 @@ export default function AdminDashboard() {
                   </h4>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', fontSize: '12.5px' }}>
                     <div><strong>1. Full Name:</strong> {selectedMgmtAppDossier.fullName}</div>
-                    <div><strong>2. Phone Number:</strong> {selectedMgmtAppDossier.phone}</div>
-                    <div><strong>3. Email Address:</strong> {selectedMgmtAppDossier.email}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span><strong>2. Phone Number:</strong> {selectedMgmtAppDossier.phone}</span>
+                      {selectedMgmtAppDossier.phone && (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <a
+                            href={formatWhatsAppUrl(selectedMgmtAppDossier.phone, selectedMgmtAppDossier.fullName)}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '2px 8px',
+                              borderRadius: '5px',
+                              background: '#25D366',
+                              color: '#FFFFFF',
+                              fontSize: '11px',
+                              fontWeight: 800,
+                              textDecoration: 'none',
+                            }}
+                            title={`Open WhatsApp chat with ${selectedMgmtAppDossier.phone}`}
+                          >
+                            <MessageSquare size={11} />
+                            <span>WhatsApp</span>
+                            <ExternalLink size={9} />
+                          </a>
+                          <a
+                            href={`tel:${String(selectedMgmtAppDossier.phone).replace(/\s+/g, '')}`}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                              padding: '2px 6px',
+                              borderRadius: '5px',
+                              background: '#FFFFFF',
+                              color: '#0F766E',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              textDecoration: 'none',
+                              border: '1px solid #99F6E4',
+                            }}
+                            title={`Call ${selectedMgmtAppDossier.phone}`}
+                          >
+                            <Phone size={10} />
+                            <span>Call</span>
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span><strong>3. Email Address:</strong> {selectedMgmtAppDossier.email}</span>
+                      {selectedMgmtAppDossier.email && (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <a
+                            href={formatGmailComposeUrl(selectedMgmtAppDossier.email, selectedMgmtAppDossier.fullName, selectedMgmtAppDossier.applicationRef || selectedMgmtAppDossier.id)}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '2px 8px',
+                              borderRadius: '5px',
+                              background: '#EA4335',
+                              color: '#FFFFFF',
+                              fontSize: '11px',
+                              fontWeight: 800,
+                              textDecoration: 'none',
+                            }}
+                            title={`Compose email to ${selectedMgmtAppDossier.email} in Gmail`}
+                          >
+                            <Mail size={11} />
+                            <span>Gmail</span>
+                            <ExternalLink size={9} />
+                          </a>
+                          <a
+                            href={`mailto:${selectedMgmtAppDossier.email}?subject=${encodeURIComponent(`GETIT Management Application - ${selectedMgmtAppDossier.fullName}`)}`}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                              padding: '2px 6px',
+                              borderRadius: '5px',
+                              background: '#FFFFFF',
+                              color: '#64748B',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              textDecoration: 'none',
+                              border: '1px solid #CBD5E1',
+                            }}
+                            title={`Open default email client`}
+                          >
+                            <span>Mailto</span>
+                          </a>
+                        </div>
+                      )}
+                    </div>
                     <div><strong>4. Current State of Residence:</strong> {selectedMgmtAppDossier.currentState || (selectedMgmtAppDossier.stateAndCity || '').split('—')[0]}</div>
                     <div><strong>4b. City of Residence:</strong> {selectedMgmtAppDossier.currentCity || (selectedMgmtAppDossier.stateAndCity || '').split('—')[1] || selectedMgmtAppDossier.stateAndCity}</div>
                     <div><strong>5. Highest Education:</strong> {selectedMgmtAppDossier.highestEducation}</div>
@@ -5126,6 +5446,56 @@ export default function AdminDashboard() {
                 }}
               >
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {selectedMgmtAppDossier.phone && (
+                    <a
+                      href={formatWhatsAppUrl(selectedMgmtAppDossier.phone, selectedMgmtAppDossier.fullName)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        padding: '10px 15px',
+                        borderRadius: '10px',
+                        background: '#25D366',
+                        color: '#FFFFFF',
+                        fontSize: '12px',
+                        fontWeight: 800,
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        boxShadow: '0 2px 6px rgba(37, 211, 102, 0.35)',
+                      }}
+                      title={`Open WhatsApp chat directly (+234 ${selectedMgmtAppDossier.phone})`}
+                    >
+                      <MessageSquare size={14} />
+                      <span>WhatsApp Chat</span>
+                      <ExternalLink size={11} />
+                    </a>
+                  )}
+                  {selectedMgmtAppDossier.email && (
+                    <a
+                      href={formatGmailComposeUrl(selectedMgmtAppDossier.email, selectedMgmtAppDossier.fullName, selectedMgmtAppDossier.applicationRef || selectedMgmtAppDossier.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        padding: '10px 15px',
+                        borderRadius: '10px',
+                        background: '#EA4335',
+                        color: '#FFFFFF',
+                        fontSize: '12px',
+                        fontWeight: 800,
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        boxShadow: '0 2px 6px rgba(234, 67, 53, 0.35)',
+                      }}
+                      title={`Open Gmail compose directly for ${selectedMgmtAppDossier.email}`}
+                    >
+                      <Mail size={14} />
+                      <span>Open Gmail</span>
+                      <ExternalLink size={11} />
+                    </a>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleUpdateMgmtApplicationStatus(selectedMgmtAppDossier, 'SHORTLISTED')}
