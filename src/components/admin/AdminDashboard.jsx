@@ -4955,7 +4955,11 @@ export default function AdminDashboard() {
       prev.map((item) => (item.id === app.id ? updatedApp : item))
     );
     if (selectedMgmtAppDossier?.id === app.id) {
-      setSelectedMgmtAppDossier(updatedApp);
+      if (nextStatus === 'REJECTED') {
+        setSelectedMgmtAppDossier(null);
+      } else {
+        setSelectedMgmtAppDossier(updatedApp);
+      }
     }
 
     try {
@@ -5072,9 +5076,17 @@ export default function AdminDashboard() {
       });
       if (notify) {
         notify(
-          nextStatus === 'SHORTLISTED' ? 'Shortlisted + Interview Email Sent!' : 'Application Status Updated',
+          nextStatus === 'SHORTLISTED'
+            ? 'Shortlisted + Interview Email Sent!'
+            : nextStatus === 'STANDBY'
+            ? 'Placed on Standby'
+            : nextStatus === 'REJECTED'
+            ? 'Application Rejected'
+            : 'Application Status Updated',
           nextStatus === 'SHORTLISTED'
             ? `${app.fullName} has been shortlisted and automatically sent a 1-on-1 interview invitation email!`
+            : nextStatus === 'STANDBY'
+            ? `${app.fullName} has been moved to Standby (neither approved nor rejected).`
             : `${app.fullName} marked as ${nextStatus.replace(/_/g, ' ')}.`,
           nextStatus === 'SHORTLISTED' ? 'success' : 'info'
         );
@@ -5127,8 +5139,10 @@ export default function AdminDashboard() {
       return (a.status || 'PENDING_REVIEW') === mgmtAppsFilter;
     });
     const pendingCount = managementApplications.filter((a) => !a.status || a.status === 'PENDING_REVIEW').length;
+    const standbyCount = managementApplications.filter((a) => a.status === 'STANDBY').length;
     const shortlistedCount = managementApplications.filter((a) => a.status === 'SHORTLISTED').length;
     const approvedCount = managementApplications.filter((a) => a.status === 'APPROVED_ONBOARDED').length;
+    const rejectedCount = managementApplications.filter((a) => a.status === 'REJECTED').length;
 
     return (
       <div
@@ -5472,9 +5486,10 @@ export default function AdminDashboard() {
           {[
             { id: 'ALL', label: `All Applications (${managementApplications.length})` },
             { id: 'PENDING_REVIEW', label: `Pending Review (${pendingCount})` },
+            { id: 'STANDBY', label: `⏳ Standby (${standbyCount})` },
             { id: 'SHORTLISTED', label: `Shortlisted for 1-on-1 Interview (${shortlistedCount})` },
             { id: 'APPROVED_ONBOARDED', label: `Approved & Onboarded (${approvedCount})` },
-            { id: 'REJECTED', label: 'Rejected' },
+            { id: 'REJECTED', label: `Rejected (${rejectedCount})` },
           ].map((tab) => {
             const active = mgmtAppsFilter === tab.id;
             return (
@@ -5518,6 +5533,8 @@ export default function AdminDashboard() {
                   ? { bg: '#DCFCE7', text: '#166534', border: '#86EFAC', label: '✓ APPROVED & ONBOARDED' }
                   : st === 'SHORTLISTED'
                   ? { bg: '#FEF3C7', text: '#92400E', border: '#FCD34D', label: '⭐ SHORTLISTED (INTERVIEW)' }
+                  : st === 'STANDBY'
+                  ? { bg: '#F3E8FF', text: '#6B21A8', border: '#D8B4FE', label: '⏳ STANDBY' }
                   : st === 'REJECTED'
                   ? { bg: '#FEE2E2', text: '#991B1B', border: '#FCA5A5', label: '✕ REJECTED' }
                   : { bg: '#E0F2FE', text: '#075985', border: '#7DD3FC', label: '● PENDING REVIEW' };
@@ -5679,6 +5696,9 @@ export default function AdminDashboard() {
                       </div>
 
                       <div>🎓 <strong>Education:</strong> {app.highestEducation} ({app.employmentStatus})</div>
+                      {(app.age || app.dateOfBirth || app.yearsOfExperience) && (
+                        <div>🎂 <strong>Age / DOB:</strong> {app.age ? `${app.age} yrs` : 'N/A'}{app.dateOfBirth ? ` (${app.dateOfBirth})` : ''} • <strong>Experience:</strong> {app.yearsOfExperience || 'N/A'}</div>
+                      )}
                       <div>⏱️ <strong>Resumption:</strong> {app.resumptionAvailability} • <strong>Max Team Managed:</strong> {app.teamSizeManaged}</div>
                       <div>🥾 <strong>Fieldwork:</strong> {app.comfortableWithFieldwork} • <strong>Targets/Reports:</strong> {app.comfortableWithTargetsAndReports}</div>
                     </div>
@@ -5859,6 +5879,24 @@ export default function AdminDashboard() {
                           }}
                         >
                           📅 Edit / Reschedule Interview
+                        </button>
+                      )}
+                      {st !== 'STANDBY' && st !== 'APPROVED_ONBOARDED' && (
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateMgmtApplicationStatus(app, 'STANDBY')}
+                          style={{
+                            padding: '8px 10px',
+                            borderRadius: '8px',
+                            background: '#F3E8FF',
+                            color: '#6B21A8',
+                            border: '1px solid #C084FC',
+                            fontSize: '11.5px',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ⏳ Standby
                         </button>
                       )}
                       {st !== 'APPROVED_ONBOARDED' && (
@@ -6314,9 +6352,12 @@ export default function AdminDashboard() {
                     </div>
                     <div><strong>4. Current State of Residence:</strong> {selectedMgmtAppDossier.currentState || (selectedMgmtAppDossier.stateAndCity || '').split('—')[0]}</div>
                     <div><strong>4b. City of Residence:</strong> {selectedMgmtAppDossier.currentCity || (selectedMgmtAppDossier.stateAndCity || '').split('—')[1] || selectedMgmtAppDossier.stateAndCity}</div>
+                    <div><strong>3b. Date of Birth:</strong> {selectedMgmtAppDossier.dateOfBirth || 'Not provided'}</div>
+                    <div><strong>3c. Age:</strong> {selectedMgmtAppDossier.age ? `${selectedMgmtAppDossier.age} Years` : 'Not provided'}</div>
                     <div><strong>5. Highest Education:</strong> {selectedMgmtAppDossier.highestEducation}</div>
                     <div><strong>6. Employment Status:</strong> {selectedMgmtAppDossier.employmentStatus}</div>
                     <div><strong>7. Available to Resume:</strong> {selectedMgmtAppDossier.resumptionAvailability}</div>
+                    <div><strong>7b. Years of Experience:</strong> {selectedMgmtAppDossier.yearsOfExperience || 'Not provided'}</div>
                   </div>
                 </div>
 
@@ -6506,6 +6547,22 @@ export default function AdminDashboard() {
                     {selectedMgmtAppDossier.status === 'SHORTLISTED' || selectedMgmtAppDossier.interviewSchedule
                       ? '📅 Reschedule / Re-dispatch Interview'
                       : '⭐ Shortlist & Book 1-on-1 Interview'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateMgmtApplicationStatus(selectedMgmtAppDossier, 'STANDBY')}
+                    style={{
+                      padding: '10px 16px',
+                      borderRadius: '10px',
+                      background: selectedMgmtAppDossier.status === 'STANDBY' ? '#6B21A8' : '#F3E8FF',
+                      color: selectedMgmtAppDossier.status === 'STANDBY' ? '#FFFFFF' : '#6B21A8',
+                      border: '1px solid #C084FC',
+                      fontSize: '12.5px',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {selectedMgmtAppDossier.status === 'STANDBY' ? '⏳ On Standby ✓' : '⏳ Put on Standby'}
                   </button>
                   <button
                     type="button"

@@ -1474,6 +1474,15 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Added `Export Full PDF (Data + CV)` button directly on every Candidate Card in Staff Enrollment.
      * Added `Export Full PDF (Data + CV)` and `Export .TXT` buttons in the Full Candidate Dossier Modal header.
 
+88. Auto-Close Dossier on Reject & Standby Candidate Status (`AdminDashboard.jsx`):
+   - ✕ Instant Profile Auto-Close on Reject:
+     * Clicking `✕ Reject Application` inside a candidate's Dossier modal immediately marks them `REJECTED` (syncing to Supabase + local state) and automatically closes the profile modal (`setSelectedMgmtAppDossier(null)`) so you can move straight to the next candidate.
+   - ⏳ Standby Candidate Status (`STANDBY`):
+     * Added a dedicated `STANDBY` status for candidates you want to hold without rejecting or approving.
+     * Added `⏳ Standby (<count>)` filter tab alongside `All`, `Pending Review`, `Shortlisted`, `Approved & Onboarded`, and `Rejected (<count>)`.
+     * Added purple `⏳ STANDBY` status badge on candidate cards.
+     * Added `⏳ Standby` quick action button on Candidate Cards and `⏳ Put on Standby` button in the Full Dossier Modal footer.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
