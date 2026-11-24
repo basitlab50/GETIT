@@ -251,6 +251,7 @@ const MODULE_ICON_MAP = {
   enterprise_hub: Building2,
   ongoing_orders: Clock,
   completed_orders: CheckCircle2,
+  staff_enrollment: FileCheck,
 };
 
 // 100% Real Database Ground Truth — Zero Fake Placeholders (Empty until appointed)
@@ -1633,9 +1634,116 @@ export default function AdminDashboard() {
     });
   };
 
+  const [ fetchMgmtAppsLoading, setFetchMgmtAppsLoading ] = useState(false);
+  const [managementApplications, setManagementApplications] = useState(() =>
+    loadLocalJson('getit_management_applications_v1', [])
+  );
+  const [selectedMgmtAppDossier, setSelectedMgmtAppDossier] = useState(null);
+  const [mgmtAppsFilter, setMgmtAppsFilter] = useState('ALL'); // 'ALL' | 'PENDING_REVIEW' | 'SHORTLISTED' | 'APPROVED_ONBOARDED' | 'REJECTED'
+
+  useEffect(() => {
+    saveLocalJson('getit_management_applications_v1', managementApplications);
+  }, [managementApplications]);
+
+  const fetchManagementApplicationsFromSupabase = async () => {
+    try {
+      setFetchMgmtAppsLoading(true);
+      const [enrollRes, logsRes] = await Promise.all([
+        supabaseClient
+          .from('staff_enrollment')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabaseClient
+          .from('audit_logs')
+          .select('*')
+          .eq('action', 'MANAGEMENT_JOB_APPLICATION')
+          .order('created_at', { ascending: false })
+          .limit(100),
+      ]);
+
+      const combinedRows = [];
+
+      if (!enrollRes.error && Array.isArray(enrollRes.data)) {
+        enrollRes.data.forEach((row) => {
+          const p = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload || {};
+          combinedRows.push({
+            ...p,
+            id: row.id || p.id,
+            applicationRef: row.application_ref || p.applicationRef,
+            status: row.status || p.status || 'PENDING_REVIEW',
+            fullName: row.full_name || p.fullName,
+            phone: row.phone || p.phone,
+            email: row.email || p.email,
+            stateAndCity: row.state_and_city || p.stateAndCity,
+            highestEducation: row.highest_education || p.highestEducation,
+            employmentStatus: row.employment_status || p.employmentStatus,
+            resumptionAvailability: row.resumption_availability || p.resumptionAvailability,
+            previouslyManagedTeam: row.previously_managed_team || p.previouslyManagedTeam,
+            teamSizeManaged: row.team_size_managed || p.teamSizeManaged,
+            leadershipExperienceSummary: row.leadership_experience_summary || p.leadershipExperienceSummary,
+            recruitedTeamFromScratch: row.recruited_team_from_scratch || p.recruitedTeamFromScratch,
+            planForTeamOf20: row.plan_for_team_of_20 || p.planForTeamOf20,
+            turnaroundUnderperforming15: row.turnaround_underperforming_15 || p.turnaroundUnderperforming15,
+            planFor200BusinessRelationships: row.plan_for_200_business_relationships || p.planFor200BusinessRelationships,
+            dailyMonitoringAccountability: row.daily_monitoring_accountability || p.dailyMonitoringAccountability,
+            difficultSituationHandled: row.difficult_situation_handled || p.difficultSituationHandled,
+            comfortableWithFieldwork: row.comfortable_with_fieldwork || p.comfortableWithFieldwork,
+            comfortableWithTargetsAndReports: row.comfortable_with_targets_and_reports || p.comfortableWithTargetsAndReports,
+            whySuitableForManagement: row.why_suitable_for_management || p.whySuitableForManagement,
+            cvFileName: row.cv_file_name || p.cvFileName,
+            cvFileSize: row.cv_file_size || p.cvFileSize,
+            cvMimeType: row.cv_mime_type || p.cvMimeType,
+            cvDataUrl: row.cv_data_url || p.cvDataUrl,
+            professionalReferee: row.professional_referee || p.professionalReferee,
+            submittedAt: p.submittedAt || row.created_at,
+          });
+        });
+      }
+
+      if (!logsRes.error && Array.isArray(logsRes.data)) {
+        logsRes.data.forEach((row) => {
+          try {
+            const p = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload || {};
+            if (p && p.fullName) {
+              combinedRows.push({
+                ...p,
+                id: row.id || p.id,
+                submittedAt: p.submittedAt || row.created_at,
+                status: p.status || 'PENDING_REVIEW',
+              });
+            }
+          } catch (err) {}
+        });
+      }
+
+      if (combinedRows.length > 0) {
+        setManagementApplications((prev) => {
+          const byId = new Map();
+          prev.forEach((item) => {
+            if (item?.id) byId.set(item.id, item);
+          });
+          combinedRows.forEach((item) => {
+            if (!item?.id) return;
+            const existing = byId.get(item.id);
+            byId.set(item.id, existing ? { ...existing, ...item, status: item.status || existing.status } : item);
+          });
+          return Array.from(byId.values()).sort(
+            (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
+          );
+        });
+      }
+    } catch (err) {
+      console.warn('Management applications fetch notice:', err);
+    } finally {
+      setFetchMgmtAppsLoading(false);
+    }
+  };
+
   const fetchSupabaseData = async () => {
     setIsSyncing(true);
     try {
+      fetchManagementApplicationsFromSupabase();
       const [storesRes, ordersRes, invRes, cloudPolicy] = await Promise.all([
         supabaseClient.from('stores').select('*').order('created_at', { ascending: false }),
         supabaseClient.from('orders').select('*').order('created_at', { ascending: false }).limit(100),
@@ -1726,12 +1834,26 @@ export default function AdminDashboard() {
               setLiveOrders(res.data);
             }
           });
+      } else if (event?.eventType === 'NEW_MANAGEMENT_APPLICATION' && event?.application) {
+        const app = event.application;
+        setManagementApplications((prev) => {
+          if (prev.some((x) => x.id === app.id)) return prev;
+          return [app, ...prev];
+        });
+        if (notify) {
+          notify(
+            'New Management Position Application',
+            `${app.fullName} (${app.stateAndCity || 'Nigeria'}) submitted a 21-question Management Application & CV.`,
+            'success'
+          );
+        }
       }
     });
 
     // 2. Continuous 4-second auto-poller guarantees instant sync across all tabs without manual reload
     const poller = setInterval(async () => {
       try {
+        fetchManagementApplicationsFromSupabase();
         const { data } = await supabaseClient
           .from('orders')
           .select('*')
@@ -4204,6 +4326,7 @@ export default function AdminDashboard() {
         { id: 'field_agent_mobile', title: '📱 Agent Mobile Portal', shortTitle: 'Agent Mobile' },
         { id: 'merchant_management', title: '🏪 Verified Shops & Stores', shortTitle: 'Shops Directory', badge: unifiedStores.length, badgeColor: '#10B981' },
         { id: 'staff_access', title: '👥 Staff & Operations Team', shortTitle: 'Staff Team', badge: staffAccounts.length, badgeColor: '#6366F1' },
+        { id: 'staff_enrollment', title: '📝 Staff Enrollment', shortTitle: 'Staff Enrollment', badge: managementApplications.filter((a) => !a.status || a.status === 'PENDING_REVIEW').length, badgeColor: '#EC4899' },
         { id: 'finance_dashboard', title: '🏦 Financial Settlements & Escrow', shortTitle: 'Finance & Float' },
       ],
     },
@@ -4237,6 +4360,8 @@ export default function AdminDashboard() {
       ? { id: 'merchant_management', title: 'Verified Shops & Stores Directory', subtitle: 'Physical retail storefronts, owner profiles, live GPS mapping, and full traceability to onboarding agents and managers', icon: '🏪' }
       : activeDashboardId === 'staff_access'
       ? { id: 'staff_access', title: 'Staff & Operations Team Directory', subtitle: 'Manage operational personnel, departmental assignments, and granular RBAC permissions across all modules', icon: '👥' }
+      : activeDashboardId === 'staff_enrollment'
+      ? { id: 'staff_enrollment', title: 'Staff Enrollment & Recruitment Command Portal', subtitle: 'Review all 21 screening answers, attached PDF CVs, screening evaluations, and onboard new Regional Managers', icon: '📝' }
       : CENTRAL_DASHBOARD_MODULES.find((m) => m.id === activeDashboardId) || CENTRAL_DASHBOARD_MODULES[0];
 
   const chartPoints = [
@@ -4298,6 +4423,650 @@ export default function AdminDashboard() {
       return cleanFirst + sym1 + "FinVault" + numDigits + sym2 + "26";
     }
     return cleanFirst + sym1 + "Staff" + numDigits + sym2 + "26";
+  };
+
+  const handleUpdateMgmtApplicationStatus = async (app, nextStatus) => {
+    if (!app?.id) return;
+    const updatedApp = {
+      ...app,
+      status: nextStatus,
+      reviewedBy: activeStaff?.fullName || 'CEO / Executive',
+      reviewedAt: new Date().toISOString(),
+    };
+
+    setManagementApplications((prev) =>
+      prev.map((item) => (item.id === app.id ? updatedApp : item))
+    );
+    if (selectedMgmtAppDossier?.id === app.id) {
+      setSelectedMgmtAppDossier(updatedApp);
+    }
+
+    try {
+      await Promise.all([
+        supabaseClient
+          .from('staff_enrollment')
+          .update({
+            status: nextStatus,
+            reviewed_by: updatedApp.reviewedBy,
+            reviewed_at: updatedApp.reviewedAt,
+            payload: updatedApp,
+          })
+          .eq('id', app.id),
+        supabaseClient
+          .from('audit_logs')
+          .update({ payload: JSON.stringify(updatedApp) })
+          .eq('id', app.id),
+      ]);
+    } catch (err) {
+      console.warn('Supabase application status update notice:', err);
+    }
+
+    if (nextStatus === 'APPROVED_ONBOARDED') {
+      const nextStaffNum = String(regionalManagersList.length + staffAccounts.length + 15).padStart(3, '0');
+      const staffId = `GET-${nextStaffNum}`;
+      const uniqueMgrPwd = getPersonUniquePassword({ fullName: app.fullName, staffId }, 'MANAGER');
+      const territoryLabel = app.stateAndCity || 'Regional Hub';
+
+      const newMgr = {
+        id: `MGR-${Date.now().toString().slice(-4)}`,
+        staffId,
+        fullName: app.fullName,
+        title: `Regional Operations Manager (${territoryLabel})`,
+        phone: app.phone || '+234 800 000 0000',
+        email: app.email || `manager.${nextStaffNum}@getit.ng`,
+        password: uniqueMgrPwd,
+        territoryId: 'NG-HUB',
+        territoryName: territoryLabel,
+        assignedDistricts: territoryLabel,
+        status: 'ACTIVE',
+        dateAppointed: new Date().toISOString().slice(0, 10),
+        applicationRef: app.applicationRef,
+      };
+
+      setRegionalManagersList((prev) => {
+        if (prev.some((m) => m.email === newMgr.email && m.fullName === newMgr.fullName)) return prev;
+        return [newMgr, ...prev];
+      });
+
+      setStaffAccounts((prev) => {
+        if (prev.some((s) => s.staffId === newMgr.staffId)) return prev;
+        return [
+          ...prev,
+          {
+            id: `staff-${newMgr.staffId}`,
+            staffId: newMgr.staffId,
+            fullName: `${newMgr.fullName} (Regional Manager)`,
+            position: newMgr.title,
+            department: 'Regional Hub Operations',
+            roleTier: 'REGIONAL_MANAGER',
+            email: newMgr.email,
+            phone: newMgr.phone,
+            password: uniqueMgrPwd,
+            managerStaffId: 'GET-001',
+            status: 'active',
+            territoryScope: { countries: ['NG'], states: [territoryLabel], districts: ['ALL'] },
+            accessSummary: `Onboarded from Website Management Application (${app.applicationRef || app.id})`,
+            permissions: {
+              state_manager: { view: true, create: true, edit: true, manage: true },
+              field_agent: { view: true, create: true, edit: true, manage: true },
+              field_agent_mobile: { view: true },
+              merchant_management: { view: true, create: true, edit: true },
+              operations_dashboard: { view: true },
+            },
+          },
+        ];
+      });
+
+      recordAudit({
+        module: 'Regional Governance & Recruitment',
+        actionType: 'ONBOARD_MANAGER_FROM_WEB_APPLICATION',
+        targetEntity: `${newMgr.fullName} (${newMgr.staffId})`,
+        previousValue: app.status || 'PENDING_REVIEW',
+        newValue: `APPROVED & ONBOARDED (${newMgr.title})`,
+        reason: `Onboarded from Website Management Application by ${activeStaff?.fullName}`,
+      });
+
+      if (notify) {
+        notify(
+          'Manager Approved & Onboarded',
+          `${newMgr.fullName} appointed as ${newMgr.title} with Staff ID ${newMgr.staffId}!`,
+          'success'
+        );
+      }
+    } else {
+      recordAudit({
+        module: 'Regional Governance & Recruitment',
+        actionType: 'UPDATE_MANAGEMENT_APPLICATION_STATUS',
+        targetEntity: `${app.fullName} (${app.applicationRef || app.id})`,
+        previousValue: app.status || 'PENDING_REVIEW',
+        newValue: nextStatus,
+        reason: `Updated by ${activeStaff?.fullName}`,
+      });
+      if (notify) {
+        notify('Application Status Updated', `${app.fullName} marked as ${nextStatus.replace(/_/g, ' ')}.`, 'info');
+      }
+    }
+  };
+
+  const renderManagementApplicationsInbox = () => {
+    const filteredApps = managementApplications.filter((a) => {
+      if (mgmtAppsFilter === 'ALL') return true;
+      return (a.status || 'PENDING_REVIEW') === mgmtAppsFilter;
+    });
+    const pendingCount = managementApplications.filter((a) => !a.status || a.status === 'PENDING_REVIEW').length;
+    const shortlistedCount = managementApplications.filter((a) => a.status === 'SHORTLISTED').length;
+    const approvedCount = managementApplications.filter((a) => a.status === 'APPROVED_ONBOARDED').length;
+
+    return (
+      <div
+        style={{
+          ...whiteCardStyle,
+          border: '1.5px solid #0D9488',
+          background: 'linear-gradient(180deg, #F0FDFA 0%, #FFFFFF 140px)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '14px', marginBottom: '18px' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '22px' }}>💼</span>
+              <h3 style={{ fontSize: '17px', fontWeight: 900, color: '#042F2E', margin: 0 }}>
+                Website Management Position Applications & CV Inbox ({managementApplications.length})
+              </h3>
+              <span style={{ fontSize: '10.5px', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', background: '#0F766E', color: '#FFFFFF' }}>
+                LIVE SUPABASE SYNC
+              </span>
+              {pendingCount > 0 && (
+                <span style={{ fontSize: '10.5px', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', background: '#FEF3C7', color: '#B45309', border: '1px solid #F59E0B' }}>
+                  {pendingCount} Awaiting Review
+                </span>
+              )}
+            </div>
+            <p style={{ fontSize: '12.5px', color: '#334155', margin: '4px 0 0 0' }}>
+              21-question Leadership & Management applications submitted with PDF CVs from the official GETIT Website flow directly into this inbox.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => fetchManagementApplicationsFromSupabase()}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '10px',
+                background: '#FFFFFF',
+                border: '1px solid #0D9488',
+                color: '#0F766E',
+                fontSize: '12px',
+                fontWeight: 800,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <RefreshCw size={14} />
+              <span>{fetchMgmtAppsLoading ? 'Syncing...' : 'Sync from Supabase'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
+          {[
+            { id: 'ALL', label: `All Applications (${managementApplications.length})` },
+            { id: 'PENDING_REVIEW', label: `Pending Review (${pendingCount})` },
+            { id: 'SHORTLISTED', label: `Shortlisted for 1-on-1 Interview (${shortlistedCount})` },
+            { id: 'APPROVED_ONBOARDED', label: `Approved & Onboarded (${approvedCount})` },
+            { id: 'REJECTED', label: 'Rejected' },
+          ].map((tab) => {
+            const active = mgmtAppsFilter === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setMgmtAppsFilter(tab.id)}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '999px',
+                  fontSize: '11.5px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  border: active ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                  background: active ? '#0F766E' : '#FFFFFF',
+                  color: active ? '#FFFFFF' : '#334155',
+                }}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {filteredApps.length === 0 ? (
+          <div style={{ padding: '28px', textAlign: 'center', borderRadius: '14px', background: '#F8FAFC', border: '1px dashed #CBD5E1' }}>
+            <div style={{ fontSize: '28px', marginBottom: '8px' }}>📄</div>
+            <div style={{ fontSize: '14px', fontWeight: 800, color: '#1E293B' }}>
+              No Management Position Applications in This Filter Yet
+            </div>
+            <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px' }}>
+              Share your GETIT Website link (`?apply=management`) with candidates. As soon as they submit the 21-question form & CV, it appears here automatically.
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '14px' }}>
+            {filteredApps.map((app) => {
+              const st = app.status || 'PENDING_REVIEW';
+              const badgeColors =
+                st === 'APPROVED_ONBOARDED'
+                  ? { bg: '#DCFCE7', text: '#166534', border: '#86EFAC', label: '✓ APPROVED & ONBOARDED' }
+                  : st === 'SHORTLISTED'
+                  ? { bg: '#FEF3C7', text: '#92400E', border: '#FCD34D', label: '⭐ SHORTLISTED (INTERVIEW)' }
+                  : st === 'REJECTED'
+                  ? { bg: '#FEE2E2', text: '#991B1B', border: '#FCA5A5', label: '✕ REJECTED' }
+                  : { bg: '#E0F2FE', text: '#075985', border: '#7DD3FC', label: '● PENDING REVIEW' };
+
+              return (
+                <div
+                  key={app.id}
+                  style={{
+                    padding: '18px',
+                    borderRadius: '14px',
+                    background: '#FFFFFF',
+                    border: '1px solid #E2E8F0',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.03)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                  }}
+                >
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '8px' }}>
+                      <div>
+                        <span style={{ fontSize: '10px', fontWeight: 800, color: '#0F766E', letterSpacing: '0.5px' }}>
+                          {app.applicationRef || app.id}
+                        </span>
+                        <h4 style={{ fontSize: '16px', fontWeight: 900, color: '#0F172A', margin: '2px 0 0 0' }}>
+                          {app.fullName}
+                        </h4>
+                      </div>
+                      <span
+                        style={{
+                          fontSize: '10px',
+                          fontWeight: 800,
+                          padding: '3px 9px',
+                          borderRadius: '999px',
+                          background: badgeColors.bg,
+                          color: badgeColors.text,
+                          border: `1px solid ${badgeColors.border}`,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {badgeColors.label}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '12px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '10px' }}>
+                      <div>📍 <strong>Location:</strong> {app.stateAndCity || 'N/A'}</div>
+                      <div>📞 <strong>Contact:</strong> {app.phone} • {app.email}</div>
+                      <div>🎓 <strong>Education:</strong> {app.highestEducation} ({app.employmentStatus})</div>
+                      <div>⏱️ <strong>Resumption:</strong> {app.resumptionAvailability} • <strong>Max Team Managed:</strong> {app.teamSizeManaged}</div>
+                      <div>🥾 <strong>Fieldwork:</strong> {app.comfortableWithFieldwork} • <strong>Targets/Reports:</strong> {app.comfortableWithTargetsAndReports}</div>
+                    </div>
+
+                    <div style={{ padding: '10px 12px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0', fontSize: '11.5px', color: '#334155' }}>
+                      <div style={{ fontWeight: 800, color: '#0F172A', marginBottom: '2px' }}>Why Suitable (Q19 Preview):</div>
+                      <div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {app.whySuitableForManagement || app.leadershipExperienceSummary || 'Click View Full Dossier to inspect all 21 answers.'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '8px', borderTop: '1px solid #F1F5F9' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#0F766E' }}>
+                        📄 {app.cvFileName || 'CV.pdf'}
+                      </span>
+                      {app.cvDataUrl && (
+                        <a
+                          href={app.cvDataUrl}
+                          download={app.cvFileName || `${app.fullName.replace(/\s+/g, '_')}_CV.pdf`}
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            color: '#0284C7',
+                            textDecoration: 'none',
+                            padding: '4px 10px',
+                            borderRadius: '6px',
+                            background: '#E0F2FE',
+                          }}
+                        >
+                          ⬇ Download CV
+                        </a>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMgmtAppDossier(app)}
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          background: '#0F172A',
+                          color: '#FFFFFF',
+                          border: 'none',
+                          fontSize: '11.5px',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        📋 View All 21 Answers & CV
+                      </button>
+                      {st !== 'SHORTLISTED' && st !== 'APPROVED_ONBOARDED' && (
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateMgmtApplicationStatus(app, 'SHORTLISTED')}
+                          style={{
+                            padding: '8px 10px',
+                            borderRadius: '8px',
+                            background: '#FEF3C7',
+                            color: '#92400E',
+                            border: '1px solid #F59E0B',
+                            fontSize: '11.5px',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ⭐ Shortlist
+                        </button>
+                      )}
+                      {st !== 'APPROVED_ONBOARDED' && (
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateMgmtApplicationStatus(app, 'APPROVED_ONBOARDED')}
+                          style={{
+                            padding: '8px 12px',
+                            borderRadius: '8px',
+                            background: '#059669',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            fontSize: '11.5px',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ✓ Appoint Manager
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {selectedMgmtAppDossier && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 9999,
+              background: 'rgba(15, 23, 42, 0.75)',
+              backdropFilter: 'blur(6px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px',
+            }}
+          >
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '20px',
+                maxWidth: '920px',
+                width: '100%',
+                maxHeight: '90vh',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                boxShadow: '0 30px 70px rgba(0,0,0,0.4)',
+              }}
+            >
+              <div
+                style={{
+                  background: 'linear-gradient(135deg, #042F2E 0%, #0F766E 100%)',
+                  color: '#FFFFFF',
+                  padding: '22px 26px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'flex-start',
+                  gap: '16px',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 800, color: '#5EEAD4', letterSpacing: '0.8px', textTransform: 'uppercase' }}>
+                    MANAGEMENT POSITION – APPLICATION DOSSIER • {selectedMgmtAppDossier.applicationRef || selectedMgmtAppDossier.id}
+                  </div>
+                  <h3 style={{ fontSize: '22px', fontWeight: 900, margin: '4px 0' }}>
+                    {selectedMgmtAppDossier.fullName}
+                  </h3>
+                  <div style={{ fontSize: '12.5px', color: '#CCFBF1' }}>
+                    📍 {selectedMgmtAppDossier.stateAndCity} • 📞 {selectedMgmtAppDossier.phone} • ✉️ {selectedMgmtAppDossier.email}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMgmtAppDossier(null)}
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    border: 'none',
+                    background: 'rgba(255,255,255,0.15)',
+                    color: '#FFFFFF',
+                    fontSize: '16px',
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ padding: '24px 26px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                <div style={{ padding: '18px', borderRadius: '14px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: 900, color: '#0F766E', margin: '0 0 12px 0', textTransform: 'uppercase' }}>
+                    Section 1: Personal and Professional Information (Q1 – Q7)
+                  </h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', fontSize: '12.5px' }}>
+                    <div><strong>1. Full Name:</strong> {selectedMgmtAppDossier.fullName}</div>
+                    <div><strong>2. Phone Number:</strong> {selectedMgmtAppDossier.phone}</div>
+                    <div><strong>3. Email Address:</strong> {selectedMgmtAppDossier.email}</div>
+                    <div><strong>4. State & City:</strong> {selectedMgmtAppDossier.stateAndCity}</div>
+                    <div><strong>5. Highest Education:</strong> {selectedMgmtAppDossier.highestEducation}</div>
+                    <div><strong>6. Employment Status:</strong> {selectedMgmtAppDossier.employmentStatus}</div>
+                    <div><strong>7. Available to Resume:</strong> {selectedMgmtAppDossier.resumptionAvailability}</div>
+                  </div>
+                </div>
+
+                <div style={{ padding: '18px', borderRadius: '14px', background: '#F8FAFC', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: 900, color: '#0F766E', margin: 0, textTransform: 'uppercase' }}>
+                    Section 2: Management and Leadership Experience (Q8 – Q11)
+                  </h4>
+                  <div><strong>8. Previously managed, supervised or led a team?</strong> {selectedMgmtAppDossier.previouslyManagedTeam}</div>
+                  <div><strong>9. Number of people managed at the same time:</strong> {selectedMgmtAppDossier.teamSizeManaged}</div>
+                  <div>
+                    <strong>10. Previous management/leadership experience, responsibilities & team achievements:</strong>
+                    <div style={{ marginTop: '4px', padding: '10px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}>
+                      {selectedMgmtAppDossier.leadershipExperienceSummary}
+                    </div>
+                  </div>
+                  <div>
+                    <strong>11. Recruited people and built a team from scratch:</strong>
+                    <div style={{ marginTop: '4px', padding: '10px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}>
+                      {selectedMgmtAppDossier.recruitedTeamFromScratch}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ padding: '18px', borderRadius: '14px', background: '#F8FAFC', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: 900, color: '#0F766E', margin: 0, textTransform: 'uppercase' }}>
+                    Section 3: Practical Leadership Questions (Q12 – Q16)
+                  </h4>
+                  <div>
+                    <strong>12. Building & managing a team of 20 people from scratch (recruitment, organisation & supervision):</strong>
+                    <div style={{ marginTop: '4px', padding: '10px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}>
+                      {selectedMgmtAppDossier.planForTeamOf20}
+                    </div>
+                  </div>
+                  <div>
+                    <strong>13. Turnaround plan when only 5 of 15 recruits are performing after two weeks:</strong>
+                    <div style={{ marginTop: '4px', padding: '10px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}>
+                      {selectedMgmtAppDossier.turnaroundUnderperforming15}
+                    </div>
+                  </div>
+                  <div>
+                    <strong>14. Strategy to establish 200 new business relationships within 30 days:</strong>
+                    <div style={{ marginTop: '4px', padding: '10px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}>
+                      {selectedMgmtAppDossier.planFor200BusinessRelationships}
+                    </div>
+                  </div>
+                  <div>
+                    <strong>15. Monitoring daily activities & ensuring every member is accountable:</strong>
+                    <div style={{ marginTop: '4px', padding: '10px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}>
+                      {selectedMgmtAppDossier.dailyMonitoringAccountability}
+                    </div>
+                  </div>
+                  <div>
+                    <strong>16. Difficult situation experienced while managing people, handling & outcome:</strong>
+                    <div style={{ marginTop: '4px', padding: '10px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}>
+                      {selectedMgmtAppDossier.difficultSituationHandled}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ padding: '18px', borderRadius: '14px', background: '#F8FAFC', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: 900, color: '#0F766E', margin: 0, textTransform: 'uppercase' }}>
+                    Section 4: Availability and Commitment (Q17 – Q19)
+                  </h4>
+                  <div><strong>17. Comfortable with fieldwork, visiting businesses & supervising across locations?</strong> {selectedMgmtAppDossier.comfortableWithFieldwork}</div>
+                  <div><strong>18. Comfortable working with performance targets & submitting regular activity reports?</strong> {selectedMgmtAppDossier.comfortableWithTargetsAndReports}</div>
+                  <div>
+                    <strong>19. Why suitable for this management position:</strong>
+                    <div style={{ marginTop: '4px', padding: '10px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}>
+                      {selectedMgmtAppDossier.whySuitableForManagement}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ padding: '18px', borderRadius: '14px', background: '#F0FDFA', border: '1.5px solid #0D9488', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                    <h4 style={{ fontSize: '14px', fontWeight: 900, color: '#042F2E', margin: 0, textTransform: 'uppercase' }}>
+                      Section 5: Supporting Documents (Q20 – Q21)
+                    </h4>
+                    {selectedMgmtAppDossier.cvDataUrl && (
+                      <a
+                        href={selectedMgmtAppDossier.cvDataUrl}
+                        download={selectedMgmtAppDossier.cvFileName || `${selectedMgmtAppDossier.fullName}_CV.pdf`}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: '8px',
+                          background: '#0F766E',
+                          color: '#FFFFFF',
+                          fontWeight: 800,
+                          fontSize: '12px',
+                          textDecoration: 'none',
+                        }}
+                      >
+                        ⬇ Download Attached CV ({selectedMgmtAppDossier.cvFileName || 'CV.pdf'})
+                      </a>
+                    )}
+                  </div>
+                  <div><strong>20. Uploaded CV File:</strong> {selectedMgmtAppDossier.cvFileName || 'Attached'}</div>
+                  <div><strong>21. Professional Referee:</strong> {selectedMgmtAppDossier.professionalReferee || 'Not provided'}</div>
+
+                  {selectedMgmtAppDossier.cvDataUrl && selectedMgmtAppDossier.cvDataUrl.startsWith('data:application/pdf') && (
+                    <iframe
+                      title="Applicant CV Preview"
+                      src={selectedMgmtAppDossier.cvDataUrl}
+                      style={{ width: '100%', height: '420px', borderRadius: '10px', border: '1px solid #CBD5E1', background: '#FFFFFF' }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: '16px 26px',
+                  background: '#F8FAFC',
+                  borderTop: '1px solid #E2E8F0',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '10px',
+                }}
+              >
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateMgmtApplicationStatus(selectedMgmtAppDossier, 'SHORTLISTED')}
+                    style={{
+                      padding: '10px 16px',
+                      borderRadius: '10px',
+                      background: '#FEF3C7',
+                      color: '#92400E',
+                      border: '1px solid #F59E0B',
+                      fontSize: '12.5px',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ⭐ Shortlist for 1-on-1 Interview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateMgmtApplicationStatus(selectedMgmtAppDossier, 'REJECTED')}
+                    style={{
+                      padding: '10px 16px',
+                      borderRadius: '10px',
+                      background: '#FEE2E2',
+                      color: '#991B1B',
+                      border: '1px solid #FCA5A5',
+                      fontSize: '12.5px',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ✕ Reject Application
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleUpdateMgmtApplicationStatus(selectedMgmtAppDossier, 'APPROVED_ONBOARDED')}
+                  style={{
+                    padding: '11px 22px',
+                    borderRadius: '10px',
+                    background: '#059669',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    fontSize: '13px',
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 14px rgba(5, 150, 105, 0.35)',
+                  }}
+                >
+                  ✓ Approve & Appoint as Regional Manager (Generate GET-XXX ID)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   // =========================================================================
@@ -15904,6 +16673,9 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
+              {/* Website Management Position Applications & CV Inbox */}
+              {renderManagementApplicationsInbox()}
+
               {/* Onboard New Staff Collapsible Panel */}
               {showNewStaffModal && (
                 <div style={{ ...whiteCardStyle, background: '#F8FAF9', border: `1.5px solid ${BRAND.cardBorder}` }}>
@@ -16367,6 +17139,14 @@ export default function AdminDashboard() {
             </div>
           )}
 
+          {/* =================================================================
+              MODULE: DEDICATED STAFF ENROLLMENT & RECRUITMENT COMMAND PORTAL
+              ================================================================= */}
+          {activeDashboardId === 'staff_enrollment' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+              {renderManagementApplicationsInbox()}
+            </div>
+          )}
 
           {/* =================================================================
               MODULE 4, 5 & 6: FINANCE, BUSINESS RULES & MERCHANT SETTLEMENTS
@@ -18492,6 +19272,9 @@ export default function AdminDashboard() {
             </div>
           </div>
         </div>
+
+        {/* Website Management Position Applications & CV Inbox */}
+        {renderManagementApplicationsInbox()}
 
         {/* Regional Managers Directory Grid */}
         <div style={whiteCardStyle}>

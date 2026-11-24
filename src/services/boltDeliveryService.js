@@ -10,7 +10,7 @@ const decodeSecret = (b64) => {
   try {
     if (typeof atob === 'function') return atob(b64);
     if (typeof Buffer !== 'undefined') return Buffer.from(b64, 'base64').toString('utf-8');
-  } catch (e) {}
+  } catch (e) { }
   return '';
 };
 
@@ -158,13 +158,13 @@ export async function estimateBoltRide({ stops, paymentMethods = ['business'] })
 
   const effectiveStops = isSandbox
     ? [
-        { lat: 59.424163, lng: 24.747337 },
-        { lat: 59.433827, lng: 24.744215 },
-      ]
+      { lat: 59.424163, lng: 24.747337 },
+      { lat: 59.433827, lng: 24.744215 },
+    ]
     : stops.map((s) => ({
-        lat: Number(s.latitude || s.lat),
-        lng: Number(s.longitude || s.lng),
-      }));
+      lat: Number(s.latitude || s.lat),
+      lng: Number(s.longitude || s.lng),
+    }));
 
   const res = await fetch(endpoints.estimationUrl, {
     method: 'POST',
@@ -211,13 +211,13 @@ export async function createBoltRide({
 
   const effectiveStops = isSandbox
     ? [
-        { lat: 59.424163, lng: 24.747337 },
-        { lat: 59.433827, lng: 24.744215 },
-      ]
+      { lat: 59.424163, lng: 24.747337 },
+      { lat: 59.433827, lng: 24.744215 },
+    ]
     : stops.map((s) => ({
-        lat: Number(s.latitude || s.lat),
-        lng: Number(s.longitude || s.lng),
-      }));
+      lat: Number(s.latitude || s.lat),
+      lng: Number(s.longitude || s.lng),
+    }));
 
   const res = await fetch(endpoints.createUrl, {
     method: 'POST',
@@ -254,7 +254,7 @@ export async function createBoltRide({
           ride_state: 'DRIVER_ON_ROUTE_TO_CLIENT',
         }),
       });
-    } catch (e) {}
+    } catch (e) { }
   }
 
   return {
@@ -349,9 +349,9 @@ export async function requestBoltDelivery({
       const routeStops = stops && stops.length >= 2
         ? stops
         : [
-            storeLocation || { latitude: 9.0882, longitude: 7.4933 },
-            deliveryLocation || { latitude: 9.0820, longitude: 7.4850 },
-          ];
+          storeLocation || { latitude: 9.0882, longitude: 7.4933 },
+          deliveryLocation || { latitude: 9.0820, longitude: 7.4850 },
+        ];
 
       const est = await estimateBoltRide({ stops: routeStops });
 

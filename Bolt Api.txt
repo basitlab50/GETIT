@@ -1,0 +1,862 @@
+Client ID
+zPYgwSQ-6ddTAle-2-nOH
+
+Client Secret
+qhFIU9qJ2Cl8XIAdT8xmtBCdU-sbE2shqZrY_MG2mky9VkRzy71GBJE6K2fZAN4NJEweR4HYfMvq8y59Nlb6lA
+
+
+This guide covers everything you need to integrate with the Bolt Ride Booker API — from authentication and ride booking to webhooks, error handling, and sandbox testing.
+
+Table of Contents
+Creating a Bolt for Business Account
+Environments
+Auth
+Required Parameters
+Example Token Request
+Common Authentication Issues
+Ride Types at a Glance
+API Endpoints
+Endpoint Reference
+On-Demand Rides
+Prebooked Rides
+Flexible Rides
+Webhooks
+Request Format
+Common Event Fields
+Event Types
+Compatibility
+Delivery
+Sandbox Webhooks
+Large Venue Support
+Autosnapping (Default)
+Array of Pickup Points
+Passenger Directions
+Errors
+Validation and Input Errors
+Temporal Errors
+Flight Tracking Errors
+Location and Address Errors
+Order Lifecycle Errors
+HTTP Status Codes
+Common Issues
+Sandbox
+Creating a Bolt for Business Account #
+If you do not already have a Bolt for Business account, first reach out to your Bolt representative or create an account at business.bolt.eu.
+
+Log in to your Bolt for Business account, then click on Ride Booker on the left.
+Read and sign the Ride Booker terms and conditions.
+When completed, inform your Bolt representative so they can enable the Ride Booker API.
+Return to Ride Booker (ridebooker.bolt.eu), then click on Ride Booker API on the left-hand side.
+To create a new client ID and secret, scroll to the bottom and click Renew.
+Environments #
+All API requests target one of two environments. Use Sandbox for development and testing, and Production for live rides.
+
+Environment	Base URL	Notes
+Production	https://node.bolt.eu/ride-booker-api/reseller/v1/	Real rides, real billing.
+Sandbox	https://node.bolt.eu/ride-booker-api-sandbox/reseller/v1/sandbox/	Mocked data; auto-deleted after some time. Requires a uuid query param per sandbox instance.
+Auth (both)	https://oidc.bolt.eu/token	Same auth endpoint for both environments.
+Swagger (Production)	OpenAPI Specs ↗	
+Swagger (Sandbox)	OpenAPI Specs ↗	
+The production and sandbox URLs differ in two ways: the host path (ride-booker-api vs ride-booker-api-sandbox) and the /sandbox/ segment. For example:
+
+Production: https://node.bolt.eu/ride-booker-api/reseller/v2/rides/estimations
+Sandbox: https://node.bolt.eu/ride-booker-api-sandbox/reseller/v2/sandbox/rides/estimations?uuid=<sandbox_uuid>
+Note on API versions: Most endpoints use /reseller/v1/. The on-demand estimation endpoint uses /reseller/v2/ — this is the only endpoint under a different version prefix.
+
+Auth #
+We use the OAuth2 Client Credentials flow to authorize all Ride Booker API requests.
+
+Every API request must include a valid bearer token in the Authorization header:
+
+Authorization: Bearer <access_token>
+You obtain this token from Bolt's OAuth server:
+
+POST https://oidc.bolt.eu/token
+Required Parameters #
+When calling https://oidc.bolt.eu/token, you must send all of the following fields as application/x-www-form-urlencoded:
+
+Field	Required	Value	Notes
+client_id	✅	Your Ride Booker API client ID	From the Ride Booker API page in the portal
+client_secret	✅	Your client secret	Keep this secure
+grant_type	✅	client_credentials	Other grant types are not supported
+scope	✅	ridebooker:api	Must be present and exactly this value
+Common pitfall: Omitting scope or using a different value is the most common cause of authorization errors. The token call may appear to succeed, but any Ride Booker API request using that token will fail (e.g. with NOT_AUTHORIZED).
+
+Example Token Request #
+curl --location --request POST 'https://oidc.bolt.eu/token' \
+  --header 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'client_id=YOUR_CLIENT_ID' \
+  --data-urlencode 'client_secret=YOUR_CLIENT_SECRET' \
+  --data-urlencode 'grant_type=client_credentials' \
+  --data-urlencode 'scope=ridebooker:api'
+Example successful response:
+
+{
+  "access_token": "YOUR_TOKEN",
+  "expires_in": 600,
+  "token_type": "Bearer",
+  "scope": "ridebooker:api"
+}
+access_token – the value you use in the Authorization: Bearer … header
+expires_in – token lifetime in seconds (currently 600 ≈ 10 minutes)
+token_type – always Bearer
+Because tokens expire quickly, your integration should automatically refresh the token before it expires to avoid failed requests. A recommended approach is to cache the token and proactively request a new one when ~80% of the expires_in window has elapsed (e.g. after ~8 minutes for a 600-second token). Alternatively, you can reactively refresh on a 401 Unauthorized response — but proactive refresh avoids the latency of a failed request followed by a retry.
+
+Using the Token #
+Include the access token in every Ride Booker API request:
+
+GET https://node.bolt.eu/ride-booker-api/reseller/v1/rides/details?ride_id=123
+Authorization: Bearer YOUR_TOKEN
+If the token is missing, expired, or invalid, the API will respond with 401 Unauthorized.
+
+Common Authentication Issues #
+1. Missing or incorrect scope #
+Symptom: Ride Booker API calls fail with x-bolt-error-code: 503 / x-bolt-error-message: NOT_AUTHORIZED, or you get 401/403 even though you are sending a token.
+Cause: The token was generated without scope=ridebooker:api, or with the wrong scope.
+Fix: Ensure your token request includes scope=ridebooker:api. Regenerate the token and retry.
+2. Client not yet authorised for the Ride Booker API #
+Symptom: Correct scope and host, but you consistently get 403 Forbidden or NOT_AUTHORIZED on all calls.
+Cause: Your Bolt for Business account has not yet been enabled for the Ride Booker API.
+Fix: Contact your Bolt account manager with your client_id and environment (sandbox or production) to confirm that the client is authorised.
+3. Account not active #
+Symptom: Every production API call fails with 403 Forbidden / x-bolt-error-code: 55025 / x-bolt-error-message: RIDE_BOOKER_API_OPERATOR_ACCOUNT_NOT_ACTIVE, while token requests still succeed.
+Cause: The account linked to the API client is inactive or blocked. Its status is checked on every request.
+Fix: Contact your Bolt account manager with your client_id. A new token will not help.
+Quick Troubleshooting Checklist #
+Before raising an issue, verify:
+
+You are calling https://oidc.bolt.eu/token with grant_type=client_credentials and scope=ridebooker:api.
+You are using the correct client_id / client_secret for the environment.
+You are calling the correct base URL (see the Environments table above).
+Your token is not expired (lifetime ≈ 10 minutes).
+If all of the above are correct and you still receive errors, include the x-bolt-tracking header value, endpoint, and UTC timestamp when contacting Bolt so the request can be traced.
+
+Ride Types at a Glance #
+The Ride Booker API supports three ride types. The table below summarizes the key differences to help you choose the right one for your use case.
+
+On-Demand	Prebooked	Flexible
+Use case	Ride needed now	Ride scheduled for a future time	Pre-created ride the passenger dispatches when ready
+Estimation endpoint	POST /rides/estimations ¹	POST /rides/prebooked/estimations	POST /rides/flexible/estimations
+Creation endpoint	POST /rides/create	POST /rides/prebooked/create	POST /rides/flexible/create
+Details endpoint	GET /rides/details	GET /rides/prebooked/details	GET /rides/flexible/details
+Cancel endpoint	POST /rides/cancel	POST /rides/prebooked/cancel	POST /rides/flexible/cancel
+Cancellation fee endpoint	GET /rides/cancellation_fee	GET /rides/cancellation_fee	GET /rides/cancellation_fee
+Key identifier from estimation	fare_id	fare_id	vehicle_category_id
+Identifier expiry	5 minutes (single use)	5 minutes (single use)	N/A
+Time constraints	Immediate	30 min – 90 days in the future, or based on an arriving flight ²	Valid for 24 hours after ready_for_dispatch_at
+Lifecycle states	SEARCHING → DRIVER_ON_ROUTE_TO_CLIENT → ARRIVED_AT_CLIENT → DRIVING_WITH_CLIENT → COMPLETED	SCHEDULED → DRIVER_COMMITTED → DISPATCHED (then becomes on-demand)	SCHEDULED → READY_TO_DISPATCH → DISPATCHED (then becomes on-demand)
+Terminal states	COMPLETED, CANCELLED, CLIENT_CANCELLED, CLIENT_DID_NOT_SHOW, NO_DRIVER_FOUND, PAYMENT_BOOKING_FAILED	CANCELLED	CANCELLED, OTHER
+Webhook type value	ON_DEMAND	PRE_BOOKED	FLEXIBLE
+¹ Uses /reseller/v2/ instead of /reseller/v1/. See Environments.
+
+² See Flight Tracking.
+
+Key pattern: Both prebooked and flexible rides eventually convert into on-demand rides once dispatched. After dispatch, use the on-demand endpoints (/rides/details, /rides/cancel, etc.) with the same ride_id.
+
+API Endpoints #
+Endpoint Reference #
+All paths below are relative to the base URL for your environment (see Environments), unless otherwise noted.
+
+Method	Path	Ride Type	Purpose
+POST	/rides/estimations ¹	On-demand	Get time and cost estimates per vehicle category and payment method
+POST	/rides/create	On-demand	Create a ride using a fare_id
+GET	/rides/details	On-demand	Get ride state, driver info, ETA
+GET	/rides/location	On-demand	Get driver's live location (active rides only)
+GET	/rides/receipt	On-demand	Get price breakdown after ride completion
+POST	/rides/cancel	On-demand	Cancel a ride (before pickup only)
+POST	/rides/prebooked/estimations	Prebooked	Get fare estimates for a future pickup
+POST	/rides/prebooked/create	Prebooked	Create a prebooked ride using a fare_id
+GET	/rides/prebooked/details	Prebooked	Get prebooked ride state and details
+POST	/rides/prebooked/cancel	Prebooked	Cancel a prebooked ride (before dispatch)
+GET	/rides/prebooked/history	Prebooked	List upcoming prebooked rides (paginated)
+POST	/rides/flexible/estimations	Flexible	Get available vehicle categories
+POST	/rides/flexible/create	Flexible	Create a flexible ride using vehicle_category_id
+GET	/rides/flexible/details	Flexible	Get flexible ride state
+POST	/rides/flexible/cancel	Flexible	Cancel a flexible ride (before dispatch)
+GET	/rides/cancellation_fee	All	Get the fee that would apply if the ride were cancelled right now
+POST	/rides/place/details	All	Get valid pickup/dropoff points for large venues
+¹ This endpoint uses /reseller/v2/ instead of /reseller/v1/. Full production path: https://node.bolt.eu/ride-booker-api/reseller/v2/rides/estimations
+
+On-Demand Rides #
+The typical flow for an on-demand ride is: Estimate → Create → Track → Get Receipt. You can also Cancel an ongoing ride before pickup, optionally checking the Cancellation Fee first.
+
+Estimate #
+To create an on-demand ride, you must call the estimation endpoint first, which returns time and cost estimates per vehicle category and payment method.
+
+Notes:
+
+The request body requires stops and a payment_methods array. The payment_methods array can contain "business", "cash", and/or "card". Some payment methods may be disallowed depending on your account configuration — contact Bolt before using "cash" or "card".
+A null ETA means rides for that category are not available at the time.
+A minimum of 2 and maximum of 4 stops can be sent. Stops are visited in order: the first stop is the pickup point, the last is the final destination. Do not use multi-stop rides as carpooling for independent riders — there is no communication mechanism for riders at intermediate stops.
+Price estimates are approximate. Longer waiting times or route deviations may cause the final price to differ. Use the receipt endpoint for the final price.
+The response groups estimations by vehicle category. Each category contains a nested array of estimations per payment method, each with its own fare_id. You will need the fare_id for the desired category and payment method combination to create the ride.
+Create #
+Once you have the fare_id for the desired vehicle category and payment method, you can create the ride.
+
+The fare_id is mandatory, expires after 5 minutes, and is single-use. Do not cache it.
+The stops must be exactly the same as those sent to the estimation endpoint (same coordinates, same order); otherwise, ride creation will fail.
+Autosnapping and stops: If the estimation response returns adjusted (autosnapped) coordinates for a large venue, you should send the snapped coordinates from the estimation response when creating the ride. That said, the creation flow applies the same snapping logic as the estimation flow, so sending your original coordinates will also work.
+
+Rider information (phone, name) is required for driver communication.
+You can include a note_to_driver, which the driver sees immediately after accepting the ride.
+On success, the response contains a ride_id — store it, as you will need it for all subsequent operations.
+Track #
+Two endpoints are available for tracking an active ride:
+
+Ride details (GET /rides/details): Returns ride state, driver info, and ETA. Poll no more than once every 10 seconds.
+Ride location (GET /rides/location): Returns the driver's live GPS position. Only available while the ride is active. Lightweight — can be called every 1 second.
+Rate limits: Exceeding these polling limits will result in a 429 Too Many Requests response.
+
+On-demand ride states:
+
+State	Description
+SEARCHING	Searching for a driver
+DRIVER_ON_ROUTE_TO_CLIENT	A driver has accepted and is heading to the pickup
+ARRIVED_AT_CLIENT	The driver has arrived at the pickup point
+DRIVING_WITH_CLIENT	The passenger has been picked up; ride is in progress
+COMPLETED	The ride finished successfully
+CANCELLED	Cancelled (by the system or partner)
+CLIENT_CANCELLED	Cancelled by the client
+CLIENT_DID_NOT_SHOW	The driver arrived but the passenger did not show
+NO_DRIVER_FOUND	No driver was found for the ride
+PAYMENT_BOOKING_FAILED	Payment booking failed
+Note: The ride can go back and forth between SEARCHING and DRIVER_ON_ROUTE_TO_CLIENT if a driver accepts and then rejects the ride.
+
+Get Receipt #
+After a ride completes, this endpoint returns a price breakdown and total. The receipt is usually available instantly or within a few minutes. In rare cases (route deviations, congestion), the review can take up to 24 hours or longer.
+
+Cancellation Fee #
+GET /rides/cancellation_fee?ride_id=<ride_id>
+
+Depending on when a ride is cancelled, a cancellation fee may apply. Call this endpoint before cancelling to find out what the fee would be at that moment, for example to ask the passenger for confirmation. The same endpoint works for all ride types (on-demand, prebooked, and flexible).
+
+The response contains:
+
+ride_id – the id of the ride.
+amount – the fee in major currency units. Zero means cancelling is currently free.
+currency_code – uppercase ISO-4217 currency code.
+Important: The returned fee is a snapshot. It does not lock the price, and the fee actually applied on cancellation may differ. Cancellation rules can change over time, so the longer you wait between fetching the fee and cancelling, the more likely it is to have changed. Cancel promptly after fetching the fee.
+
+If the ride cannot be found or does not belong to your account, the API responds with RIDE_BOOKER_API_MISSING_ORDER. If the ride can no longer be cancelled, it responds with RIDE_BOOKER_API_ORDER_INVALID_STATE_FOR_CANCELLATION.
+
+Cancel #
+You can cancel an on-demand ride at any time before the passenger is picked up (i.e. before DRIVING_WITH_CLIENT). Once the ride reaches DRIVING_WITH_CLIENT or COMPLETED, cancellation is no longer possible and the API will respond with RIDE_BOOKER_API_ORDER_INVALID_STATE_FOR_CANCELLATION. Any other cancellation failure returns RIDE_BOOKER_API_INTERNAL_ORDER_CANCELLATION_FAILED. A cancellation fee may apply — see Cancellation Fee to check it beforehand.
+
+Prebooked Rides #
+Prebooked rides follow a similar flow to on-demand rides but are scheduled for a future pickup time.
+
+Estimate #
+POST /rides/prebooked/estimations
+
+Returns fare estimates per vehicle category for a future ride.
+
+Minimum of 2 and maximum of 4 stops, visited in order.
+arrive_at_client_time must be between 30 minutes and 90 days in the future (market-specific).
+The response includes a fare_id used to create the ride.
+Instead of arrive_at_client_time, you can send flight_tracking to base the pickup time on a flight's arrival. See Flight Tracking.
+Flight Tracking #
+Instead of a fixed pickup time, a prebooked ride can follow an arriving flight. The pickup time is derived from the flight's scheduled landing time plus the time the passenger needs at the airport.
+
+Flight tracking is not available for all airports. Unsupported airports are rejected with RIDE_BOOKER_API_AIRPORT_NOT_SUPPORTED.
+
+Send a flight_tracking object to both POST /rides/prebooked/estimations and POST /rides/prebooked/create:
+
+Field	Required	Description
+arrival_airport_iata_code	✅	3-letter IATA code of the airport the flight lands at. This is the pickup point of the ride.
+arrival_date_local	✅	Local arrival date at the airport, in YYYY-MM-DD format.
+carrier_iata_code	✅	2-letter IATA code of the airline.
+flight_number	✅	Flight number without the carrier code (1–4 characters).
+time_at_airport		Minutes after landing at which the passenger should be picked up (10–80). Defaults to 30; this default may change in the future.
+Rules:
+
+Send exactly one of arrive_at_client_time or flight_tracking.
+The first stop must be at the arrival airport; otherwise the API returns RIDE_BOOKER_API_PICKUP_NOT_AT_AIRPORT.
+When creating the ride, send the same flight_tracking details (and stops) as in the estimation request.
+The details endpoint returns a flight_tracking object for these rides:
+
+Field	Description
+tracking_state	TRACKING, FLIGHT_CANCELLED or TRACKING_LOST
+carrier_code	Airline IATA code
+flight_number	Flight number
+departure_airport_code	IATA code of the departure airport
+arrival_airport_code	IATA code of the arrival airport
+arrival_airport_zone	Arrival terminal or zone, if known (nullable)
+time_at_airport	Minutes after landing at which the passenger is picked up
+Tracking states: TRACKING means the flight is being followed and the pickup time adjusts to it. FLIGHT_CANCELLED means the airline cancelled the flight. TRACKING_LOST means live flight data is no longer available.
+
+Create #
+POST /rides/prebooked/create
+
+Creates a prebooked ride using the fare_id from the estimation response.
+
+The fare_id is mandatory, expires after 5 minutes, and is single-use.
+The stops and arrive_at_client_time (or flight_tracking) must be exactly the same as those sent to the estimation endpoint. If they differ, the API will return a RIDE_BOOKER_API_INVALID_FARE_ID error.
+Rider information and an optional note_to_driver work the same as for on-demand rides.
+On success, the response contains a ride_id.
+Details #
+GET /rides/prebooked/details
+
+Retrieves the current state of a prebooked ride using the ride_id. This endpoint is not meant for frequent polling.
+
+Prebooked ride states:
+
+State	Description
+SCHEDULED	Ride is scheduled; no driver assigned
+DRIVER_COMMITTED	Ride is scheduled; a driver has been assigned (vehicle and driver info included in response)
+DISPATCHED	Ride has been converted to on-demand
+CANCELLED	Ride has been cancelled
+Important: Once a prebooked ride reaches DISPATCHED, it becomes an on-demand ride. From this point on, use the on-demand endpoints for tracking, receipts, and cancellation with the same ride_id.
+
+Cancel #
+POST /rides/prebooked/cancel
+
+You can cancel a prebooked ride until it is dispatched. Once dispatched, use the on-demand cancel endpoint (same conditions apply). To check the fee before cancelling, see Cancellation Fee.
+
+History #
+GET /rides/prebooked/history
+
+Returns all upcoming prebooked rides whose pickup time has not yet passed. Results are paginated.
+
+Flexible Rides #
+Flexible rides let partners pre-create ride requests that passengers can dispatch when they are ready.
+
+Key differences from other ride types:
+
+The estimation endpoint returns a vehicle_category_id (not a fare_id), which you use to create the ride.
+A flexible ride is valid for 24 hours after the ready_for_dispatch_at datetime. This datetime can be in the future; if omitted, it defaults to the current time.
+Once a passenger dispatches the ride, it becomes an on-demand ride — use on-demand endpoints from that point.
+Flexible ride states:
+
+State	Description
+SCHEDULED	The flexible ride is scheduled and cannot be dispatched yet
+READY_TO_DISPATCH	The flexible ride is ready to be dispatched
+DISPATCHED	The flexible ride has become an on-demand ride
+CANCELLED	The flexible ride was cancelled
+OTHER	Unmapped state for this API version
+Endpoints:
+
+POST /rides/flexible/estimations — returns available vehicle categories and vehicle_category_id.
+POST /rides/flexible/create — creates a flexible ride.
+GET /rides/flexible/details — retrieves the current state of a flexible ride.
+POST /rides/flexible/cancel — cancels a flexible ride (before dispatch, cancellation, or expiry).
+GET /rides/cancellation_fee — returns the fee that would apply if the ride were cancelled now (see Cancellation Fee).
+Webhooks #
+Bolt can send events to your server with webhooks. For example, Bolt sends an event when the state of a ride changes. You do not need to poll the ride details endpoint.
+
+Setup: Contact Bolt with:
+
+Your HTTPS webhook URL
+A bearer token that Bolt will use to authenticate requests to your endpoint
+The event types that you want to receive
+Request Format #
+Bolt sends each event as an HTTP POST request to your URL. The request body is a JSON object. The request has these headers:
+
+Content-Type: application/json
+Authorization: Bearer TOKEN_PROVIDED_BY_YOU
+Common Event Fields #
+Every event has these fields:
+
+Field	Type	Description
+event_id	string	ID of the event. When Bolt retries a delivery, the event has the same event_id. Treat it as an opaque string. Do not parse it.
+event_type	string	Type of the event, for example ride.state_changed.v1. The last segment is the version of the event. Use this field to decide how to read the other fields.
+event_created_at	integer	Time when the event object was created in Bolt's system, in Unix seconds. Retries keep the same value. It can be much later than the time when the change happened. Do not use this field to order events.
+Event Types #
+Event type	Description
+ride.state_changed.v1	The state of a ride has changed.
+ride.state_changed.v1 #
+Bolt sends this event when the state of a ride changes. It has the common event fields and these fields:
+
+Field	Type	Required	Description
+ride_id	integer	Yes	ID of the ride.
+type	string	Yes	Type of the ride: ON_DEMAND, PRE_BOOKED, or FLEXIBLE. Rides created with the deprecated scheduled rides endpoints have the type SCHEDULED.
+state	string	Yes	New state of the ride. The possible values depend on type. See the table below.
+event_occurred_at	integer	Yes	Approximate time when the state changed, in Unix seconds. It can be earlier than event_created_at.
+reason	string	No	Reason for the state change. Bolt sends it only for some state changes. One of the possible values is FRAUD_DETECTED. It means that Bolt detected suspicious activity.
+Values of state for each ride type:
+
+type	state values
+ON_DEMAND	See on-demand ride states.
+PRE_BOOKED	SCHEDULED, DRIVER_COMMITTED, DISPATCHED, CANCELLED. See prebooked ride states.
+FLEXIBLE	SCHEDULED, READY_TO_DISPATCH, CANCELLED. See flexible ride states.
+SCHEDULED	SCHEDULED, DISPATCHED, CANCELLED.
+Example:
+
+{
+  "event_id": "ac2eb2a6-9858-4432-bc19-6eb86493590c",
+  "event_type": "ride.state_changed.v1",
+  "event_created_at": 1792141207,
+  "ride_id": 19533591,
+  "type": "PRE_BOOKED",
+  "state": "CANCELLED",
+  "event_occurred_at": 1792141206
+}
+Compatibility #
+Bolt can make these changes to an event type without changing its version:
+
+Add new fields. Your handler should ignore fields that it does not know.
+Add new values to fields like type, state, and reason. Your handler should accept values that it does not know.
+Change the order of the fields in the JSON object.
+Bolt sends a new event type, or a new version of an event type, only after you ask for it.
+
+Delivery #
+Source IPs: Webhook calls originate from these IPs (useful for firewall allowlisting):
+
+18.197.164.122
+18.184.149.227
+3.120.3.19
+Limitations:
+
+To test your webhook handler, use sandbox webhooks.
+Webhook payloads do not include ETA or driver details — use the ride details endpoint to fetch those when you receive a state change.
+Webhook delivery behaviour:
+
+Ordering: Events are not guaranteed to arrive in order. For example, a COMPLETED event could arrive before DRIVING_WITH_CLIENT.
+Deduplication: The same state change can be delivered more than once. Your handler should be idempotent. Retries of a delivery have the same event_id and event_type, so you can use this pair to find them. The same state change can also arrive again with a new event_id.
+Expected response: Your endpoint should return 200 OK to acknowledge receipt.
+Recommended integration pattern: Treat each webhook as a notification that something changed, not as the source of truth. When you receive a webhook, call the appropriate ride details endpoint to fetch the current state and data. This approach handles out-of-order delivery and duplicates gracefully.
+
+Sandbox Webhooks #
+A sandbox can send webhook events too. Use them to test your webhook handler.
+
+Setup: Contact Bolt with:
+
+Your HTTPS webhook URL for sandbox events
+A bearer token for sandbox events
+Important: Do not use the same URL and token for production and sandbox events. If you use the same URL, a mistake in your handler can mix test data with real rides.
+
+Turn on webhooks for a sandbox: Webhooks are off by default. To turn them on, create the sandbox with features.webhooks.enabled set to true. See Create a Sandbox.
+
+How to recognize sandbox events: Sandbox events have the same format as production events, with two differences:
+
+The request has the header X-Bolt-Environment: Sandbox.
+The body has the field event_sandbox_id. It is the uuid of the sandbox that sent the event.
+Production events never have this header or this field.
+
+Example:
+
+{
+  "event_id": "c0498cdf-cf43-4d09-a6f9-3945593c1733",
+  "event_type": "ride.state_changed.v1",
+  "event_created_at": 1792415252,
+  "event_sandbox_id": "271428c1-dfcb-4fa5-a99b-6509802e352d",
+  "ride_id": 1001,
+  "type": "ON_DEMAND",
+  "state": "ARRIVED_AT_CLIENT",
+  "event_occurred_at": 1792415252
+}
+Which actions send events: A sandbox sends ride.state_changed.v1 events for on-demand rides. It sends an event when you:
+
+change the state of a ride with the state control endpoint
+cancel a ride with POST /sandbox/rides/cancel
+Prebooked and flexible rides in a sandbox do not send webhook events. After you dispatch such a ride, it becomes an on-demand ride. Then its state changes send events with type set to ON_DEMAND.
+
+Delivery: Delivery of sandbox events is best effort only. Retries are disabled for sandbox events. If a delivery fails, Bolt does not send the event again.
+
+Large Venue Support #
+For airports and other large venues, the API supports custom pickup and dropoff point handling to ensure passengers and drivers connect at valid, accessible locations.
+
+Two modes are available:
+
+Autosnapping (Default) #
+When a pickup or dropoff coordinate falls inside a known venue (e.g. an airport terminal), the API automatically replaces it with the closest valid pickup point. All estimation endpoints return the adjusted coordinates.
+
+Important: When autosnapping adjusts your coordinates, the estimation response will include the snapped coordinates. Ideally, send the snapped coordinates to the create endpoint. However, the creation flow applies the same snapping logic, so sending your original coordinates will also work.
+
+Example:
+
+You request a pickup at 51.4700, -0.4543 (within Heathrow Airport).
+The API detects this is inside the Heathrow zone.
+The pickup point is autosnapped to the nearest valid location.
+The response includes the adjusted coordinates.
+Array of Pickup Points #
+To present multiple options to the passenger (e.g. "Terminal 2 Arrivals" vs. "Terminal 5 Departures"), call:
+
+POST /rides/place/details
+
+Send a JSON body with lat, lng, and is_pickup (required), plus an optional language code. The response includes:
+
+Whether the coordinates fall inside a custom area
+The geo-coordinates of that area
+A list of valid pickup points, each optionally including step-by-step passenger directions
+Passenger Directions #
+Points listed under a custom area's points may include walking directions to help the passenger physically reach that point. Each point can include:
+
+waypoints – an array of step-by-step instructions. Each waypoint has lat, lng, an instruction_text, the instruction_language actually used, and a nullable image_url illustrating the step.
+polyline – a single walkable route to the point, with an encoded path, a start_point_description, and an estimated duration_in_minutes.
+A point's waypoints are present whenever directions have been mapped for it; polyline may additionally be included alongside waypoints. Both are omitted when no directions have been mapped for that point.
+
+Example:
+
+{
+  "custom_area": {
+    "points": [
+      {
+        "lat": 51.47,
+        "lng": -0.4543,
+        "address": "Heathrow Airport, Terminal 5",
+        "name": "Terminal 5 Departures",
+        "waypoints": [
+          {
+            "lat": 51.4701,
+            "lng": -0.454,
+            "instruction_text": "Head towards the main terminal entrance.",
+            "instruction_language": "en",
+            "image_url": "https://cdn.bolt.eu/directions/step-1.jpg"
+          },
+          {
+            "lat": 51.4703,
+            "lng": -0.4536,
+            "instruction_text": "Turn right at the taxi rank.",
+            "instruction_language": "en",
+            "image_url": null
+          }
+        ],
+        "polyline": {
+          "path": "u{~vFvyys@fS]",
+          "start_point_description": "Departures level, outside Door 5",
+          "duration_in_minutes": 3
+        }
+      }
+    ]
+  }
+}
+Language note: instruction_language reflects the language the instructions were actually returned in. If no translation exists for the requested language, English is used instead, so instruction_language may differ from what you requested.
+
+See the Swagger docs for the exact field types.
+
+When to use which:
+
+Mode	Best for
+Autosnapping	Simple integrations; riders are directed to the closest valid point automatically
+Array of pickup points	When you want riders to choose a specific terminal, gate, or entrance
+Errors #
+Unsuccessful API calls include these response headers to help with debugging:
+
+Header	Description
+x-bolt-error-code	A specific numeric error code
+x-bolt-error-message	A short description of the error
+x-bolt-tracking	A tracking hash to help Bolt trace the request
+All error responses include a JSON body with at least two fields:
+
+{
+  "code": 12345,
+  "message": "RIDE_BOOKER_API_NO_MATCHING_CITY"
+}
+For 400 Bad Request responses that include validation errors, a validation_errors array is also present:
+
+{
+  "code": 400,
+  "message": "INVALID_REQUEST",
+  "validation_errors": [
+    {
+      "error": "Validation error",
+      "property": "user",
+      "children": [
+        {
+          "error": "Not string",
+          "property": "phone"
+        }
+      ]
+    }
+  ]
+}
+Validation and Input Errors #
+Code	Meaning	Recommendation
+RIDE_BOOKER_API_INVALID_STOPS_LENGTH	Stops count is < 2 or > 4	Validate stops count before sending.
+RIDE_BOOKER_API_INVALID_FARE_ID	Fare ID expired or already used	Re-run estimation to get a new fare ID.
+RIDE_BOOKER_API_FARE_ID_DECRYPTION_ERROR	Fare ID invalid/corrupted	Re-run estimation.
+RIDE_BOOKER_API_INVALID_PAYMENT_METHOD	Disallowed payment method	Hide unsupported payment methods for the given market.
+RIDE_BOOKER_API_INVALID_DATE_FORMAT	Date field format invalid	Validate ISO-8601 format before sending.
+RIDE_BOOKER_API_INVALID_PHONE_NUMBER	Phone number invalid	Validate E.164 format before sending.
+Temporal Errors #
+Code	Meaning	Recommendation
+RIDE_BOOKER_API_NOT_FUTURE_DATE	Requested time is not in the future	Ensure prebooked times are > now.
+RIDE_BOOKER_API_FUTURE_DATE_GREATER_THAN_MAX_ALLOWED	Time > 90 days in the future	Restrict date picker to within the allowed max.
+RIDE_BOOKER_API_FUTURE_DATE_SMALLER_THAN_MIN_ALLOWED	Time < 30 minutes in the future	Apply a minimum buffer (e.g. 30 min) in UI.
+Flight Tracking Errors #
+Code	Meaning	Recommendation
+RIDE_BOOKER_API_NO_MATCHING_FLIGHT	The flight_tracking details do not match a known flight	Check carrier, flight number and arrival date.
+RIDE_BOOKER_API_AIRPORT_NOT_SUPPORTED	The arrival airport is not supported for flight tracking	Fall back to arrive_at_client_time.
+RIDE_BOOKER_API_PICKUP_NOT_AT_AIRPORT	The first stop is not at the arrival airport	Use a pickup point inside the arrival airport.
+Location and Address Errors #
+Code	Meaning	Recommendation
+RIDE_BOOKER_API_NO_MATCHING_CITY	City cannot be resolved from pickup coordinates	Validate coordinates; ask user to adjust location.
+RIDE_BOOKER_API_AREA_NOT_SERVICED	Pickup area not serviced by Bolt	Inform user; suggest an alternate pickup point.
+RIDE_BOOKER_API_NO_MATCHING_ADDRESS_FOR_PICKUP_COORDINATE	Cannot resolve pickup address	Ensure coordinates are valid; retry with corrected data.
+RIDE_BOOKER_API_MISMATCHING_ADDRESS_AND_COORDINATES	Provided address is too far from coordinates	Show user a corrected address; ask for confirmation.
+Order Lifecycle Errors #
+Code	Meaning	Recommendation
+RIDE_BOOKER_API_MISSING_ORDER	Ride cannot be found	Check ride_id validity; the ride may have expired.
+RIDE_BOOKER_API_INACTIVE_RIDE_REQUESTED	Ride not active (pending or completed)	Stop polling; inform user.
+RIDE_BOOKER_API_UNABLE_TO_LOCATE_DRIVER	Active ride but driver location unavailable	Retry after backoff; show fallback status.
+RIDE_BOOKER_API_INTERNAL_ORDER_CREATION_FAILED	Unexpected failure during ride creation	Log error; show generic failure message; retry cautiously.
+RIDE_BOOKER_API_ORDER_INVALID_STATE_FOR_CANCELLATION	Cancellation (or a cancellation fee lookup) rejected because the ride is no longer in a cancellable state (e.g. an on-demand ride in DRIVING_WITH_CLIENT or COMPLETED)	Refresh ride state via the details endpoint for the ride type and stop offering cancellation once the ride has reached a non-cancellable state.
+RIDE_BOOKER_API_INTERNAL_ORDER_CANCELLATION_FAILED	Cancellation failed for any other reason	Refresh ride status and recheck state.
+RIDE_BOOKER_API_FARE_BREAKDOWN_UNAVAILABLE	Receipt unavailable (ride still active)	Retry after ride completion.
+HTTP Status Codes #
+Status	Meaning	Action
+400	Bad Request – invalid request body/parameters	Fix client request.
+401	Unauthorized – invalid or missing bearer token	Refresh credentials.
+403	Forbidden – client not allowed to perform action	Contact your Bolt representative.
+404	Not Found – resource does not exist	Check ride_id; often overlaps with MISSING_ORDER.
+409	Conflict – state conflict (e.g. cancelling a completed ride)	Refresh ride state and retry if appropriate.
+422	Unprocessable Entity – semantic validation failure	Check error details in response.
+429	Too Many Requests – rate limit hit	Back off and retry later.
+500	Internal Server Error	Retry with exponential backoff.
+Common Issues #
+Beyond network failures and server errors, these are frequent causes of failed requests:
+
+Issue	Symptom	Fix
+Bolt does not operate in the area	RIDE_BOOKER_API_AREA_NOT_SERVICED or RIDE_BOOKER_API_NO_MATCHING_CITY	Validate that the pickup coordinates are in a Bolt-served area before calling the estimation endpoint.
+Invalid payment method or overdue payment	RIDE_BOOKER_API_INVALID_PAYMENT_METHOD or ride creation fails	Check payment settings in the Bolt for Business portal. Ensure no outstanding invoices.
+Invalid number of stops	RIDE_BOOKER_API_INVALID_STOPS_LENGTH	Validate that stops count is between 2 and 4 before sending.
+Landline phone number used	RIDE_BOOKER_API_INVALID_PHONE_NUMBER	The rider phone field must be a mobile number in E.164 format (e.g. +37255555555). Landlines are not accepted because the driver needs to be able to call or text the rider.
+Expired or reused fare_id	RIDE_BOOKER_API_INVALID_FARE_ID	The fare_id expires after 5 minutes and is single-use. Always fetch a fresh estimation before creating a ride.
+Stops mismatch between estimate and create	Ride creation fails	The stops (and arrive_at_client_time for prebooked rides) sent to the create endpoint must exactly match what was sent to the estimation endpoint.
+Sandbox #
+The Ride Booker API Sandbox lets you test requests and responses with mocked data without creating real rides.
+
+Sandbox data is isolated per sandbox instance and is auto-deleted after some time.
+You can create multiple sandboxes; their data is completely isolated.
+The sandbox uses the same authentication as the production API (see Auth).
+Sandbox endpoints mirror the production API but have the prefix /sandbox/ and require a uuid query parameter to identify the sandbox instance.
+A sandbox can send webhook events. See Sandbox Webhooks.
+To test error cases, refer to the Swagger docs — each endpoint documents inputs that trigger specific business errors.
+Example Flow #
+This walkthrough demonstrates the full lifecycle: create a sandbox → estimate → book → track → receipt → destroy.
+
+1. Create a Sandbox #
+Request:
+
+curl --location --request POST \
+  'https://node.bolt.eu/ride-booker-api-sandbox/reseller/v1/sandbox/control/create' \
+  --header 'Authorization: Bearer <token>' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+  "features": {
+    "webhooks": {
+      "enabled": true
+    }
+  }
+}'
+The features object is optional. All features are off by default. Set features.webhooks.enabled to true to receive sandbox webhooks.
+
+Response:
+
+{
+  "uuid": "b1034a93-c5af-4fa1-a3b5-1bdb255f8967",
+  "features": {
+    "webhooks": {
+      "enabled": true
+    }
+  }
+}
+uuid is the ID of the sandbox. The response lists all features of the sandbox, including the features that are off.
+
+2. Get Ride Estimations #
+Request:
+
+curl --location --request POST \
+  'https://node.bolt.eu/ride-booker-api-sandbox/reseller/v2/sandbox/rides/estimations?uuid=b1034a93-c5af-4fa1-a3b5-1bdb255f8967' \
+  --header 'Authorization: Bearer <token>' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+  "stops": [
+    {
+      "lat": 59.424163,
+      "lng": 24.747337
+    },
+    {
+      "lat": 59.433827,
+      "lng": 24.744215
+    }
+  ],
+  "payment_methods": ["business"]
+}'
+Note: These coordinates are in Tallinn, Estonia.
+
+Response (truncated):
+
+{
+  "categories": [
+    {
+      "vehicle_category": "comfort",
+      "vehicle_option": {
+        "type": "comfort",
+        "seats": 4
+      },
+      "seats": 4,
+      "estimations": [
+        {
+          "payment_method": "business",
+          "fare_id": "AAAABDlkZTBjNDE0ZGU2MzQzMzBiZDU0ZjM1...",
+          "eta": 200,
+          "price": {
+            "amount": "10.50–12.50€",
+            "minimum_amount": 10.5,
+            "maximum_amount": 12.5,
+            "currency_code": "EUR"
+          }
+        }
+      ]
+    }
+  ]
+}
+Note: The API returns this field as fare_id (lowercase). The original documentation incorrectly showed Fare_id with a capital F in some examples.
+
+3. Create a Ride #
+Request:
+
+curl --location --request POST \
+  'https://node.bolt.eu/ride-booker-api-sandbox/reseller/v1/sandbox/rides/create?uuid=b1034a93-c5af-4fa1-a3b5-1bdb255f8967' \
+  --header 'Authorization: Bearer <token>' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+  "fare_id": "AAAABDlkZTBjNDE0ZGU2MzQzMzBiZDU0ZjM1...",
+  "user": {
+    "phone": "+37255555555",
+    "name": "API Sandbox"
+  },
+  "stops": [
+    {
+      "lat": 59.424163,
+      "lng": 24.747337
+    },
+    {
+      "lat": 59.433827,
+      "lng": 24.744215
+    }
+  ],
+  "note_to_driver": "Some note to the Driver"
+}'
+Response:
+
+{ "ride_id": 1001 }
+4. Get Ride Details #
+Request:
+
+curl --location --request GET \
+  'https://node.bolt.eu/ride-booker-api-sandbox/reseller/v1/sandbox/rides/details?uuid=b1034a93-c5af-4fa1-a3b5-1bdb255f8967&ride_id=1001' \
+  --header 'Authorization: Bearer <token>'
+Response:
+
+{
+  "ride_id": 1001,
+  "state": "SEARCHING",
+  "user": {
+    "phone": "+37255555555",
+    "name": "API Sandbox"
+  },
+  "stops": [
+    {
+      "lat": 59.424163,
+      "lng": 24.747337
+    },
+    {
+      "lat": 59.433827,
+      "lng": 24.744215
+    }
+  ],
+  "note_to_driver": "Some note to the Driver",
+  "payment_method": "business",
+  "created": "2022-08-15T14:23:39.009Z"
+}
+5. State Transitions #
+In the sandbox, you can manually transition the ride through states using the control endpoint. This lets you simulate the full ride lifecycle.
+
+Note: A near-identical flow is used for prebooked rides, except ride_state must be a valid prebooked ride state value. The prebooked estimations and create endpoints accept flight_tracking in the sandbox, but the flight is mocked: no real flight or airport is looked up, and the pickup time is the given arrival_date_local at 12:00 UTC plus time_at_airport. The Swagger docs list the coordinates that trigger the flight errors.
+
+Terminology note: The correct terminal state is COMPLETED. The original documentation occasionally referred to this state as "FINISHED" in prose — use COMPLETED in your code.
+
+Transition: SEARCHING → DRIVER_ON_ROUTE_TO_CLIENT
+
+curl --location --request POST \
+  'https://node.bolt.eu/ride-booker-api-sandbox/reseller/v1/sandbox/rides/control/state?uuid=b1034a93-c5af-4fa1-a3b5-1bdb255f8967' \
+  --header 'Authorization: Bearer <token>' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+  "ride_id": 1001,
+  "ride_state": "DRIVER_ON_ROUTE_TO_CLIENT"
+}'
+After this transition, ride details will include driver and vehicle info:
+
+{
+  "eta_to_client": 180,
+  "tracking_url": "https://tracking-url/",
+  "vehicle": {
+    "car_reg_number": "ABC-123",
+    "car_model": "BMW",
+    "car_transport_licence_number": "LC-4455",
+    "driver_name": "Seyf Driver",
+    "driver_phone": "+37255667788",
+    "driver_picture": "https://driver-picture-url/"
+  },
+  "ride_id": 1001,
+  "state": "DRIVER_ON_ROUTE_TO_CLIENT",
+  "stops": [
+    {
+      "lat": 59.424163,
+      "lng": 24.747337
+    },
+    {
+      "lat": 59.433827,
+      "lng": 24.744215
+    }
+  ],
+  "user": {
+    "phone": "+37255555555",
+    "name": "API Sandbox"
+  },
+  "note_to_driver": "Some note to the Driver",
+  "payment_method": "business",
+  "created": "2022-08-15T14:23:39.009Z"
+}
+Continue transitioning through the remaining states:
+
+DRIVER_ON_ROUTE_TO_CLIENT → ARRIVED_AT_CLIENT → DRIVING_WITH_CLIENT → COMPLETED
+Each transition uses the same control endpoint — just change the ride_state value.
+
+If webhooks are on for the sandbox, each transition sends a ride.state_changed.v1 event. See Sandbox Webhooks.
+
+6. Get Ride Receipt #
+Request:
+
+curl --location --request GET \
+  'https://node.bolt.eu/ride-booker-api-sandbox/reseller/v1/sandbox/rides/receipt?uuid=b1034a93-c5af-4fa1-a3b5-1bdb255f8967&ride_id=1001' \
+  --header 'Authorization: Bearer <token>'
+Response:
+
+{
+  "ride_id": 1001,
+  "amount": 12.5,
+  "currency_code": "EUR",
+  "invoice_url": "https://invoice-url/",
+  "fare_breakdown": [
+    {
+      "type": "booking_fee",
+      "amount": 2.5
+    },
+    {
+      "type": "ride_fee",
+      "amount": 8
+    },
+    {
+      "type": "toll_road",
+      "amount": 1
+    },
+    {
+      "type": "other",
+      "amount": 1
+    }
+  ]
+}
+7. Destroy the Sandbox #
+Request:
+
+curl --location --request POST \
+  'https://node.bolt.eu/ride-booker-api-sandbox/reseller/v1/sandbox/control/destroy' \
+  --header 'Authorization: Bearer <token>' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+  "uuid": "b1034a93-c5af-4fa1-a3b5-1bdb255f8967"
+}'

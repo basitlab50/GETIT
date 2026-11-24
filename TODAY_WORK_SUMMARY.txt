@@ -1344,6 +1344,19 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Integrated `requestBoltDelivery` into `acceptMerchantOrder` to trigger background Bolt courier dispatch when the merchant marks packaged orders ready for pickup.
      * Automatically enriches active orders with `boltRider`, `boltTrackingCode`, and `boltTrackingUrl`.
 
+79. Staff Enrollment & Leadership Recruitment Command Portal:
+   - 📝 Dedicated Admin Recruitment Hub (`AdminDashboard.jsx`):
+     * Added **`[ 📝 Staff Enrollment ]`** to the core navigation under `LAUNCH & FIELD OPERATIONS` with dynamic pending application badge counter.
+     * Engineered a full dedicated **Staff & Management Enrollment Command Portal** replacing cramped popups.
+     * Features real-time candidate inbox with status filters (`All`, `Pending Review`, `Shortlisted for 1-on-1 Interview`, `Approved & Onboarded`, `Rejected`).
+   - 📋 21-Question Screening Dossier & CV Inspector:
+     * Full Candidate Dossier modal rendering answers to all 21 leadership questions (Personal info, Management background, Plan for team of 20, Turnaround underperforming 15, 200 merchant relationships, Daily monitoring accountability, Fieldwork commitment, etc.).
+     * Integrated CV file inspector with direct `⬇ Download Attached CV` button and inline browser PDF preview iframe.
+     * Action buttons: 1-click `⭐ Shortlist for 1-on-1 Interview`, `✕ Reject Application`, and `✓ Approve & Appoint as Regional Manager (Generate GET-XXX ID)` with automated staff ID assignment.
+   - 🔄 Dual-Table Supabase Resilience Engine:
+     * Synchronizes directly with the dedicated `public.staff_enrollment` table (schema in `supabase/create_staff_enrollment_table.sql`).
+     * Automatically falls back to reading/writing `public.audit_logs` (`action = 'MANAGEMENT_JOB_APPLICATION'`) so applications submitted from `apply.html` appear immediately even if the dedicated SQL table hasn't been executed yet.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
