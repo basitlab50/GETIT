@@ -1828,31 +1828,49 @@ export default function AdminDashboard() {
 
   const mergeManagementApplicationRows = (incomingRows) => {
     if (!Array.isArray(incomingRows) || incomingRows.length === 0) return;
+    const statusOverrides = loadLocalJson('getit_mgmt_status_overrides_v1', {});
+
+    const applyStatusProtection = (baseRow, incomingRow) => {
+      const id = incomingRow?.id || baseRow?.id;
+      const override = id ? statusOverrides[id] : null;
+
+      const candidates = [
+        baseRow && { status: baseRow.status, reviewedAt: baseRow.reviewedAt, reviewedBy: baseRow.reviewedBy },
+        incomingRow && { status: incomingRow.status, reviewedAt: incomingRow.reviewedAt, reviewedBy: incomingRow.reviewedBy },
+        override && { status: override.status, reviewedAt: override.reviewedAt, reviewedBy: override.reviewedBy },
+      ].filter((c) => c && c.status);
+
+      // Prefer the most recently reviewed non-PENDING status so stale syncs never revert Reject/Standby/Approve
+      const reviewedChoices = candidates.filter((c) => c.status !== 'PENDING_REVIEW');
+      let winner = null;
+      if (reviewedChoices.length > 0) {
+        winner = reviewedChoices.sort(
+          (a, b) => new Date(b.reviewedAt || 0).getTime() - new Date(a.reviewedAt || 0).getTime()
+        )[0];
+      } else {
+        winner = candidates[candidates.length - 1] || { status: 'PENDING_REVIEW' };
+      }
+
+      return {
+        ...(baseRow || {}),
+        ...(incomingRow || {}),
+        status: winner.status || 'PENDING_REVIEW',
+        reviewedAt: winner.reviewedAt || incomingRow?.reviewedAt || baseRow?.reviewedAt,
+        reviewedBy: winner.reviewedBy || incomingRow?.reviewedBy || baseRow?.reviewedBy,
+        cvDataUrl: incomingRow?.cvDataUrl || baseRow?.cvDataUrl,
+        interviewSchedule: incomingRow?.interviewSchedule || baseRow?.interviewSchedule,
+      };
+    };
+
     setManagementApplications((prev) => {
       const byId = new Map();
       (Array.isArray(prev) ? prev : []).forEach((item) => {
-        if (item?.id) byId.set(item.id, item);
+        if (item?.id) byId.set(item.id, applyStatusProtection(null, item));
       });
       incomingRows.forEach((item) => {
         if (!item?.id) return;
         const existing = byId.get(item.id);
-        if (!existing) {
-          byId.set(item.id, item);
-        } else {
-          const mergedStatus =
-            item.status && item.status !== 'PENDING_REVIEW'
-              ? item.status
-              : existing.status || item.status || 'PENDING_REVIEW';
-          byId.set(item.id, {
-            ...existing,
-            ...item,
-            status: mergedStatus,
-            reviewedAt: item.reviewedAt || existing.reviewedAt,
-            reviewedBy: item.reviewedBy || existing.reviewedBy,
-            cvDataUrl: item.cvDataUrl || existing.cvDataUrl,
-            interviewSchedule: item.interviewSchedule || existing.interviewSchedule,
-          });
-        }
+        byId.set(item.id, applyStatusProtection(existing, item));
       });
       return Array.from(byId.values()).sort(
         (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
@@ -5245,22 +5263,61 @@ export default function AdminDashboard() {
       }
     }
 
+    // Persist decision locally immediately so background syncs or quick refreshes never revert it
     try {
-      await Promise.all([
-        supabaseClient
-          .from('staff_enrollment')
-          .update({
-            status: nextStatus,
-            reviewed_by: updatedApp.reviewedBy,
-            reviewed_at: updatedApp.reviewedAt,
-            payload: updatedApp,
-          })
-          .eq('id', app.id),
-        supabaseClient
+      const overrides = loadLocalJson('getit_mgmt_status_overrides_v1', {});
+      overrides[app.id] = {
+        status: nextStatus,
+        reviewedBy: updatedApp.reviewedBy,
+        reviewedAt: updatedApp.reviewedAt,
+      };
+      saveLocalJson('getit_mgmt_status_overrides_v1', overrides);
+    } catch {}
+
+    // Lightweight 3-column update (~120 bytes instead of multi-MB payload) with automatic 1x retry
+    const persistToStaffEnrollment = async () =>
+      supabaseClient
+        .from('staff_enrollment')
+        .update({
+          status: nextStatus,
+          reviewed_by: updatedApp.reviewedBy,
+          reviewed_at: updatedApp.reviewedAt,
+        })
+        .eq('id', app.id)
+        .select('id, status');
+
+    try {
+      let enrollUpdate = await persistToStaffEnrollment();
+      if (enrollUpdate.error) {
+        await new Promise((r) => setTimeout(r, 800));
+        enrollUpdate = await persistToStaffEnrollment();
+      }
+
+      // If this is a legacy audit_logs-only applicant (0 rows updated in staff_enrollment), update audit_logs safely
+      if (!enrollUpdate.error && Array.isArray(enrollUpdate.data) && enrollUpdate.data.length === 0) {
+        const { data: logRow } = await supabaseClient
           .from('audit_logs')
-          .update({ payload: JSON.stringify(updatedApp) })
-          .eq('id', app.id),
-      ]);
+          .select('payload')
+          .eq('id', app.id)
+          .maybeSingle();
+        if (logRow) {
+          const existingPayload =
+            typeof logRow.payload === 'string'
+              ? (() => { try { return JSON.parse(logRow.payload); } catch { return {}; } })()
+              : logRow.payload || {};
+          await supabaseClient
+            .from('audit_logs')
+            .update({
+              payload: JSON.stringify({
+                ...existingPayload,
+                status: nextStatus,
+                reviewedBy: updatedApp.reviewedBy,
+                reviewedAt: updatedApp.reviewedAt,
+              }),
+            })
+            .eq('id', app.id);
+        }
+      }
     } catch (err) {
       console.warn('Supabase application status update notice:', err);
     }
