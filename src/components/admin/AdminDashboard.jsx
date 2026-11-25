@@ -1678,7 +1678,13 @@ export default function AdminDashboard() {
     loadLocalJson('getit_management_applications_v1', [])
   );
   const [selectedMgmtAppDossier, setSelectedMgmtAppDossier] = useState(null);
-  const [mgmtAppsFilter, setMgmtAppsFilter] = useState('ALL'); // 'ALL' | 'PENDING_REVIEW' | 'SHORTLISTED' | 'APPROVED_ONBOARDED' | 'REJECTED'
+  const [mgmtAppsFilter, setMgmtAppsFilter] = useState('ALL'); // 'ALL' | 'PENDING_REVIEW' | 'STANDBY' | 'SHORTLISTED' | 'APPROVED_ONBOARDED' | 'REJECTED'
+  const [mgmtSearchQuery, setMgmtSearchQuery] = useState('');
+  const [mgmtLocationFilter, setMgmtLocationFilter] = useState('ALL');
+  const [mgmtEducationFilter, setMgmtEducationFilter] = useState('ALL');
+  const [mgmtLeadershipFilter, setMgmtLeadershipFilter] = useState('ALL'); // 'ALL' | 'YES' | 'NO'
+  const [mgmtFieldworkFilter, setMgmtFieldworkFilter] = useState('ALL'); // 'ALL' | 'YES' | 'NO'
+  const [mgmtSortBy, setMgmtSortBy] = useState('NEWEST'); // 'NEWEST' | 'OLDEST' | 'RECENTLY_REVIEWED' | 'NAME_ASC'
   const [interviewCandidateToSchedule, setInterviewCandidateToSchedule] = useState(null);
   const [activeInterviewBatchDate, setActiveInterviewBatchDate] = useState(() => {
     try {
@@ -1841,6 +1847,8 @@ export default function AdminDashboard() {
             ...existing,
             ...item,
             status: mergedStatus,
+            reviewedAt: item.reviewedAt || existing.reviewedAt,
+            reviewedBy: item.reviewedBy || existing.reviewedBy,
             cvDataUrl: item.cvDataUrl || existing.cvDataUrl,
             interviewSchedule: item.interviewSchedule || existing.interviewSchedule,
           });
@@ -5409,10 +5417,106 @@ export default function AdminDashboard() {
   };
 
   const renderManagementApplicationsInbox = () => {
-    const filteredApps = managementApplications.filter((a) => {
-      if (mgmtAppsFilter === 'ALL') return true;
-      return (a.status || 'PENDING_REVIEW') === mgmtAppsFilter;
-    });
+    const formatAppDateTime = (isoStr) => {
+      if (!isoStr) return 'N/A';
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return String(isoStr);
+      const datePart = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return `${datePart} • ${timePart}`;
+    };
+
+    const getDecisionLabel = (status) => {
+      if (status === 'APPROVED_ONBOARDED') return '✓ Approved';
+      if (status === 'SHORTLISTED') return '⭐ Shortlisted';
+      if (status === 'STANDBY') return '⏳ Put on Standby';
+      if (status === 'REJECTED') return '✕ Rejected';
+      return 'Reviewed';
+    };
+
+    // Build dynamic Location & Education dropdown options from live applicants
+    const locationOptions = Array.from(
+      new Set(
+        managementApplications
+          .map((a) => String(a.stateAndCity || a.currentState || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    const educationOptions = Array.from(
+      new Set(
+        managementApplications
+          .map((a) => String(a.highestEducation || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    const qTrim = mgmtSearchQuery.trim().toLowerCase();
+    const qDigits = qTrim.replace(/\D/g, '');
+
+    const filteredApps = managementApplications
+      .filter((a) => {
+        // 1. Status tab filter
+        if (mgmtAppsFilter !== 'ALL' && (a.status || 'PENDING_REVIEW') !== mgmtAppsFilter) {
+          return false;
+        }
+        // 2. Search query (Name, Phone Number, Email, or Application Ref)
+        if (qTrim) {
+          const nameMatch = String(a.fullName || '').toLowerCase().includes(qTrim);
+          const emailMatch = String(a.email || '').toLowerCase().includes(qTrim);
+          const refMatch = String(a.applicationRef || a.id || '').toLowerCase().includes(qTrim);
+          const rawPhone = String(a.phone || '').toLowerCase();
+          const phoneDigits = rawPhone.replace(/\D/g, '');
+          const phoneMatch = rawPhone.includes(qTrim) || (qDigits.length >= 3 && phoneDigits.includes(qDigits));
+          if (!nameMatch && !emailMatch && !refMatch && !phoneMatch) return false;
+        }
+        // 3. Location filter
+        if (mgmtLocationFilter !== 'ALL') {
+          const loc = String(a.stateAndCity || a.currentState || '').trim().toLowerCase();
+          if (loc !== mgmtLocationFilter.toLowerCase()) return false;
+        }
+        // 4. Education filter
+        if (mgmtEducationFilter !== 'ALL') {
+          const edu = String(a.highestEducation || '').trim().toLowerCase();
+          if (edu !== mgmtEducationFilter.toLowerCase()) return false;
+        }
+        // 5. Leadership / Previously Managed Team filter
+        if (mgmtLeadershipFilter !== 'ALL') {
+          const led = String(a.previouslyManagedTeam || '').toLowerCase();
+          const isYes = led.startsWith('yes');
+          if (mgmtLeadershipFilter === 'YES' && !isYes) return false;
+          if (mgmtLeadershipFilter === 'NO' && isYes) return false;
+        }
+        // 6. Fieldwork comfort filter
+        if (mgmtFieldworkFilter !== 'ALL') {
+          const fw = String(a.comfortableWithFieldwork || '').toLowerCase();
+          const isYes = fw.startsWith('yes');
+          if (mgmtFieldworkFilter === 'YES' && !isYes) return false;
+          if (mgmtFieldworkFilter === 'NO' && isYes) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        if (mgmtSortBy === 'OLDEST') {
+          return new Date(a.submittedAt || 0).getTime() - new Date(b.submittedAt || 0).getTime();
+        }
+        if (mgmtSortBy === 'RECENTLY_REVIEWED') {
+          return new Date(b.reviewedAt || 0).getTime() - new Date(a.reviewedAt || 0).getTime();
+        }
+        if (mgmtSortBy === 'NAME_ASC') {
+          return String(a.fullName || '').localeCompare(String(b.fullName || ''));
+        }
+        return new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime();
+      });
+
+    const hasActiveSubFilters =
+      Boolean(qTrim) ||
+      mgmtLocationFilter !== 'ALL' ||
+      mgmtEducationFilter !== 'ALL' ||
+      mgmtLeadershipFilter !== 'ALL' ||
+      mgmtFieldworkFilter !== 'ALL' ||
+      mgmtSortBy !== 'NEWEST';
+
     const pendingCount = managementApplications.filter((a) => !a.status || a.status === 'PENDING_REVIEW').length;
     const standbyCount = managementApplications.filter((a) => a.status === 'STANDBY').length;
     const shortlistedCount = managementApplications.filter((a) => a.status === 'SHORTLISTED').length;
@@ -5800,7 +5904,7 @@ export default function AdminDashboard() {
           })()}
         </div>
 
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
           {[
             { id: 'ALL', label: `All Applications (${managementApplications.length})` },
             { id: 'PENDING_REVIEW', label: `Pending Review (${pendingCount})` },
@@ -5830,6 +5934,216 @@ export default function AdminDashboard() {
               </button>
             );
           })}
+        </div>
+
+        {/* Search Bar (Name, Phone, Email, Ref) + Multi-Criteria Filters (Location, Education, Leadership, Fieldwork, Sort) */}
+        <div
+          style={{
+            padding: '12px 14px',
+            borderRadius: '12px',
+            background: '#F8FAFC',
+            border: '1px solid #CBD5E1',
+            marginBottom: '16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+          }}
+        >
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ position: 'relative', flex: '1 1 260px', minWidth: '220px' }}>
+              <Search
+                size={15}
+                style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: '#64748B', pointerEvents: 'none' }}
+              />
+              <input
+                type="text"
+                value={mgmtSearchQuery}
+                onChange={(e) => setMgmtSearchQuery(e.target.value)}
+                placeholder="Search by name, phone number, email, or ref..."
+                style={{
+                  width: '100%',
+                  padding: '9px 32px 9px 34px',
+                  borderRadius: '8px',
+                  border: '1.5px solid #CBD5E1',
+                  background: '#FFFFFF',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  color: '#0F172A',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+              {mgmtSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setMgmtSearchQuery('')}
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    border: 'none',
+                    background: '#E2E8F0',
+                    color: '#334155',
+                    borderRadius: '50%',
+                    width: '20px',
+                    height: '20px',
+                    fontSize: '11px',
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  title="Clear search"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            <select
+              value={mgmtLocationFilter}
+              onChange={(e) => setMgmtLocationFilter(e.target.value)}
+              style={{
+                padding: '9px 10px',
+                borderRadius: '8px',
+                border: mgmtLocationFilter !== 'ALL' ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                background: mgmtLocationFilter !== 'ALL' ? '#F0FDFA' : '#FFFFFF',
+                fontSize: '12px',
+                fontWeight: 700,
+                color: '#0F172A',
+                cursor: 'pointer',
+                maxWidth: '210px',
+              }}
+              title="Filter by candidate location"
+            >
+              <option value="ALL">📍 All Locations ({locationOptions.length})</option>
+              {locationOptions.map((loc) => (
+                <option key={loc} value={loc}>
+                  {loc}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={mgmtEducationFilter}
+              onChange={(e) => setMgmtEducationFilter(e.target.value)}
+              style={{
+                padding: '9px 10px',
+                borderRadius: '8px',
+                border: mgmtEducationFilter !== 'ALL' ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                background: mgmtEducationFilter !== 'ALL' ? '#F0FDFA' : '#FFFFFF',
+                fontSize: '12px',
+                fontWeight: 700,
+                color: '#0F172A',
+                cursor: 'pointer',
+                maxWidth: '185px',
+              }}
+              title="Filter by education"
+            >
+              <option value="ALL">🎓 All Education</option>
+              {educationOptions.map((edu) => (
+                <option key={edu} value={edu}>
+                  {edu}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={mgmtLeadershipFilter}
+              onChange={(e) => setMgmtLeadershipFilter(e.target.value)}
+              style={{
+                padding: '9px 10px',
+                borderRadius: '8px',
+                border: mgmtLeadershipFilter !== 'ALL' ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                background: mgmtLeadershipFilter !== 'ALL' ? '#F0FDFA' : '#FFFFFF',
+                fontSize: '12px',
+                fontWeight: 700,
+                color: '#0F172A',
+                cursor: 'pointer',
+              }}
+              title="Filter by management experience"
+            >
+              <option value="ALL">👥 Leadership: All</option>
+              <option value="YES">Managed Team: Yes</option>
+              <option value="NO">Managed Team: No</option>
+            </select>
+
+            <select
+              value={mgmtFieldworkFilter}
+              onChange={(e) => setMgmtFieldworkFilter(e.target.value)}
+              style={{
+                padding: '9px 10px',
+                borderRadius: '8px',
+                border: mgmtFieldworkFilter !== 'ALL' ? '1.5px solid #0F766E' : '1px solid #CBD5E1',
+                background: mgmtFieldworkFilter !== 'ALL' ? '#F0FDFA' : '#FFFFFF',
+                fontSize: '12px',
+                fontWeight: 700,
+                color: '#0F172A',
+                cursor: 'pointer',
+              }}
+              title="Filter by fieldwork availability"
+            >
+              <option value="ALL">🥾 Fieldwork: All</option>
+              <option value="YES">Fieldwork: Yes</option>
+              <option value="NO">Fieldwork: No</option>
+            </select>
+
+            <select
+              value={mgmtSortBy}
+              onChange={(e) => setMgmtSortBy(e.target.value)}
+              style={{
+                padding: '9px 10px',
+                borderRadius: '8px',
+                border: '1px solid #CBD5E1',
+                background: '#FFFFFF',
+                fontSize: '12px',
+                fontWeight: 700,
+                color: '#0F172A',
+                cursor: 'pointer',
+              }}
+              title="Sort applications"
+            >
+              <option value="NEWEST">↕ Sort: Newest Applied</option>
+              <option value="OLDEST">↕ Sort: Oldest Applied</option>
+              <option value="RECENTLY_REVIEWED">↕ Sort: Recently Reviewed</option>
+              <option value="NAME_ASC">↕ Sort: Name (A–Z)</option>
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', fontSize: '11.5px', color: '#475569' }}>
+            <span>
+              Showing <strong>{filteredApps.length}</strong> of <strong>{managementApplications.length}</strong> applications
+              {mgmtLocationFilter !== 'ALL' && ` • Location: ${mgmtLocationFilter}`}
+              {qTrim && ` • Matching "${mgmtSearchQuery.trim()}"`}
+            </span>
+            {hasActiveSubFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMgmtSearchQuery('');
+                  setMgmtLocationFilter('ALL');
+                  setMgmtEducationFilter('ALL');
+                  setMgmtLeadershipFilter('ALL');
+                  setMgmtFieldworkFilter('ALL');
+                  setMgmtSortBy('NEWEST');
+                }}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #FCA5A5',
+                  background: '#FEF2F2',
+                  color: '#991B1B',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                ✕ Reset Filters
+              </button>
+            )}
+          </div>
         </div>
 
         {filteredApps.length === 0 ? (
@@ -5899,6 +6213,39 @@ export default function AdminDashboard() {
                     </div>
 
                     <div style={{ fontSize: '12px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '10px' }}>
+                      {/* Application Date/Time & Decision Date/Time Strip */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
+                        <span
+                          style={{
+                            fontSize: '10.5px',
+                            fontWeight: 700,
+                            padding: '2px 8px',
+                            borderRadius: '6px',
+                            background: '#F1F5F9',
+                            color: '#334155',
+                            border: '1px solid #E2E8F0',
+                          }}
+                        >
+                          🕒 Applied: {formatAppDateTime(app.submittedAt)}
+                        </span>
+                        {st !== 'PENDING_REVIEW' && app.reviewedAt && (
+                          <span
+                            style={{
+                              fontSize: '10.5px',
+                              fontWeight: 800,
+                              padding: '2px 8px',
+                              borderRadius: '6px',
+                              background: badgeColors.bg,
+                              color: badgeColors.text,
+                              border: `1px solid ${badgeColors.border}`,
+                            }}
+                          >
+                            {getDecisionLabel(st)}: {formatAppDateTime(app.reviewedAt)}
+                            {app.reviewedBy ? ` (${app.reviewedBy})` : ''}
+                          </span>
+                        )}
+                      </div>
+
                       <div>📍 <strong>Location:</strong> {app.stateAndCity || 'N/A'}</div>
 
                       {/* 1-Click WhatsApp & Gmail Direct Contact Bar */}
@@ -6290,6 +6637,17 @@ export default function AdminDashboard() {
                   <h3 style={{ fontSize: '22px', fontWeight: 900, margin: '4px 0' }}>
                     {selectedMgmtAppDossier.fullName}
                   </h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '4px', fontSize: '11.5px', color: '#CCFBF1' }}>
+                    <span style={{ background: 'rgba(255,255,255,0.14)', padding: '3px 9px', borderRadius: '6px', fontWeight: 700 }}>
+                      🕒 Applied: {formatAppDateTime(selectedMgmtAppDossier.submittedAt)}
+                    </span>
+                    {selectedMgmtAppDossier.status && selectedMgmtAppDossier.status !== 'PENDING_REVIEW' && selectedMgmtAppDossier.reviewedAt && (
+                      <span style={{ background: 'rgba(255,255,255,0.22)', padding: '3px 9px', borderRadius: '6px', fontWeight: 800, color: '#FFFFFF' }}>
+                        {getDecisionLabel(selectedMgmtAppDossier.status)}: {formatAppDateTime(selectedMgmtAppDossier.reviewedAt)}
+                        {selectedMgmtAppDossier.reviewedBy ? ` • by ${selectedMgmtAppDossier.reviewedBy}` : ''}
+                      </span>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
                     <span style={{ fontSize: '12.5px', color: '#CCFBF1' }}>
                       📍 {selectedMgmtAppDossier.stateAndCity}
