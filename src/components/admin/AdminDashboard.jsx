@@ -1763,18 +1763,35 @@ export default function AdminDashboard() {
         }
       }
 
-      const enriched = {
-        ...extraPayload,
-        ...app,
-        cvDataUrl: cvDataUrl || app.cvDataUrl,
-        interviewSchedule: app.interviewSchedule || extraPayload.interviewSchedule,
-      };
+      const resolvedCv = cvDataUrl || app.cvDataUrl || undefined;
+      const resolvedInterview = extraPayload?.interviewSchedule || undefined;
 
+      // IMPORTANT: Only patch cvDataUrl (and missing interviewSchedule) onto the CURRENT
+      // item state. NEVER overwrite item.status / reviewedAt / reviewedBy with the stale
+      // `app` snapshot from when the modal opened (prevents Reject/Approve reverting to Pending!).
       setManagementApplications((prev) =>
-        prev.map((item) => (item.id === app.id ? { ...item, ...enriched } : item))
+        prev.map((item) => {
+          if (item.id !== app.id) return item;
+          return {
+            ...item,
+            cvDataUrl: resolvedCv || item.cvDataUrl,
+            interviewSchedule: item.interviewSchedule || resolvedInterview,
+          };
+        })
       );
-      setSelectedMgmtAppDossier((prev) => (prev?.id === app.id ? { ...prev, ...enriched } : prev));
-      return enriched;
+      setSelectedMgmtAppDossier((prev) => {
+        if (!prev || prev.id !== app.id) return prev;
+        return {
+          ...prev,
+          cvDataUrl: resolvedCv || prev.cvDataUrl,
+          interviewSchedule: prev.interviewSchedule || resolvedInterview,
+        };
+      });
+      return {
+        ...app,
+        cvDataUrl: resolvedCv || app.cvDataUrl,
+        interviewSchedule: app.interviewSchedule || resolvedInterview,
+      };
     } catch (err) {
       console.warn('Lazy CV fetch notice:', err);
       return app;
