@@ -1520,6 +1520,16 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
    - 🖼️ Added Inline Image & Plain-Text CV Preview + Automatic Lazy-Load Trigger:
      * Automatically fetches the candidate's CV from Supabase when opening the Dossier if not already in memory, and cleanly revokes Blob URLs on unmount to prevent memory leaks.
 
+93. Application & Decision Timestamps, Live Search Bar & Multi-Criteria Filter Bar (`AdminDashboard.jsx`):
+   - 🕒 Full Application & Decision Date/Time Tracking:
+     * Displays exact submission date & time (`🕒 Applied: Nov 24, 2026 • 2:15 PM`) on every Candidate Card and inside the Full Dossier Modal header.
+     * Displays exact decision date, time, and reviewer (`✓ Approved`, `⭐ Shortlisted`, `⏳ Put on Standby`, or `✕ Rejected` with timestamp + reviewer name) on every Candidate Card and inside the Full Dossier Modal header.
+     * Preserves `reviewedAt` and `reviewedBy` across Supabase syncs and merges.
+   - 🔍 Instant Search Bar & Multi-Criteria Filter Bar:
+     * Live search by **Name**, **Phone Number** (supports raw or digits-only matching), **Email**, or **Application Ref**, with a 1-click clear button.
+     * Dynamic **Location** dropdown (auto-populated from all applicants' states/cities), **Education** dropdown, **Leadership (Managed Team)** filter, **Fieldwork** filter, and **Sort By** (`Newest Applied`, `Oldest Applied`, `Recently Reviewed`, `Name A–Z`).
+     * Live `"Showing X of Y applications"` counter and 1-click `✕ Reset Filters` button.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
