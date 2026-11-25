@@ -1511,6 +1511,15 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Adds `CREATE INDEX IF NOT EXISTS` on `staff_enrollment(created_at DESC)`, `staff_enrollment(status, created_at DESC)`, `audit_logs(action, created_at DESC)`, and `orders(created_at DESC)`.
      * Adds `public.staff_enrollment` to the `supabase_realtime` publication and runs `ANALYZE` on all three tables.
 
+92. Universal Inline CV Previewer for PDF, Word (.docx), Images & Text (`src/components/admin/ApplicantCvPreview.jsx` & `AdminDashboard.jsx`):
+   - 📄 Fixed PDF Inline Preview (No Forced Download):
+     * Converted base64 `data:application/pdf` strings into browser `Blob` Object URLs (`URL.createObjectURL`) before passing to `<iframe>` (540px tall) so Chrome/Edge always renders the native interactive PDF viewer inline instead of blocking or forcing downloads.
+     * Added a `🔍 Open Fullscreen Preview` button to inspect any PDF or image CV in a full browser tab.
+   - 📝 Added Inline Word Document (`.docx`) Preview via `mammoth`:
+     * Converts uploaded `.docx` CVs directly into cleanly formatted HTML right inside the Dossier Modal — zero download required to read Word CVs!
+   - 🖼️ Added Inline Image & Plain-Text CV Preview + Automatic Lazy-Load Trigger:
+     * Automatically fetches the candidate's CV from Supabase when opening the Dossier if not already in memory, and cleanly revokes Blob URLs on unmount to prevent memory leaks.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

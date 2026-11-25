@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { exportApplicantFullPdf, exportApplicantTextSummary } from '../../utils/applicantExport';
+import ApplicantCvPreview from './ApplicantCvPreview';
 import {
   LayoutGrid,
   Database,
@@ -6758,39 +6759,13 @@ export default function AdminDashboard() {
                   <div><strong>20. Uploaded CV File:</strong> {selectedMgmtAppDossier.cvFileName || 'Attached'}</div>
                   <div><strong>21. Professional Referee:</strong> {selectedMgmtAppDossier.professionalReferee || 'Not provided'}</div>
 
-                  {loadingCvForId === selectedMgmtAppDossier.id && !selectedMgmtAppDossier.cvDataUrl && (
-                    <div style={{ padding: '20px', textAlign: 'center', borderRadius: '10px', background: '#FFFFFF', border: '1px dashed #0D9488', color: '#0F766E', fontWeight: 700, fontSize: '12.5px' }}>
-                      ⏳ Loading attached CV from Supabase...
-                    </div>
-                  )}
-
-                  {!selectedMgmtAppDossier.cvDataUrl && loadingCvForId !== selectedMgmtAppDossier.id && selectedMgmtAppDossier.cvFileName && (
-                    <button
-                      type="button"
-                      onClick={() => ensureApplicantCvLoaded(selectedMgmtAppDossier)}
-                      style={{
-                        padding: '10px 16px',
-                        borderRadius: '8px',
-                        background: '#FFFFFF',
-                        color: '#0F766E',
-                        border: '1.5px solid #0D9488',
-                        fontWeight: 800,
-                        fontSize: '12px',
-                        cursor: 'pointer',
-                        alignSelf: 'flex-start',
-                      }}
-                    >
-                      📄 Load Attached CV Preview ({selectedMgmtAppDossier.cvFileName})
-                    </button>
-                  )}
-
-                  {selectedMgmtAppDossier.cvDataUrl && selectedMgmtAppDossier.cvDataUrl.startsWith('data:application/pdf') && (
-                    <iframe
-                      title="Applicant CV Preview"
-                      src={selectedMgmtAppDossier.cvDataUrl}
-                      style={{ width: '100%', height: '420px', borderRadius: '10px', border: '1px solid #CBD5E1', background: '#FFFFFF' }}
-                    />
-                  )}
+                  <ApplicantCvPreview
+                    cvDataUrl={selectedMgmtAppDossier.cvDataUrl}
+                    cvFileName={selectedMgmtAppDossier.cvFileName}
+                    cvMimeType={selectedMgmtAppDossier.cvMimeType}
+                    isLoading={loadingCvForId === selectedMgmtAppDossier.id}
+                    onRequestLoad={() => ensureApplicantCvLoaded(selectedMgmtAppDossier)}
+                  />
                 </div>
               </div>
 
