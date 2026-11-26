@@ -793,6 +793,10 @@ export async function createDatabaseStore(store) {
       storeTypeLabel: store.storeTypeLabel || store.categoryLabel || 'Partner Store',
       primaryDepartmentId: resolvedDeptId,
       additionalDepartmentIds: Array.isArray(store.additionalDepartmentIds) ? store.additionalDepartmentIds : [],
+      onboardedByCode: store.onboarded_by_code || store.onboardedByCode || null,
+      onboardedByRole: store.onboarded_by_role || store.onboardedByRole || null,
+      onboardedByName: store.onboarded_by_name || store.onboardedByName || null,
+      onboardedByManagerCode: store.onboarded_by_manager_code || store.onboardedByManagerCode || null,
       specialisationSubcategories: Array.isArray(store.specialisationSubcategories) ? store.specialisationSubcategories : [],
       specialisationProducts: Array.isArray(store.specialisationProducts) ? store.specialisationProducts : [],
       regulatoryStatus: store.regulatoryStatus || (store.storeType === 'pharmacy' ? 'verified' : 'not_applicable'),
@@ -821,13 +825,33 @@ export async function createDatabaseStore(store) {
       rating: Number(store.rating) || 5.0,
       is_open: store.isOpen !== undefined ? store.isOpen : true,
       delivery_fee: Number(store.deliveryFee) || 1200,
+      ...(metadataPayload.onboardedByCode
+        ? {
+            onboarded_by_code: metadataPayload.onboardedByCode,
+            onboarded_by_role: metadataPayload.onboardedByRole,
+            onboarded_by_name: metadataPayload.onboardedByName,
+            onboarded_by_manager_code: metadataPayload.onboardedByManagerCode,
+          }
+        : {}),
     };
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('stores')
       .upsert(record, { onConflict: 'id' })
       .select()
       .single();
+
+    // Graceful fallback if attribution columns haven't been migrated yet
+    if (error && metadataPayload.onboardedByCode && String(error.message || '').toLowerCase().includes('column')) {
+      const { onboarded_by_code, onboarded_by_role, onboarded_by_name, onboarded_by_manager_code, ...baseRecord } = record;
+      const retry = await supabase
+        .from('stores')
+        .upsert(baseRecord, { onConflict: 'id' })
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) throw error;
     broadcastLiveEvent('STORE_INSERT', { storeId: data.id, store: data });
@@ -835,6 +859,105 @@ export async function createDatabaseStore(store) {
   } catch (err) {
     console.error('Failed to create store in Supabase:', err);
     return null;
+  }
+}
+
+/**
+ * Verifies an Agent (AG-<STATE>-###) or Manager (MG-<STATE>-###) referral code against Supabase.
+ * UI MUST display ONLY `fullName` (never exposing the internal parentManagerName for agents).
+ */
+export async function verifyReferralPartnerCode(rawCode) {
+  try {
+    const code = String(rawCode || '').trim().toUpperCase();
+    if (!code) return null;
+    const { data, error } = await supabase
+      .from('referral_partners')
+      .select('code, role, full_name, state_code, parent_manager_code, parent_manager_name, commission_per_shop, manager_override_per_shop, status')
+      .eq('code', code)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return {
+      code: data.code,
+      role: data.role,
+      fullName: data.full_name,
+      stateCode: data.state_code,
+      parentManagerCode: data.parent_manager_code || null,
+      parentManagerName: data.parent_manager_name || null,
+      commissionPerShop: Number(data.commission_per_shop) || 5000,
+      managerOverridePerShop: Number(data.manager_override_per_shop) || 1500,
+      status: data.status || 'ACTIVE',
+    };
+  } catch (err) {
+    console.warn('verifyReferralPartnerCode notice:', err);
+    return null;
+  }
+}
+
+/**
+ * Logs 2-tier onboarding commissions (Agent Direct + hidden Manager Override, or Manager Direct)
+ * into Supabase `commission_ledger`.
+ */
+export async function recordMerchantOnboardingCommissions({ storeId, storeName, partner }) {
+  try {
+    if (!partner?.code || !storeId) return;
+    const nowIso = new Date().toISOString();
+    const entries = [];
+
+    if (partner.role === 'AGENT') {
+      entries.push({
+        id: `comm-ag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        store_id: String(storeId),
+        store_name: String(storeName || 'New Store'),
+        onboarded_by_code: partner.code,
+        recipient_code: partner.code,
+        recipient_name: partner.fullName,
+        recipient_role: 'AGENT',
+        commission_type: 'AGENT_DIRECT',
+        amount: Number(partner.commissionPerShop) || 5000,
+        status: 'PENDING',
+        notes: `Direct shop onboarding bonus for ${storeName}`,
+        created_at: nowIso,
+      });
+
+      if (partner.parentManagerCode && partner.parentManagerCode !== 'HQ-OPS') {
+        entries.push({
+          id: `comm-mg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          store_id: String(storeId),
+          store_name: String(storeName || 'New Store'),
+          onboarded_by_code: partner.code,
+          recipient_code: partner.parentManagerCode,
+          recipient_name: partner.parentManagerName || partner.parentManagerCode,
+          recipient_role: 'MANAGER',
+          commission_type: 'MANAGER_OVERRIDE',
+          amount: Number(partner.managerOverridePerShop) || 1500,
+          status: 'PENDING',
+          notes: `Manager override from Agent ${partner.code} (${partner.fullName}) onboarding ${storeName}`,
+          created_at: nowIso,
+        });
+      }
+    } else if (partner.role === 'MANAGER') {
+      entries.push({
+        id: `comm-mg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        store_id: String(storeId),
+        store_name: String(storeName || 'New Store'),
+        onboarded_by_code: partner.code,
+        recipient_code: partner.code,
+        recipient_name: partner.fullName,
+        recipient_role: 'MANAGER',
+        commission_type: 'MANAGER_DIRECT',
+        amount: Number(partner.commissionPerShop) || 5000,
+        status: 'PENDING',
+        notes: `Direct manager shop onboarding bonus for ${storeName}`,
+        created_at: nowIso,
+      });
+    }
+
+    if (entries.length > 0) {
+      await supabase.from('commission_ledger').insert(entries);
+    }
+  } catch (err) {
+    console.warn('recordMerchantOnboardingCommissions notice:', err);
   }
 }
 

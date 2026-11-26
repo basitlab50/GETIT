@@ -3,6 +3,11 @@ import { createClient } from '@supabase/supabase-js';
 import { exportApplicantFullPdf, exportApplicantTextSummary } from '../../utils/applicantExport';
 import ApplicantCvPreview from './ApplicantCvPreview';
 import {
+  extractStateCode,
+  generatePartnerCode,
+  migrateManagersAndAgentsCodes,
+} from '../../utils/referralCodeUtils';
+import {
   LayoutGrid,
   Database,
   Sparkles,
@@ -1010,6 +1015,210 @@ export default function AdminDashboard() {
     // Strictly filter out any old simulated agent seeds
     return loaded.filter(a => a && a.id !== 'agent-01' && a.id !== 'agent-02' && a.id !== 'agent-03');
   });
+  const [commissionLedger, setCommissionLedger] = useState(() =>
+    loadLocalJson('getit_cms_commission_ledger', [])
+  );
+
+  useEffect(() => {
+    saveLocalJson('getit_cms_commission_ledger', commissionLedger);
+  }, [commissionLedger]);
+
+  // Sync a Manager (MG-XXX-###) or Agent (AG-XXX-###) to Supabase referral_partners so Mobile App verifies codes live
+  const syncReferralPartnerToSupabase = async (partner) => {
+    if (!partner?.code || !partner?.full_name) return;
+    try {
+      await supabaseClient.from('referral_partners').upsert([partner], { onConflict: 'code' });
+    } catch (err) {
+      console.warn('referral_partners sync notice:', err);
+    }
+  };
+
+  // Resolve a referral code locally (returns agent or manager info; UI displays ONLY that person's name)
+  const resolveReferralCodeLocal = (rawCode) => {
+    const code = String(rawCode || '').trim().toUpperCase();
+    if (!code) return null;
+    const matchedAgent = regionalAgentsList.find(
+      (a) => String(a.agentStaffId || a.referralCode || '').trim().toUpperCase() === code
+    );
+    if (matchedAgent) {
+      const parentMgr = regionalManagersList.find(
+        (m) => String(m.staffId || '').trim().toUpperCase() === String(matchedAgent.managerId || '').trim().toUpperCase()
+      );
+      return {
+        code: matchedAgent.agentStaffId,
+        role: 'AGENT',
+        fullName: matchedAgent.fullName,
+        parentManagerCode: parentMgr?.staffId || matchedAgent.managerId || null,
+        parentManagerName: parentMgr?.fullName || null,
+        commissionPerStore: Number(matchedAgent.commissionPerStore) || 5000,
+        managerOverridePerStore: Number(parentMgr?.managerOverridePerStore) || 1500,
+      };
+    }
+    const matchedMgr = regionalManagersList.find(
+      (m) => String(m.staffId || m.referralCode || '').trim().toUpperCase() === code
+    );
+    if (matchedMgr) {
+      return {
+        code: matchedMgr.staffId,
+        role: 'MANAGER',
+        fullName: matchedMgr.fullName,
+        parentManagerCode: matchedMgr.staffId,
+        parentManagerName: matchedMgr.fullName,
+        commissionPerStore: Number(matchedMgr.commissionPerStore) || 5000,
+        managerOverridePerStore: 0,
+      };
+    }
+    return null;
+  };
+
+  // Record 2-tier commissions automatically when a store is onboarded with an AG- or MG- code
+  const recordShopOnboardingCommissions = async ({ storeId, storeName, referralInfo }) => {
+    if (!referralInfo?.code || !storeId) return;
+    const nowIso = new Date().toISOString();
+    const entries = [];
+
+    if (referralInfo.role === 'AGENT') {
+      entries.push({
+        id: `comm-ag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        store_id: String(storeId),
+        store_name: storeName,
+        onboarded_by_code: referralInfo.code,
+        recipient_code: referralInfo.code,
+        recipient_name: referralInfo.fullName,
+        recipient_role: 'AGENT',
+        commission_type: 'AGENT_DIRECT',
+        amount: Number(referralInfo.commissionPerStore) || 5000,
+        status: 'PENDING',
+        notes: `Direct shop onboarding bonus for ${storeName}`,
+        created_at: nowIso,
+      });
+
+      // Hidden 2nd-tier override commission to the Agent's linked Manager
+      if (referralInfo.parentManagerCode && referralInfo.parentManagerCode !== 'HQ-OPS') {
+        entries.push({
+          id: `comm-mg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          store_id: String(storeId),
+          store_name: storeName,
+          onboarded_by_code: referralInfo.code,
+          recipient_code: referralInfo.parentManagerCode,
+          recipient_name: referralInfo.parentManagerName || referralInfo.parentManagerCode,
+          recipient_role: 'MANAGER',
+          commission_type: 'MANAGER_OVERRIDE',
+          amount: Number(referralInfo.managerOverridePerStore) || 1500,
+          status: 'PENDING',
+          notes: `Manager override commission from Agent ${referralInfo.code} (${referralInfo.fullName}) onboarding ${storeName}`,
+          created_at: nowIso,
+        });
+      }
+    } else if (referralInfo.role === 'MANAGER') {
+      entries.push({
+        id: `comm-mg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        store_id: String(storeId),
+        store_name: storeName,
+        onboarded_by_code: referralInfo.code,
+        recipient_code: referralInfo.code,
+        recipient_name: referralInfo.fullName,
+        recipient_role: 'MANAGER',
+        commission_type: 'MANAGER_DIRECT',
+        amount: Number(referralInfo.commissionPerStore) || 5000,
+        status: 'PENDING',
+        notes: `Direct manager shop onboarding bonus for ${storeName}`,
+        created_at: nowIso,
+      });
+    }
+
+    if (entries.length === 0) return;
+    setCommissionLedger((prev) => [...entries, ...prev]);
+
+    // Update local agent stats if onboarded by an agent
+    if (referralInfo.role === 'AGENT') {
+      setRegionalAgentsList((prev) =>
+        prev.map((a) =>
+          String(a.agentStaffId).toUpperCase() === referralInfo.code
+            ? {
+                ...a,
+                totalOnboarded: (Number(a.totalOnboarded) || 0) + 1,
+                verifiedApproved: (Number(a.verifiedApproved) || 0) + 1,
+                totalCommissionEarned: (Number(a.totalCommissionEarned) || 0) + (Number(referralInfo.commissionPerStore) || 5000),
+                commissionPending: (Number(a.commissionPending) || 0) + (Number(referralInfo.commissionPerStore) || 5000),
+              }
+            : a
+        )
+      );
+    }
+
+    try {
+      await supabaseClient.from('commission_ledger').insert(entries);
+    } catch (err) {
+      console.warn('commission_ledger sync notice:', err);
+    }
+  };
+
+  // Auto-migrate existing test managers & agents to MG-<STATE>-### and AG-<STATE>-### and sync to Supabase
+  const hasMigratedPartnerCodesRef = useRef(false);
+  useEffect(() => {
+    if (hasMigratedPartnerCodesRef.current) return;
+    hasMigratedPartnerCodesRef.current = true;
+
+    const { managers, agents, oldToNewMgrCode, changed } = migrateManagersAndAgentsCodes(
+      regionalManagersList,
+      regionalAgentsList
+    );
+
+    if (changed) {
+      setRegionalManagersList(managers);
+      setRegionalAgentsList(agents);
+      setStaffAccounts((prev) =>
+        prev.map((s) => {
+          const mapped = oldToNewMgrCode.get(s.staffId);
+          return mapped ? { ...s, staffId: mapped, id: `staff-${mapped}` } : s;
+        })
+      );
+    }
+
+    // Sync all managers & agents into Supabase referral_partners so Mobile App verifies them immediately
+    const partnerRows = [
+      ...managers.map((m) => ({
+        code: m.staffId,
+        role: 'MANAGER',
+        full_name: m.fullName,
+        phone: m.phone || null,
+        email: m.email || null,
+        state_code: m.stateCode || extractStateCode(m.territoryName || m.territoryId || 'Abuja'),
+        territory_name: m.territoryName || 'Abuja',
+        parent_manager_code: null,
+        parent_manager_name: null,
+        commission_per_shop: Number(m.commissionPerStore) || 5000,
+        manager_override_per_shop: Number(m.managerOverridePerStore) || 1500,
+        status: m.status || 'ACTIVE',
+      })),
+      ...agents.map((a) => {
+        const parentMgr = managers.find((m) => m.staffId === a.managerId);
+        return {
+          code: a.agentStaffId,
+          role: 'AGENT',
+          full_name: a.fullName,
+          phone: a.phone || null,
+          email: a.email || null,
+          state_code: a.stateCode || extractStateCode(a.territoryName || a.territoryId || 'Abuja'),
+          territory_name: a.territoryName || 'Abuja',
+          parent_manager_code: parentMgr?.staffId || (a.managerId !== 'HQ-OPS' ? a.managerId : null),
+          parent_manager_name: parentMgr?.fullName || null,
+          commission_per_shop: Number(a.commissionPerStore) || 5000,
+          manager_override_per_shop: Number(parentMgr?.managerOverridePerStore) || 1500,
+          status: a.status || 'ACTIVE',
+        };
+      }),
+    ];
+
+    if (partnerRows.length > 0) {
+      supabaseClient
+        .from('referral_partners')
+        .upsert(partnerRows, { onConflict: 'code' })
+        .then(() => {})
+        .catch(() => {});
+    }
+  }, []);
 
     // --- Handlers for Field Agent & Store Onboarding ---
   const handleCaptureGPS = () => {
@@ -1199,15 +1408,23 @@ export default function AdminDashboard() {
       alert('Please enter Manager Full Name');
       return;
     }
-    const nextStaffNum = String(regionalManagersList.length + 13).padStart(3, '0');
-    const uniqueMgrPwd = getPersonUniquePassword({ fullName: newManagerForm.fullName, staffId: `GET-${nextStaffNum}` }, 'MANAGER');
+    const mgrCode = generatePartnerCode(
+      'MANAGER',
+      newManagerForm.territoryName || newManagerForm.territoryId || newManagerForm.assignedDistricts || 'Abuja',
+      regionalManagersList.map((m) => m.staffId)
+    );
+    const stateCode = extractStateCode(newManagerForm.territoryName || newManagerForm.territoryId || 'Abuja');
+    const uniqueMgrPwd = getPersonUniquePassword({ fullName: newManagerForm.fullName, staffId: mgrCode }, 'MANAGER');
     const newMgr = {
       id: `MGR-${Date.now().toString().slice(-4)}`,
-      staffId: `GET-${nextStaffNum}`,
+      staffId: mgrCode,
+      referralCode: mgrCode,
+      stateCode,
+      managerOverridePerStore: 1500,
       fullName: newManagerForm.fullName.trim(),
       title: `Regional Operations Manager (${newManagerForm.territoryName || 'Regional Hub'})`,
       phone: newManagerForm.phone.trim() || '+234 800 000 0000',
-      email: newManagerForm.email.trim() || `manager.${nextStaffNum}@getit.ng`,
+      email: newManagerForm.email.trim() || `${mgrCode.toLowerCase()}@getit.ng`,
       password: uniqueMgrPwd,
       territoryId: newManagerForm.territoryId || 'NG-NEW',
       territoryName: newManagerForm.territoryName || 'Regional Hub',
@@ -1216,6 +1433,20 @@ export default function AdminDashboard() {
       dateAppointed: new Date().toISOString().slice(0, 10),
     };
     setRegionalManagersList((prev) => [...prev, newMgr]);
+    syncReferralPartnerToSupabase({
+      code: mgrCode,
+      role: 'MANAGER',
+      full_name: newMgr.fullName,
+      phone: newMgr.phone,
+      email: newMgr.email,
+      state_code: stateCode,
+      territory_name: newMgr.territoryName,
+      parent_manager_code: null,
+      parent_manager_name: null,
+      commission_per_shop: 5000,
+      manager_override_per_shop: 1500,
+      status: 'ACTIVE',
+    });
     setStaffAccounts((prev) => {
       const exists = prev.some(s => s.staffId === newMgr.staffId);
       if (exists) return prev;
@@ -1263,26 +1494,34 @@ export default function AdminDashboard() {
       alert('Please enter Agent Full Name');
       return;
     }
-    const nextNum = Math.floor(Math.random() * 80 + 20);
     const assignedManager = regionalManagersList.find((m) => m.territoryId === recruitAgentForm.territoryId || m.staffId === recruitAgentForm.managerId) || regionalManagersList[0];
     const isHQ = activeStaff.roleTier === 'CEO' || activeStaff.roleTier === 'SUPER_ADMIN';
+    const territoryForCode = assignedManager?.territoryName || recruitAgentForm.territoryId || recruitAgentForm.assignedDistricts || 'Abuja';
+    const agentCode = generatePartnerCode(
+      'AGENT',
+      territoryForCode,
+      regionalAgentsList.map((a) => a.agentStaffId)
+    );
+    const stateCode = extractStateCode(territoryForCode);
 
-    const uniqueAgentPwd = getPersonUniquePassword({ fullName: recruitAgentForm.fullName, agentStaffId: `GET-AG-0${nextNum}` }, 'AGENT');
+    const uniqueAgentPwd = getPersonUniquePassword({ fullName: recruitAgentForm.fullName, agentStaffId: agentCode }, 'AGENT');
     const newAgent = {
       id: `agent-${Date.now()}`,
-      agentStaffId: `GET-AG-0${nextNum}`,
+      agentStaffId: agentCode,
+      referralCode: agentCode,
+      stateCode,
       fullName: recruitAgentForm.fullName.trim(),
       phone: recruitAgentForm.phone.trim() || '+234 800 000 0000',
       email: recruitAgentForm.email?.trim() || `${recruitAgentForm.fullName.toLowerCase().replace(/\s+/g, '.')}@getit.ng`,
       nin: recruitAgentForm.nin.trim() || 'N/A',
       password: uniqueAgentPwd,
-      managerId: assignedManager.staffId,
-      managerName: `${assignedManager.fullName} (${assignedManager.territoryName})`,
-      territoryId: assignedManager.territoryId,
-      territoryName: assignedManager.territoryName,
-      assignedDistricts: recruitAgentForm.assignedDistricts.trim() || assignedManager.assignedDistricts,
+      managerId: assignedManager?.staffId || 'HQ-OPS',
+      managerName: assignedManager ? `${assignedManager.fullName} (${assignedManager.territoryName})` : 'Central Operations HQ',
+      territoryId: assignedManager?.territoryId || recruitAgentForm.territoryId || 'NG-FCT',
+      territoryName: assignedManager?.territoryName || 'Abuja',
+      assignedDistricts: recruitAgentForm.assignedDistricts.trim() || assignedManager?.assignedDistricts || 'Central Districts',
       monthlyTargetStores: Number(recruitAgentForm.monthlyTargetStores) || 25,
-      commissionPerStore: 5000,
+      commissionPerStore: Number(recruitAgentForm.commissionPerStore) || 5000,
       totalOnboarded: 0,
       verifiedApproved: 0,
       pendingApproval: 0,
@@ -1295,6 +1534,20 @@ export default function AdminDashboard() {
       dateRecruited: new Date().toISOString().slice(0, 10),
     };
     setRegionalAgentsList((prev) => [newAgent, ...prev]);
+    syncReferralPartnerToSupabase({
+      code: agentCode,
+      role: 'AGENT',
+      full_name: newAgent.fullName,
+      phone: newAgent.phone,
+      email: newAgent.email,
+      state_code: stateCode,
+      territory_name: newAgent.territoryName,
+      parent_manager_code: assignedManager?.staffId || null,
+      parent_manager_name: assignedManager?.fullName || null,
+      commission_per_shop: newAgent.commissionPerStore,
+      manager_override_per_shop: Number(assignedManager?.managerOverridePerStore) || 1500,
+      status: newAgent.status,
+    });
     recordAudit({
       module: 'Field Agent Governance',
       actionType: 'RECRUIT_FIELD_AGENT',
@@ -1424,6 +1677,7 @@ export default function AdminDashboard() {
     phone: '+234 803 123 4567',
     deliveryFee: 1200,
     isOpen: true,
+    referralCode: '',
   });
 
   const [showCreateProductModal, setShowCreateProductModal] = useState(false);
@@ -1763,35 +2017,18 @@ export default function AdminDashboard() {
         }
       }
 
-      const resolvedCv = cvDataUrl || app.cvDataUrl || undefined;
-      const resolvedInterview = extraPayload?.interviewSchedule || undefined;
-
-      // IMPORTANT: Only patch cvDataUrl (and missing interviewSchedule) onto the CURRENT
-      // item state. NEVER overwrite item.status / reviewedAt / reviewedBy with the stale
-      // `app` snapshot from when the modal opened (prevents Reject/Approve reverting to Pending!).
-      setManagementApplications((prev) =>
-        prev.map((item) => {
-          if (item.id !== app.id) return item;
-          return {
-            ...item,
-            cvDataUrl: resolvedCv || item.cvDataUrl,
-            interviewSchedule: item.interviewSchedule || resolvedInterview,
-          };
-        })
-      );
-      setSelectedMgmtAppDossier((prev) => {
-        if (!prev || prev.id !== app.id) return prev;
-        return {
-          ...prev,
-          cvDataUrl: resolvedCv || prev.cvDataUrl,
-          interviewSchedule: prev.interviewSchedule || resolvedInterview,
-        };
-      });
-      return {
+      const enriched = {
+        ...extraPayload,
         ...app,
-        cvDataUrl: resolvedCv || app.cvDataUrl,
-        interviewSchedule: app.interviewSchedule || resolvedInterview,
+        cvDataUrl: cvDataUrl || app.cvDataUrl,
+        interviewSchedule: app.interviewSchedule || extraPayload.interviewSchedule,
       };
+
+      setManagementApplications((prev) =>
+        prev.map((item) => (item.id === app.id ? { ...item, ...enriched } : item))
+      );
+      setSelectedMgmtAppDossier((prev) => (prev?.id === app.id ? { ...prev, ...enriched } : prev));
+      return enriched;
     } catch (err) {
       console.warn('Lazy CV fetch notice:', err);
       return app;
@@ -3998,6 +4235,9 @@ export default function AdminDashboard() {
       alert('Please enter a store name.');
       return;
     }
+    const cleanRefCode = String(newStoreForm.referralCode || '').trim().toUpperCase();
+    const matchedPartner = cleanRefCode ? resolveReferralCodeLocal(cleanRefCode) : null;
+
     const storePayload = {
       name: newStoreForm.name.trim(),
       category: newStoreForm.category,
@@ -4008,13 +4248,37 @@ export default function AdminDashboard() {
       rating: 4.8,
       is_open: Boolean(newStoreForm.isOpen),
       delivery_fee: Number(newStoreForm.deliveryFee) || 1200,
+      ...(cleanRefCode
+        ? {
+            onboarded_by_code: matchedPartner?.code || cleanRefCode,
+            onboarded_by_role: matchedPartner?.role || (cleanRefCode.startsWith('MG-') ? 'MANAGER' : 'AGENT'),
+            onboarded_by_name: matchedPartner?.fullName || null,
+            onboarded_by_manager_code: matchedPartner?.parentManagerCode || null,
+          }
+        : {}),
     };
 
     try {
-      const { data, error } = await supabaseClient.from('stores').insert([storePayload]).select();
+      let { data, error } = await supabaseClient.from('stores').insert([storePayload]).select();
+      // Fallback if SQL migration columns haven't been added to public.stores yet
+      if (error && cleanRefCode && String(error.message || '').toLowerCase().includes('column')) {
+        const { onboarded_by_code, onboarded_by_role, onboarded_by_name, onboarded_by_manager_code, ...basePayload } = storePayload;
+        const retry = await supabaseClient.from('stores').insert([basePayload]).select();
+        data = retry.data;
+        error = retry.error;
+      }
       if (error) throw error;
       const created = data?.[0] || storePayload;
-      setLiveStores((prev) => [created, ...prev]);
+      setLiveStores((prev) => [{ ...created, onboarded_by_code: storePayload.onboarded_by_code, onboarded_by_name: storePayload.onboarded_by_name, onboarded_by_manager_code: storePayload.onboarded_by_manager_code }, ...prev]);
+
+      if (matchedPartner) {
+        recordShopOnboardingCommissions({
+          storeId: created.id || `store-${Date.now()}`,
+          storeName: created.name,
+          referralInfo: matchedPartner,
+        });
+      }
+
       setShowCreateStoreModal(false);
       setNewStoreForm({
         name: '',
@@ -4025,6 +4289,7 @@ export default function AdminDashboard() {
         phone: '+234 803 123 4567',
         deliveryFee: 1200,
         isOpen: true,
+        referralCode: '',
       });
 
       recordAudit({
@@ -5340,20 +5605,27 @@ export default function AdminDashboard() {
     }
 
     if (nextStatus === 'APPROVED_ONBOARDED') {
-      const nextStaffNum = String(regionalManagersList.length + staffAccounts.length + 15).padStart(3, '0');
-      const staffId = `GET-${nextStaffNum}`;
-      const uniqueMgrPwd = getPersonUniquePassword({ fullName: app.fullName, staffId }, 'MANAGER');
       const territoryLabel = app.stateAndCity || 'Regional Hub';
+      const staffId = generatePartnerCode(
+        'MANAGER',
+        territoryLabel,
+        regionalManagersList.map((m) => m.staffId)
+      );
+      const stateCode = extractStateCode(territoryLabel);
+      const uniqueMgrPwd = getPersonUniquePassword({ fullName: app.fullName, staffId }, 'MANAGER');
 
       const newMgr = {
         id: `MGR-${Date.now().toString().slice(-4)}`,
         staffId,
+        referralCode: staffId,
+        stateCode,
+        managerOverridePerStore: 1500,
         fullName: app.fullName,
         title: `Regional Operations Manager (${territoryLabel})`,
         phone: app.phone || '+234 800 000 0000',
-        email: app.email || `manager.${nextStaffNum}@getit.ng`,
+        email: app.email || `${staffId.toLowerCase()}@getit.ng`,
         password: uniqueMgrPwd,
-        territoryId: 'NG-HUB',
+        territoryId: `NG-${stateCode}`,
         territoryName: territoryLabel,
         assignedDistricts: territoryLabel,
         status: 'ACTIVE',
@@ -5364,6 +5636,20 @@ export default function AdminDashboard() {
       setRegionalManagersList((prev) => {
         if (prev.some((m) => m.email === newMgr.email && m.fullName === newMgr.fullName)) return prev;
         return [newMgr, ...prev];
+      });
+      syncReferralPartnerToSupabase({
+        code: staffId,
+        role: 'MANAGER',
+        full_name: newMgr.fullName,
+        phone: newMgr.phone,
+        email: newMgr.email,
+        state_code: stateCode,
+        territory_name: territoryLabel,
+        parent_manager_code: null,
+        parent_manager_name: null,
+        commission_per_shop: 5000,
+        manager_override_per_shop: 1500,
+        status: 'ACTIVE',
       });
 
       setStaffAccounts((prev) => {
@@ -25140,6 +25426,33 @@ export default function AdminDashboard() {
                     style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: `1px solid ${BRAND.cardBorder}`, fontSize: '13px' }}
                   />
                 </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 700, color: '#0F766E', display: 'block', marginBottom: '5px' }}>
+                  Agent / Manager Referral Code (Optional — e.g. AG-ABJ-001 or MG-ABJ-001)
+                </label>
+                <input
+                  value={newStoreForm.referralCode || ''}
+                  onChange={(e) => setNewStoreForm({ ...newStoreForm, referralCode: e.target.value.toUpperCase() })}
+                  placeholder="Enter AG-ABJ-001 or MG-ABJ-001"
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1.5px solid #0D9488', fontSize: '13px', fontWeight: 700, letterSpacing: '0.5px' }}
+                />
+                {newStoreForm.referralCode && (() => {
+                  const found = resolveReferralCodeLocal(newStoreForm.referralCode);
+                  if (found) {
+                    return (
+                      <div style={{ marginTop: '6px', padding: '6px 10px', borderRadius: '8px', background: '#ECFDF5', border: '1px solid #10B981', color: '#065F46', fontSize: '11.5px', fontWeight: 800 }}>
+                        ✓ Verified {found.role === 'MANAGER' ? 'Manager' : 'Agent'}: {found.fullName}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div style={{ marginTop: '6px', fontSize: '11px', color: '#B45309', fontWeight: 600 }}>
+                      Code not found in active local partners yet — will still be saved if valid.
+                    </div>
+                  );
+                })()}
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>

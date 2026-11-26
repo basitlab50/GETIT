@@ -82,6 +82,8 @@ import {
   fetchActiveCommercialPolicy,
   publishCommercialPolicy,
   subscribeToCommercialPolicyUpdates,
+  verifyReferralPartnerCode,
+  recordMerchantOnboardingCommissions,
 } from './services/supabaseService';
 import {
   DEFAULT_MARKETPLACE_TAXONOMY,
@@ -1797,6 +1799,32 @@ export default function App() {
   const [authSellerPharmacistName, setAuthSellerPharmacistName] = useState('');
   const [authSellerPharmacistLicenseNo, setAuthSellerPharmacistLicenseNo] = useState('');
   const [authSellerPharmacistQualification, setAuthSellerPharmacistQualification] = useState('');
+  const [authSignupReferralCode, setAuthSignupReferralCode] = useState('');
+  const [authReferralVerifiedPartner, setAuthReferralVerifiedPartner] = useState(null);
+  const [authReferralChecking, setAuthReferralChecking] = useState(false);
+
+  // Live verify Agent (AG-<STATE>-###) or Manager (MG-<STATE>-###) code during merchant signup
+  useEffect(() => {
+    const clean = String(authSignupReferralCode || '').trim().toUpperCase();
+    if (!clean || !/^(MG|AG)-[A-Z]{2,4}-\d{3}$/.test(clean)) {
+      setAuthReferralVerifiedPartner(null);
+      setAuthReferralChecking(false);
+      return;
+    }
+    let cancelled = false;
+    setAuthReferralChecking(true);
+    const timer = setTimeout(async () => {
+      const found = await verifyReferralPartnerCode(clean);
+      if (!cancelled) {
+        setAuthReferralVerifiedPartner(found);
+        setAuthReferralChecking(false);
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [authSignupReferralCode]);
 
   // --- OTP AUTHENTICATION SYSTEM (BUYER & MERCHANT - DUAL PHONE & EMAIL) ---
   const [authMethod, setAuthMethod] = useState('otp'); // 'otp' | 'password'
@@ -13788,10 +13816,28 @@ Support: help@getit.ng | Abuja, Nigeria`;
         deliveryFee: 1200,
         isOpen: true,
         image: chosenStoreCover,
+        ...(authSignupReferralCode.trim()
+          ? {
+              onboarded_by_code: authReferralVerifiedPartner?.code || authSignupReferralCode.trim().toUpperCase(),
+              onboarded_by_role:
+                authReferralVerifiedPartner?.role ||
+                (authSignupReferralCode.trim().toUpperCase().startsWith('MG-') ? 'MANAGER' : 'AGENT'),
+              onboarded_by_name: authReferralVerifiedPartner?.fullName || null,
+              onboarded_by_manager_code: authReferralVerifiedPartner?.parentManagerCode || null,
+            }
+          : {}),
       }).catch((err) => {
         console.warn('Store creation cloud sync warning:', err);
         return null;
       });
+
+      if (authReferralVerifiedPartner) {
+        recordMerchantOnboardingCommissions({
+          storeId,
+          storeName: businessName,
+          partner: authReferralVerifiedPartner,
+        }).catch(() => {});
+      }
 
       if (dbCreated && dbCreated.isDuplicate) {
         Alert.alert(
@@ -16780,6 +16826,36 @@ Support: help@getit.ng | Abuja, Nigeria`;
                             value={authSignupPhone}
                             onChangeText={setAuthSignupPhone}
                           />
+                        </View>
+                      </View>
+
+                      <View style={styles.luxeInputBox}>
+                        <View style={styles.luxeInputIconWrap}>
+                          <Text style={styles.luxeInputIcon}>🏷️</Text>
+                        </View>
+                        <View style={styles.luxeInputContent}>
+                          <Text style={styles.luxeInputLabel}>AGENT / MANAGER CODE (OPTIONAL)</Text>
+                          <TextInput
+                            style={styles.luxeTextInput}
+                            placeholder="e.g. AG-ABJ-001 or MG-ABJ-001"
+                            placeholderTextColor="#A8A29E"
+                            autoCapitalize="characters"
+                            value={authSignupReferralCode}
+                            onChangeText={(txt) => setAuthSignupReferralCode(txt.toUpperCase())}
+                          />
+                          {authReferralChecking ? (
+                            <Text style={{ fontSize: 11, color: '#64748B', marginTop: 4, fontWeight: '600' }}>
+                              Verifying code...
+                            </Text>
+                          ) : authReferralVerifiedPartner ? (
+                            <Text style={{ fontSize: 11.5, color: '#059669', marginTop: 4, fontWeight: '800' }}>
+                              ✓ Verified {authReferralVerifiedPartner.role === 'MANAGER' ? 'Manager' : 'Agent'}: {authReferralVerifiedPartner.fullName}
+                            </Text>
+                          ) : authSignupReferralCode.trim().length >= 8 ? (
+                            <Text style={{ fontSize: 11, color: '#D97706', marginTop: 4, fontWeight: '600' }}>
+                              Code format: AG-ABJ-001 or MG-ABJ-001
+                            </Text>
+                          ) : null}
                         </View>
                       </View>
 

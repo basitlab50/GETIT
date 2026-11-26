@@ -1530,6 +1530,18 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Dynamic **Location** dropdown (auto-populated from all applicants' states/cities), **Education** dropdown, **Leadership (Managed Team)** filter, **Fieldwork** filter, and **Sort By** (`Newest Applied`, `Oldest Applied`, `Recently Reviewed`, `Name A–Z`).
      * Live `"Showing X of Y applications"` counter and 1-click `✕ Reset Filters` button.
 
+94. 2-Tier Manager & Field Agent Referral Code System (`MG-<STATE>-###` & `AG-<STATE>-###`) + Commission Attribution:
+   - 🏷️ Standardized Auto-Generated Partner Codes (`src/utils/referralCodeUtils.js`):
+     * Regional Managers: `MG-<STATE>-<###>` (e.g. `MG-ABJ-001`, `MG-LAG-001`).
+     * Field Agents: `AG-<STATE>-<###>` (e.g. `AG-ABJ-001`, `AG-LAG-001`) — intentionally omits the manager number so the hierarchy stays private and portable.
+     * Automatic Migration on Load (`migrateManagersAndAgentsCodes`): upgrades all already-created test Managers and Field Agents in `AdminDashboard.jsx` to the new `MG-<STATE>-###` and `AG-<STATE>-###` IDs while preserving internal Agent-to-Manager links (`managerId`) and syncing them to Supabase `referral_partners`.
+   - 🗄️ Supabase Schema (`supabase/create_referral_commission_tables.sql`):
+     * Added `public.referral_partners`, `public.commission_ledger` (supporting `AGENT_DIRECT`, `MANAGER_OVERRIDE`, and `MANAGER_DIRECT`), and non-breaking attribution columns on `public.stores` (`onboarded_by_code`, `onboarded_by_role`, `onboarded_by_name`, `onboarded_by_manager_code`).
+   - 📱 Mobile & Admin Merchant Signup Attribution (`mobile/App.js`, `mobile/services/supabaseService.js`, `AdminDashboard.jsx`):
+     * Added optional `Agent / Manager Code` input to both Mobile Merchant Signup and Admin `Create Live Store`.
+     * Live code verification displays ONLY the Agent's name (`✓ Verified Agent: <Name>`) or Manager's name (`✓ Verified Manager: <Name>`) — never exposing the Manager's name when an Agent's code is entered.
+     * Automatically logs 2-tier commissions (Agent Direct + hidden Manager Override, or Manager Direct) in `commission_ledger` when a shop is onboarded.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================
