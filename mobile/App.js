@@ -15548,39 +15548,17 @@ Support: help@getit.ng | Abuja, Nigeria`;
               isSignIn ? (
                 /* Buyer Sign In Form */
                 <View style={styles.luxeFormContainer}>
-                  {/* Method Switcher: OTP (SMS) vs Password */}
-                  <View style={styles.otpMethodSwitchWrap}>
-                    <TouchableOpacity
-                      style={[styles.otpMethodBtn, authMethod === 'otp' && styles.otpMethodBtnActive]}
-                      onPress={() => setAuthMethod('otp')}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={[styles.otpMethodText, authMethod === 'otp' && styles.otpMethodTextActive]}>
-                        📲 Phone / Email OTP (Fast & Secure)
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.otpMethodBtn, authMethod === 'password' && styles.otpMethodBtnActive]}
-                      onPress={() => setAuthMethod('password')}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={[styles.otpMethodText, authMethod === 'password' && styles.otpMethodTextActive]}>
-                        🔒 Password
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
                   <View style={styles.luxeInputBox}>
                     <View style={styles.luxeInputIconWrap}>
                       <Text style={styles.luxeInputIcon}>{authMethod === 'otp' ? '📲' : '✉️'}</Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>{authMethod === 'otp' ? 'PHONE NUMBER OR EMAIL ADDRESS' : 'EMAIL OR PHONE'}</Text>
+                      <Text style={styles.luxeInputLabel}>PHONE NUMBER OR EMAIL</Text>
                       <TextInput
                         style={styles.luxeTextInput}
-                        placeholder={authMethod === 'otp' ? 'e.g. 0802 345 6789 or user@getit.ng' : 'e.g. 0803 123 4567 or email'}
+                        placeholder="e.g. 0802 345 6789 or user@getit.ng"
                         placeholderTextColor="#A8A29E"
-                        keyboardType={authMethod === 'otp' ? 'email-address' : 'default'}
+                        keyboardType="email-address"
                         value={authLoginInput}
                         onChangeText={setAuthLoginInput}
                         autoCapitalize="none"
@@ -15628,19 +15606,19 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       </View>
                     ) : (
                       <Text style={styles.luxePrimaryBtnText}>
-                        {authMethod === 'otp' ? 'Send OTP Verification Code ➔' : 'Sign In with Password ➔'}
+                        {authMethod === 'otp' ? 'Continue ➔' : 'Sign In ➔'}
                       </Text>
                     )}
                   </TouchableOpacity>
 
-                  {/* Guest Browse Option */}
+                  {/* Switch to Password / OTP text link */}
                   <TouchableOpacity
                     style={styles.luxeGuestBrowseBtn}
-                    onPress={handleAuthGuestBrowse}
+                    onPress={() => setAuthMethod(authMethod === 'otp' ? 'password' : 'otp')}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.luxeGuestBrowseText}>
-                      Browse Stores as Guest ➔
+                      {authMethod === 'otp' ? 'Sign in with Password ➔' : 'Sign in with Phone or Email ➔'}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -15786,28 +15764,6 @@ Support: help@getit.ng | Abuja, Nigeria`;
               isSignIn ? (
                 /* Merchant Sign In */
                 <View style={styles.luxeFormContainer}>
-                  {/* Method Switcher: OTP (SMS) vs Password */}
-                  <View style={styles.otpMethodSwitchWrap}>
-                    <TouchableOpacity
-                      style={[styles.otpMethodBtn, authMethod === 'otp' && styles.otpMethodBtnActive]}
-                      onPress={() => setAuthMethod('otp')}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={[styles.otpMethodText, authMethod === 'otp' && styles.otpMethodTextActive]}>
-                        📲 Phone / Email OTP (Fast & Secure)
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.otpMethodBtn, authMethod === 'password' && styles.otpMethodBtnActive]}
-                      onPress={() => setAuthMethod('password')}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={[styles.otpMethodText, authMethod === 'password' && styles.otpMethodTextActive]}>
-                        🔒 Password
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
                   {/* Store Type Selector for Sign In: Supermarket vs Pharmacy */}
                   <View style={{ marginBottom: 14 }}>
                     <Text style={styles.authStoreTypeHeading}>LOGGING IN AS *</Text>
@@ -15870,11 +15826,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
                       </Text>
                     </View>
                     <View style={styles.luxeInputContent}>
-                      <Text style={styles.luxeInputLabel}>
-                        {authMethod === 'otp'
-                          ? (authSellerStoreType === 'pharmacy' ? 'PHARMACY PHONE OR EMAIL' : 'STORE PHONE OR EMAIL')
-                          : (authSellerStoreType === 'pharmacy' ? 'PHARMACY EMAIL OR PHONE' : 'STORE EMAIL OR PHONE')}
-                      </Text>
+                      <Text style={styles.luxeInputLabel}>PHONE NUMBER OR EMAIL</Text>
                       <TextInput
                         style={styles.luxeTextInput}
                         placeholder={
@@ -15961,12 +15913,22 @@ Support: help@getit.ng | Abuja, Nigeria`;
                         ]}
                       >
                         {authMethod === 'otp'
-                          ? 'Send OTP Verification Code ➔'
+                          ? 'Continue ➔'
                           : (authSellerStoreType === 'pharmacy'
                               ? 'Log In to Pharmacy Dispensary 💊 ➔'
                               : 'Log In to Grocery Hub 🛒 ➔')}
                       </Text>
                     )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.luxeGuestBrowseBtn}
+                    onPress={() => setAuthMethod(authMethod === 'otp' ? 'password' : 'otp')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.luxeGuestBrowseText}>
+                      {authMethod === 'otp' ? 'Sign in with Password ➔' : 'Sign in with Phone or Email ➔'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               ) : (
