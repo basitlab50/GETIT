@@ -15409,7 +15409,7 @@ Support: help@getit.ng | Abuja, Nigeria`;
               <View style={{ flex: 1, paddingRight: 8 }}>
                 <Text style={styles.luxeCardTitle}>
                   {isBuyer
-                    ? (isSignIn ? 'Shopper Sign In' : 'Create Account')
+                    ? (isSignIn ? 'Sign in to Shop' : 'Create Account')
                     : (isSignIn ? 'Merchant Sign In' : 'Register Store')}
                 </Text>
                 <Text style={styles.luxeCardSub}>
