@@ -1542,6 +1542,15 @@ FIX DETAILS - STORE PURGE, EXPO RUNTIME & LIVE REALTIME BUYER SYNCHRONIZATION
      * Live code verification displays ONLY the Agent's name (`✓ Verified Agent: <Name>`) or Manager's name (`✓ Verified Manager: <Name>`) — never exposing the Manager's name when an Agent's code is entered.
      * Automatically logs 2-tier commissions (Agent Direct + hidden Manager Override, or Manager Direct) in `commission_ledger` when a shop is onboarded.
 
+95. Executive Redesign & Small-Phone Responsive Fit for Mobile Sign In / Sign Up (`mobile/App.js`):
+   - 🎨 Deep Emerald Hero + Floating White Card Architecture:
+     * Replaced flat beige backdrop with a deep emerald hero banner (`#042F2E`) with gold-ringed logo medallion, light status bar, and an elevated floating pure-white card (`borderRadius: 24`, `maxWidth: 460`, `alignSelf: 'center'`).
+   - 📱 Small-Phone & Keyboard Polish (`screenW < 380` responsive layout):
+     * Wrapped the Auth `ScrollView` in `KeyboardAvoidingView` (`padding` on iOS, `height` on Android) so keyboards never cover inputs or submit buttons.
+     * Replaced rigid `height: 50` on `luxeInputBox` with flexible `minHeight: 58` + generous padding so referral verification badges and larger font sizes never clip.
+     * Added compact-phone scaling (`isCompactPhone = screenW < 380`) for logo medallion, outer padding, card padding, and side-by-side store-type buttons (`authStoreTypeBtn`).
+     * Upgraded typography (`19px` titles, `14.5px` inputs), segmented mode switcher, and `52px`-tall primary CTA buttons.
+
 ===============================================================================
 END OF SUMMARY - READY TO RESUME IN FUTURE SESSIONS
 ===============================================================================

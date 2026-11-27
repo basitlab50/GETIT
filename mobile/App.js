@@ -15330,56 +15330,80 @@ Support: help@getit.ng | Abuja, Nigeria`;
     </Modal>
   );
 
-  // --- DEDICATED LUXURY LOGIN / SIGN UP SCREEN (ANIMATED & ORGANIZED) ---
+  // --- DEDICATED LUXURY LOGIN / SIGN UP SCREEN (EXECUTIVE, RESPONSIVE FOR ALL PHONES) ---
   if (!isLoggedIn) {
     const isBuyer = authScreenRole === 'buyer';
     const isSignIn = authScreenMode === 'signin';
+    const screenW = Dimensions.get('window').width || 375;
+    const isCompactPhone = screenW < 380;
 
     return (
       <SafeAreaView style={styles.authPageSafeArea}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FAF7F2" />
-        <ScrollView
-          style={styles.authPageScroll}
-          contentContainerStyle={styles.authPageScrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
+        <StatusBar barStyle="light-content" backgroundColor="#042F2E" />
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 12}
         >
-          {/* Top Brand Header: Minimal, Classy, Nigeria-wide */}
-          <View style={styles.authPageBrandSection}>
-            <Animated.View style={[styles.luxeLogoMedallion, { transform: [{ scale: logoScaleAnim }] }]}>
-              <Image
-                source={LOGO_TRANSPARENT}
-                style={styles.luxeLogoImg}
-                resizeMode="contain"
-              />
-            </Animated.View>
+          <ScrollView
+            style={styles.authPageScroll}
+            contentContainerStyle={[
+              styles.authPageScrollContent,
+              isCompactPhone && { paddingHorizontal: 12, paddingTop: 0, paddingBottom: 36 },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Deep Emerald Executive Hero Backdrop */}
+            <View
+              style={[
+                styles.authHeroBanner,
+                isCompactPhone && { paddingTop: 18, paddingBottom: 42, marginHorizontal: -12 },
+              ]}
+            >
+              <View style={styles.authPageBrandSection}>
+                <Animated.View
+                  style={[
+                    styles.luxeLogoMedallion,
+                    isCompactPhone && { width: 62, height: 62, borderRadius: 31 },
+                    { transform: [{ scale: logoScaleAnim }] },
+                  ]}
+                >
+                  <Image
+                    source={LOGO_TRANSPARENT}
+                    style={[styles.luxeLogoImg, isCompactPhone && { width: 38, height: 32 }]}
+                    resizeMode="contain"
+                  />
+                </Animated.View>
 
-            <Text style={styles.authPageBrandTitle}>GETIT</Text>
-            <View style={styles.luxeBrandBadgePill}>
-              <Text style={styles.luxeBrandBadgeText}>🇳🇬 NIGERIA'S PREMIER MARKETPLACE</Text>
+                <Text style={[styles.authPageBrandTitle, isCompactPhone && { fontSize: 22 }]}>GETIT</Text>
+                <View style={styles.luxeBrandBadgePill}>
+                  <Text style={styles.luxeBrandBadgeText}>🇳🇬 NIGERIA'S PREMIER MARKETPLACE</Text>
+                </View>
+
+                {!isBuyer && (
+                  <TouchableOpacity
+                    style={styles.luxeBackToBuyerPill}
+                    onPress={() => switchAuthRole('buyer')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.luxeBackToBuyerText}>← Return to Shopper Portal</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
 
-            {!isBuyer && (
-              <TouchableOpacity
-                style={styles.luxeBackToBuyerPill}
-                onPress={() => switchAuthRole('buyer')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.luxeBackToBuyerText}>← Return to Shopper Portal</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Animated Luxury Auth Card */}
-          <Animated.View
-            style={[
-              styles.luxeAuthCard,
-              {
-                opacity: authFadeAnim,
-                transform: [{ translateY: authSlideAnim }],
-              },
-            ]}
-          >
+            {/* Animated Floating Luxury Auth Card */}
+            <Animated.View
+              style={[
+                styles.luxeAuthCard,
+                isCompactPhone && { padding: 15, borderRadius: 20, marginTop: -28 },
+                {
+                  opacity: authFadeAnim,
+                  transform: [{ translateY: authSlideAnim }],
+                },
+              ]}
+            >
             {/* Card Header */}
             <View style={styles.luxeCardHeader}>
               <View style={{ flex: 1, paddingRight: 8 }}>
@@ -17191,8 +17215,9 @@ Support: help@getit.ng | Abuja, Nigeria`;
             </TouchableOpacity>
           )}
 
-          <View style={{ height: 40 }} />
+          <View style={{ height: 28 }} />
         </ScrollView>
+        </KeyboardAvoidingView>
         {renderRegistrationMapModal()}
       </SafeAreaView>
     );
@@ -42381,69 +42406,78 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
   },
 
-  // --- Dedicated Luxury Login / Sign Up Page Styles ---
+  // --- Dedicated Luxury Login / Sign Up Page Styles (Responsive for Small & Large Phones) ---
   authPageSafeArea: {
     flex: 1,
-    backgroundColor: '#FAF7F2',
+    backgroundColor: '#042F2E',
   },
   authPageScroll: {
     flex: 1,
-    backgroundColor: '#FAF7F2',
+    backgroundColor: '#F3F6F5',
   },
   authPageScrollContent: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 18,
+    paddingTop: 0,
+    paddingBottom: 44,
+    flexGrow: 1,
+  },
+  authHeroBanner: {
+    backgroundColor: '#042F2E',
+    marginHorizontal: -18,
     paddingTop: 24,
-    paddingBottom: 60,
+    paddingBottom: 48,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    alignItems: 'center',
   },
   authPageBrandSection: {
     alignItems: 'center',
-    marginBottom: 20,
   },
   luxeLogoMedallion: {
-    width: 94,
-    height: 94,
-    borderRadius: 47,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
-    borderWidth: 1.5,
-    borderColor: '#DFC694',
-    shadowColor: '#C5A059',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    elevation: 5,
-    marginBottom: 6,
+    marginBottom: 10,
+    borderWidth: 2,
+    borderColor: '#D4AF37',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
   },
   luxeLogoImg: {
-    width: 52,
-    height: 42,
+    width: 44,
+    height: 36,
   },
   authPageBrandTitle: {
-    fontSize: 24,
+    fontSize: 25,
     fontWeight: '900',
-    color: COLORS.emeraldDeep,
-    letterSpacing: 2,
+    color: '#FFFFFF',
+    letterSpacing: 3,
   },
   luxeBrandBadgePill: {
-    backgroundColor: 'rgba(217, 169, 78, 0.15)',
+    backgroundColor: 'rgba(212, 175, 55, 0.18)',
     paddingHorizontal: 12,
-    paddingVertical: 3.5,
-    borderRadius: 16,
-    marginTop: 4,
+    paddingVertical: 4,
+    borderRadius: 999,
+    marginTop: 6,
     borderWidth: 1,
-    borderColor: 'rgba(217, 169, 78, 0.35)',
+    borderColor: 'rgba(212, 175, 55, 0.45)',
   },
   luxeBrandBadgeText: {
     fontSize: 9.5,
     fontWeight: '800',
-    color: '#8A6D3B',
-    letterSpacing: 0.8,
+    color: '#FDE68A',
+    letterSpacing: 0.9,
   },
   authPageBrandTagline: {
-    fontSize: 11.5,
-    color: '#78716C',
+    fontSize: 12,
+    color: '#CCFBF1',
     marginTop: 4,
     textAlign: 'center',
     fontWeight: '500',
@@ -42456,14 +42490,14 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 18,
     marginTop: 8,
-    borderWidth: 1.5,
-    borderColor: '#E2D9CC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     elevation: 1,
   },
   luxeShopperOnlyText: {
     fontSize: 10.5,
     fontWeight: '800',
-    color: COLORS.emeraldDeep,
+    color: '#042F2E',
     letterSpacing: 0.8,
   },
   luxeMerchantOnlyPill: {
@@ -42471,7 +42505,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 5,
     borderRadius: 18,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: '#FDE68A',
   },
   luxeMerchantOnlyText: {
@@ -42481,55 +42515,60 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   luxeBackToBuyerPill: {
-    marginTop: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: '#F5EFE6',
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255, 255, 255, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
   luxeBackToBuyerText: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '700',
-    color: COLORS.emeraldDeep,
-    textDecorationLine: 'underline',
+    color: '#FFFFFF',
   },
 
-  // Luxury Card
+  // Floating Executive Auth Card
   luxeAuthCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1.5,
-    borderColor: '#EFE7DA',
-    shadowColor: '#443A2B',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 3,
-    marginBottom: 12,
+    borderRadius: 24,
+    padding: 20,
+    marginTop: -32,
+    width: '100%',
+    maxWidth: 460,
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.08,
+    shadowRadius: 20,
+    elevation: 5,
+    marginBottom: 14,
   },
   luxeCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 12,
+    marginBottom: 16,
   },
   luxeCardTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#1C1917',
-    letterSpacing: 0.2,
+    fontSize: 19,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -0.2,
   },
   luxeCardSub: {
-    fontSize: 11,
-    color: '#78716C',
-    marginTop: 2,
-    lineHeight: 15,
+    fontSize: 12.5,
+    color: '#64748B',
+    marginTop: 3,
+    lineHeight: 17,
   },
   luxePortalBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
     borderWidth: 1,
   },
   buyerBadgePill: {
@@ -42537,135 +42576,140 @@ const styles = StyleSheet.create({
     borderColor: '#A7F3D0',
   },
   buyerBadgeText: {
-    fontSize: 9,
+    fontSize: 9.5,
     fontWeight: '800',
     color: '#047857',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
   merchantBadgePill: {
     backgroundColor: '#FFFBEB',
     borderColor: '#FDE68A',
   },
   merchantBadgeText: {
-    fontSize: 9,
+    fontSize: 9.5,
     fontWeight: '800',
     color: '#B45309',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
 
-  // Mode Switcher Pills
+  // Mode Switcher Pills (Modern Segmented Control)
   luxeModePillsWrap: {
     flexDirection: 'row',
-    backgroundColor: '#F5EFE6',
-    borderRadius: 12,
-    padding: 3,
-    marginBottom: 14,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 14,
+    padding: 4,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#E8DFD0',
+    borderColor: '#E2E8F0',
   },
   luxeModePillBtn: {
     flex: 1,
-    paddingVertical: 7,
-    borderRadius: 9,
+    paddingVertical: 10,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   luxeModePillActive: {
     backgroundColor: '#FFFFFF',
     elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    shadowOffset: { width: 0, height: 1 },
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
   },
   luxeModePillText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#78716C',
+    color: '#64748B',
   },
   luxeModePillTextActive: {
-    color: COLORS.emeraldDeep,
+    color: '#042F2E',
     fontWeight: '800',
   },
 
-  // Luxury Organized Input Boxes
+  // Comfortable, Non-Clipping Input Boxes
   luxeFormContainer: {
-    gap: 2,
+    gap: 4,
   },
   luxeInputBox: {
-    height: 50,
-    backgroundColor: '#FAFAF9',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#E7DFD3',
+    minHeight: 58,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1.25,
+    borderColor: '#E2E8F0',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 10,
   },
   luxeInputIconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#EAE1D5',
-    marginRight: 8,
+    borderColor: '#E2E8F0',
+    marginRight: 10,
   },
   luxeInputIcon: {
-    fontSize: 14,
+    fontSize: 15,
   },
   luxeInputContent: {
     flex: 1,
     justifyContent: 'center',
   },
   luxeInputLabel: {
-    fontSize: 8.5,
+    fontSize: 9.5,
     fontWeight: '800',
-    color: '#8C827A',
+    color: '#64748B',
     letterSpacing: 0.6,
-    marginBottom: 1,
+    marginBottom: 2,
   },
   luxeTextInput: {
-    fontSize: 13,
+    fontSize: 14.5,
     fontWeight: '600',
-    color: '#1C1917',
+    color: '#0F172A',
     padding: 0,
     margin: 0,
+    minHeight: 22,
   },
   luxeEyeToggleBtn: {
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
-    backgroundColor: '#F5EFE6',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
   },
   luxeEyeToggleText: {
-    fontSize: 10.5,
+    fontSize: 11,
     fontWeight: '700',
-    color: COLORS.emeraldDeep,
+    color: '#042F2E',
   },
 
   // Action Buttons
   luxePrimaryBtn: {
-    backgroundColor: COLORS.emeraldDeep,
-    borderRadius: 12,
-    paddingVertical: 12,
+    backgroundColor: '#042F2E',
+    borderRadius: 14,
+    minHeight: 52,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 4,
-    elevation: 2,
-    shadowColor: COLORS.emeraldDeep,
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
+    marginTop: 6,
+    elevation: 3,
+    shadowColor: '#042F2E',
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
   },
   luxePrimaryBtnText: {
     color: '#FFFFFF',
-    fontSize: 13.5,
+    fontSize: 14.5,
     fontWeight: '800',
     letterSpacing: 0.3,
+    textAlign: 'center',
   },
   luxeDemoDivider: {
     flexDirection: 'row',
@@ -42742,15 +42786,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    borderWidth: 1.5,
-    borderColor: '#DFD7C7',
+    borderRadius: 16,
+    minHeight: 50,
+    width: '100%',
+    maxWidth: 460,
+    alignSelf: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderWidth: 1.25,
+    borderColor: '#E2E8F0',
     elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
   },
   luxeVipPartnerIconBox: {
@@ -46061,17 +46109,19 @@ const styles = StyleSheet.create({
   },
   authStoreTypeBtn: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 2,
-    borderColor: '#E7E5E4',
+    minHeight: 92,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
     borderRadius: 14,
-    padding: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 3,
+    shadowRadius: 4,
     elevation: 2,
   },
   authStoreTypeBtnActiveGroc: {
